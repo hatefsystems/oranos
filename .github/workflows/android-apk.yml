@@ -62,6 +62,23 @@ jobs:
           filter: blob:none
           sparse-checkout: |
             .github/oranos-ci
+      - name: Reclaim unused preinstalled SDK disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Storage before cleanup:"
+          df -h "$RUNNER_TEMP"
+          # The Chromium checkout downloads its own Android dependencies.
+          # Remove large unrelated SDKs on this ephemeral GitHub runner.
+          for folder in /usr/share/dotnet /usr/local/lib/android/sdk /opt/hostedtoolcache /usr/local/share/powershell; do
+            if [[ -d "$folder" ]]; then
+              echo "Removing unneeded preinstalled SDK: $folder"
+              sudo du -sh "$folder" || true
+              sudo rm -rf -- "$folder"
+            fi
+          done
+          echo "Storage after cleanup:"
+          df -h "$RUNNER_TEMP"
       - name: Check standard GitHub-hosted runner capacity
         shell: bash
         run: |
