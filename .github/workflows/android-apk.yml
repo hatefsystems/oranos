@@ -1,0 +1,94 @@
+name: Android APK (standard GitHub runner)
+
+# Chromium needs roughly 100 GB free, whereas standard Ubuntu runners have
+# about 14 GB SSD. The build job checks the actual runner before checkout.
+# No self-hosted or larger runner is required to run this workflow, but an
+# APK is not expected until adequate GitHub-hosted disk is available.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/android-apk.yml
+      - .github/oranos-ci/**
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/android-apk.yml
+      - .github/oranos-ci/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oranos-android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate CI scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          filter: blob:none
+          sparse-checkout: |
+            .github/workflows/android-apk.yml
+            .github/oranos-ci
+      - name: Validate Bash scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n .github/oranos-ci/build-android.sh
+          test -s .github/oranos-ci/README.md
+          grep -Fq 'chrome_public_apk' .github/oranos-ci/build-android.sh
+          echo "Validation succeeded. This job does not compile Chromium."
+
+  android:
+    name: Android ARM64 APK (resource-gated)
+    needs: validate
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      BUILD_SOURCE_SHA: ${{ github.sha }}
+    steps:
+      - name: Checkout build tooling from the exact Oranos revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          filter: blob:none
+          sparse-checkout: |
+            .github/oranos-ci
+      - name: Check standard GitHub-hosted runner capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Runner: $RUNNER_NAME ($RUNNER_OS/$RUNNER_ARCH)"
+          nproc
+          free -h
+          df -h "$RUNNER_TEMP"
+          available_kib="$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print $4}')"
+          available_gib="$(( available_kib / 1024 / 1024 ))"
+          echo "Disk available: ${available_gib} GiB; Chromium Android requirement: >=100 GiB."
+          if (( available_kib < 100 * 1024 * 1024 )); then
+            echo "::error title=Insufficient disk for Chromium::Standard GitHub runner reports ${available_gib} GiB free; Chromium Android requires at least 100 GiB. No large source download was started."
+            exit 1
+          fi
+      - name: Fetch, compile and package Android APK
+        shell: bash
+        env:
+          ORANOS_WORKSPACE: ${{ runner.temp }}/oranos-android
+        run: |
+          set -euo pipefail
+          bash .github/oranos-ci/build-android.sh "$ORANOS_WORKSPACE" "$BUILD_SOURCE_SHA"
+      - name: Upload development APK and provenance
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: oranos-chromium-android-arm64-${{ github.run_number }}
+          path: ${{ runner.temp }}/oranos-android/artifacts/
+          retention-days: 7
+          if-no-files-found: error
