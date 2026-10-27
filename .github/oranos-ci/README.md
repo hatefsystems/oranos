@@ -40,3 +40,19 @@ GitHub can disable Actions in a newly created fork. Open https://github.com/hate
 To produce an actual APK, choose a GitHub-hosted runner with adequate resources (a larger runner where eligible) **or** a supported remote build infrastructure. Before public release, pin a Chromium stable base, add Oranos branding, sign the APK securely, and run Android device tests.
 
 Do not interpret a passing validation job as a browser build. No Chromium APK is produced by CI validation.
+
+## Git history metadata needed for Android builds
+
+The Android bootstrap intentionally uses a shallow source checkout to save space, but Chromium's `build/util/lastchange.py` needs an ancestor with real `Change-Id:` and `Cr-Commit-Position:` metadata. Without those footers, `LASTCHANGE.committime` can be zero and GN can pass a negative timestamp such as `--build-timestamp -2142000` to a DevTools Node.js generator. The resulting error is `ERR_PARSE_ARGS_INVALID_OPTION_VALUE`.
+
+`build-android.sh` now:
+
+1. Keeps the exact SHA that triggered GitHub Actions.
+2. Deepens the Oranos source history incrementally until both metadata footers have valid timestamps, bounded to 848 additional commits.
+3. Fails with a clear diagnostic if necessary Git metadata remains unavailable.
+4. Validates the generated `build/util/LASTCHANGE.committime` after `gclient runhooks` and **before** running GN/Siso.
+
+This addresses the root cause without editing Chromium's version scripts or injecting an arbitrary build date. It does **not** establish that a full Chromium APK can complete on the standard GitHub-hosted runner.
+
+Related failure: https://github.com/hatefsystems/oranos/actions/runs/40555019512/job/122368744083
+

@@ -31,8 +31,61 @@ git checkout --detach "$SOURCE_SHA"
 # Synchronize DEPS to the commit under test.
 gclient sync --nohooks --revision "src@$SOURCE_SHA"
 test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+
+# Chromium's build/util/lastchange.py needs an ancestor containing Gerrit
+# Change-Id and Cr-Commit-Position footers. Both --no-history and --depth=1
+# can hide those commits, causing LASTCHANGE.committime=0 and a negative
+# build timestamp (-2142000), which breaks DevTools Node.js generators.
+get_metadata_timestamp() {
+  local footer="$1"
+  git log -1 --format='%ct' --grep="^$footer:" HEAD
+}
+
+metadata_is_valid() {
+  local change_time position_time
+  change_time="$(get_metadata_timestamp Change-Id)"
+  position_time="$(get_metadata_timestamp Cr-Commit-Position)"
+  [[ "$change_time" =~ ^[0-9]+$ ]] &&
+    [[ "$position_time" =~ ^[0-9]+$ ]] &&
+    (( change_time > 946684800 && position_time > 946684800 ))
+}
+
+if ! metadata_is_valid; then
+  for deepen_by in 16 64 256 512; do
+    if [[ "$(git rev-parse --is-shallow-repository)" != true ]]; then
+      break
+    fi
+    echo "Chromium commit metadata not visible; deepening checkout by $deepen_by commits."
+    git fetch --no-tags --deepen="$deepen_by" oranos "$SOURCE_SHA"
+    if metadata_is_valid; then
+      break
+    fi
+  done
+fi
+
+if ! metadata_is_valid; then
+  echo "::error::Missing valid Chromium Change-Id or Cr-Commit-Position history after deepening. Refusing to generate LASTCHANGE.committime=0." >&2
+  exit 1
+fi
+test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+echo "Chromium Change-Id commit time: $(get_metadata_timestamp Change-Id)"
+echo "Chromium Cr-Commit-Position commit time: $(get_metadata_timestamp Cr-Commit-Position)"
+
 ./build/install-build-deps.sh --no-prompt
 gclient runhooks
+
+# Guard against fallback timestamps even if upstream hook behavior changes.
+if [[ ! -s build/util/LASTCHANGE.committime ]]; then
+  echo "::error::Missing generated LASTCHANGE.committime." >&2
+  exit 1
+fi
+lastchange_timestamp="$(<build/util/LASTCHANGE.committime)"
+if [[ ! "$lastchange_timestamp" =~ ^[0-9]+$ ]] ||
+   (( lastchange_timestamp <= 946684800 )); then
+  echo "::error::Invalid LASTCHANGE.committime=$lastchange_timestamp; refusing a negative build timestamp." >&2
+  exit 1
+fi
+echo "Validated Chromium LASTCHANGE.committime=$lastchange_timestamp"
 
 gn gen out/oranos-android --args='target_os="android" target_cpu="arm64" is_debug=false is_component_build=false symbol_level=0 use_remoteexec=false'
 autoninja -C out/oranos-android -j 4 chrome_public_apk
