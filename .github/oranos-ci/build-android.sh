@@ -18,7 +18,6 @@ fi
 mkdir -p "$WORKSPACE"
 git clone --depth=1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$RUNNER_TEMP/depot_tools"
 export PATH="$PATH:$RUNNER_TEMP/depot_tools"
-export DEPOT_TOOLS_UPDATE=0
 
 cd "$WORKSPACE"
 fetch --nohooks --no-history android
