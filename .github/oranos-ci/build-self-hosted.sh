@@ -58,19 +58,22 @@ for cmd in git python3 curl df findmnt; do
   command -v "$cmd" >/dev/null || fail "Missing required command: $cmd"
 done
 
+# A prior fetch may create .gclient before it ever creates src.
+# Reuse it on the next attempt without deleting any source or cache.
 if [[ ! -d "$SRC/.git" ]]; then
-  [[ ! -e "$SRC" && ! -e "$CHECKOUT/.gclient" ]] ||
-    fail "Incomplete Chromium checkout. Inspect it manually; CI will not delete data."
+  [[ ! -e "$SRC" ]] ||
+    fail "src exists without .git; inspect manually. CI will not delete data."
   (( $(free_gib /srv/oranos/build) >= 100 )) ||
     fail "Initial Chromium checkout requires >=100 GiB free on build SSD."
-  (( $(free_gib /) >= 35 )) ||
-    fail "Initial full-history Git/CIPD cache requires >=35 GiB free on OS SSD."
+  (( $(free_gib /) >= 15 )) ||
+    fail "Initial Git/CIPD cache requires >=15 GiB free on OS SSD."
 else
   git -C "$SRC" rev-parse --is-inside-work-tree >/dev/null ||
     fail "Existing checkout is invalid; refusing to reset it."
-  [[ -f "$CHECKOUT/.gclient" ]] || fail "Missing .gclient for existing checkout."
+  [[ "$(git -C "$SRC" rev-parse --show-toplevel)" == "$SRC" ]] ||
+    fail "Unexpected Git checkout root; inspect it manually."
   (( $(free_gib /srv/oranos/build) >= 15 )) ||
-    fail "Less than 15 GiB free on the build SSD. Archive old outputs first."
+    fail "Less than 15 GiB free on build SSD."
   (( $(free_gib /) >= 5 )) ||
     fail "Less than 5 GiB free on OS/cache SSD."
 fi
@@ -81,54 +84,133 @@ if [[ ! -d "$DEPOT_TOOLS/.git" ]]; then
 fi
 export PATH="$PATH:$DEPOT_TOOLS"
 
-if [[ ! -d "$SRC/.git" ]]; then
-  ( cd "$CHECKOUT" && fetch --nohooks --git-cache android )
-fi
+# The source is fetched from Oranos GitHub, not Google's upstream.
+# Blobless Git fetch retains commit/tree history and lazily obtains checkout blobs.
+readonly ORANOS_REPO="https://github.com/hatefsystems/oranos.git"
+readonly CI_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+readonly PROGRESS_FORMATTER="$CI_DIR/format-git-progress.py"
+[[ -f "$PROGRESS_FORMATTER" ]] || fail "Missing Git progress formatter: $PROGRESS_FORMATTER"
 
-# Reuse a single checkout for Android and Linux. The Android checkout includes
-# Linux host dependencies; target_os makes both sets explicit for future syncs.
-# The initial Android fetch may already define target_os. Configure both
-# platforms without appending a duplicate assignment, and make the fork the
-# authoritative solution source for subsequent pinned gclient syncs.
-python3 - "$CHECKOUT/.gclient" <<'PY'
+git_progress() {
+  local -a pipeline_status
+  set +e
+  "$@" 2>&1 | python3 -u "$PROGRESS_FORMATTER"
+  pipeline_status=("${PIPESTATUS[@]}")
+  set -e
+  if (( pipeline_status[0] != 0 )); then
+    return "${pipeline_status[0]}"
+  fi
+  return "${pipeline_status[1]}"
+}
+
+retry_source_fetch() {
+  local attempt
+  for attempt in 1 2 3; do
+    echo "::group::GitHub source fetch (attempt $attempt/3)"
+    if git_progress git -C "$SRC" fetch --no-tags --progress \
+        --filter=blob:none origin "$SOURCE_SHA"; then
+      echo "::endgroup::"
+      return 0
+    fi
+    echo "::endgroup::"
+    if (( attempt < 3 )); then
+      echo "::warning::GitHub source fetch interrupted; preserving objects and retrying."
+      sleep "$((attempt * 20))"
+    fi
+  done
+  fail "GitHub source fetch failed after 3 attempts; no cache was deleted."
+}
+
+progress_heartbeat() {
+  local started="$SECONDS"
+  while sleep 30; do
+    echo "[oranos-progress] UTC=$(date -u +%H:%M:%S) elapsed=$((SECONDS - started))s"
+    du -sh "$SRC" "$GIT_CACHE_PATH" "$CIPD_CACHE_DIR" 2>/dev/null || true
+    df -h "$CHECKOUT" | tail -1
+  done
+}
+progress_heartbeat &
+progress_pid=$!
+trap 'kill "$progress_pid" 2>/dev/null || true' EXIT
+
+if [[ ! -d "$SRC/.git" ]]; then
+  echo "::notice::Initializing persistent Chromium source from Oranos GitHub."
+  git init -q "$SRC"
+fi
+previous_origin="$(git -C "$SRC" remote get-url origin 2>/dev/null || true)"
+case "$previous_origin" in
+  "") git -C "$SRC" remote add origin "$ORANOS_REPO" ;;
+  "$ORANOS_REPO") ;;
+  "https://chromium.googlesource.com/chromium/src.git")
+    echo "::notice::Migrating previously interrupted upstream origin to Oranos GitHub."
+    git -C "$SRC" remote set-url origin "$ORANOS_REPO"
+    ;;
+  *) fail "Unexpected source origin: $previous_origin. Refusing to overwrite it." ;;
+esac
+git -C "$SRC" config remote.origin.promisor true
+git -C "$SRC" config remote.origin.partialclonefilter blob:none
+
+python3 - "$CHECKOUT/.gclient" "$ORANOS_REPO" "$GIT_CACHE_PATH" <<'PY'
 from pathlib import Path
 import re
 import sys
 
 path = Path(sys.argv[1])
-config = path.read_text()
+oranos = sys.argv[2]
+git_cache = sys.argv[3]
 upstream = "https://chromium.googlesource.com/chromium/src.git"
-oranos = "https://github.com/hatefsystems/oranos.git"
-if upstream in config:
-    config = config.replace(upstream, oranos, 1)
-elif oranos not in config:
-    raise SystemExit("Unexpected Chromium solution URL in .gclient")
+if path.exists():
+    config = path.read_text()
+    if '"name": "src"' not in config and "'name': 'src'" not in config:
+        raise SystemExit("Unexpected .gclient solution; refusing to rewrite.")
+    if upstream in config:
+        config = config.replace(upstream, oranos, 1)
+    elif oranos not in config:
+        raise SystemExit("Unexpected .gclient source URL.")
+else:
+    config = 'solutions = [{"name": "src", "url": "' + oranos + '", "custom_deps": {}, "custom_vars": {}}]\n'
 assignments = list(re.finditer(r"(?m)^[ \t]*target_os[ \t]*=[^\n]*$", config))
 if len(assignments) > 1:
-    raise SystemExit("Duplicate target_os assignments in .gclient")
+    raise SystemExit("Duplicate target_os assignments in .gclient.")
 replacement = 'target_os = ["android", "linux"]'
 if assignments:
     match = assignments[0]
     config = config[:match.start()] + replacement + config[match.end():]
 else:
     config = config.rstrip() + "\n" + replacement + "\n"
+if not re.search(r"(?m)^[ \t]*cache_dir[ \t]*=", config):
+    config += 'cache_dir = "' + git_cache + '"\n'
 path.write_text(config)
 PY
 
-git -C "$SRC" remote set-url origin https://github.com/hatefsystems/oranos.git
-
-if ! git -C "$SRC" remote get-url oranos >/dev/null 2>&1; then
-  git -C "$SRC" remote add oranos https://github.com/hatefsystems/oranos.git
+if ! GIT_NO_LAZY_FETCH=1 git -C "$SRC" cat-file -e "$SOURCE_SHA^{commit}" 2>/dev/null; then
+  retry_source_fetch
+else
+  echo "::notice::Pinned commit already exists in persistent Git objects."
 fi
-[[ "$(git -C "$SRC" remote get-url oranos)" ==    "https://github.com/hatefsystems/oranos.git" ]] ||
-   fail "Unexpected oranos Git remote."
 
-# Do not use a moving ref for source provenance. Preserve shared Git history.
-git -C "$SRC" fetch --no-tags oranos "$SOURCE_SHA"
-git -C "$SRC" checkout --detach "$SOURCE_SHA"
-( cd "$CHECKOUT" && gclient sync --nohooks --revision "src@$SOURCE_SHA" )
+echo "::group::Checkout pinned Oranos source"
+git_progress git -C "$SRC" -c advice.detachedHead=false \
+  checkout --progress --detach "$SOURCE_SHA"
+echo "::endgroup::"
 [[ "$(git -C "$SRC" rev-parse HEAD)" == "$SOURCE_SHA" ]] ||
-  fail "gclient moved the source away from the requested Oranos SHA."
+  fail "Checkout did not select requested Oranos source SHA."
+
+for attempt in 1 2 3; do
+  echo "::group::Chromium dependencies (gclient sync attempt $attempt/3)"
+  if ( cd "$CHECKOUT" && gclient sync --nohooks --revision "src@$SOURCE_SHA" ); then
+    echo "::endgroup::"
+    break
+  fi
+  echo "::endgroup::"
+  if (( attempt == 3 )); then
+    fail "gclient sync failed after 3 attempts; checkout and caches retained."
+  fi
+  echo "::warning::gclient sync interrupted; preserving dependencies and retrying."
+  sleep "$((attempt * 20))"
+done
+[[ "$(git -C "$SRC" rev-parse HEAD)" == "$SOURCE_SHA" ]] ||
+  fail "gclient moved source away from requested Oranos SHA."
 
 # Chromium's build timestamp requires real Gerrit commit-position metadata.
 metadata_time() {
