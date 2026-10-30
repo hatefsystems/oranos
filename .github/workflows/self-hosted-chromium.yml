@@ -1,0 +1,67 @@
+name: Oranos Self-hosted Chromium
+
+# Dedicated home runner never executes pull_request or push events.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Run storage smoke test, seed checkout, or build one target"
+        type: choice
+        required: true
+        default: smoke
+        options:
+          - smoke
+          - bootstrap
+          - android
+          - linux
+
+permissions:
+  contents: read
+
+# Only one build/bootstrap may access the persistent checkout at a time.
+concurrency:
+  group: oranos-persistent-chromium-checkout
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: "${{ inputs.mode }} on oranos-build-01"
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on: [self-hosted, Linux, X64, oranos-android]
+    timeout-minutes: 1440
+    env:
+      BUILD_SOURCE_SHA: ${{ github.sha }}
+      ORANOS_BUILD_JOBS: "4"
+      GIT_CACHE_PATH: /var/cache/oranos/git
+      CIPD_CACHE_DIR: /var/cache/oranos/cipd
+      ORANOS_ARTIFACTS: /srv/oranos/data/artifacts/oranos-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Checkout trusted CI tooling only
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          filter: blob:none
+          sparse-checkout: |
+            .github/oranos-ci
+
+      - name: Verify mounts, paths, and runner identity
+        shell: bash
+        run: bash .github/oranos-ci/build-self-hosted.sh smoke
+
+      - name: Bootstrap checkout or compile the selected platform
+        if: ${{ inputs.mode != 'smoke' }}
+        shell: bash
+        env:
+          ORANOS_MODE: ${{ inputs.mode }}
+        run: bash .github/oranos-ci/build-self-hosted.sh "$ORANOS_MODE"
+
+      - name: Upload development artifacts
+        if: ${{ success() && (inputs.mode == 'android' || inputs.mode == 'linux') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: oranos-${{ inputs.mode }}-${{ github.run_number }}-${{ github.run_attempt }}
+          path: ${{ env.ORANOS_ARTIFACTS }}/
+          if-no-files-found: error
+          retention-days: 7
