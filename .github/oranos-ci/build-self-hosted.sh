@@ -183,7 +183,7 @@ if not re.search(r"(?m)^[ \t]*cache_dir[ \t]*=", config):
 path.write_text(config)
 PY
 
-if ! git -C "$SRC" cat-file -e "$SOURCE_SHA^{commit}" 2>/dev/null; then
+if ! GIT_NO_LAZY_FETCH=1 git -C "$SRC" cat-file -e "$SOURCE_SHA^{commit}" 2>/dev/null; then
   retry_source_fetch
 else
   echo "::notice::Pinned commit already exists in persistent Git objects."
