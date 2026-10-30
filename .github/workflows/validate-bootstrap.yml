@@ -1,0 +1,40 @@
+name: Validate Oranos bootstrap tooling
+
+# Run only lightweight source/tooling checks on GitHub-hosted runners.
+# Never execute pull-request code on the dedicated Chromium build server.
+on:
+  pull_request:
+    paths:
+      - '.github/oranos-ci/**'
+      - '.github/workflows/validate-bootstrap.yml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/oranos-ci/**'
+      - '.github/workflows/validate-bootstrap.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout CI tooling only
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          filter: blob:none
+          sparse-checkout: |
+            .github/oranos-ci
+
+      - name: Validate shell syntax
+        run: bash -n .github/oranos-ci/build-self-hosted.sh
+
+      - name: Validate Python syntax
+        run: python3 -m py_compile .github/oranos-ci/format-git-progress.py
+
+      - name: Test Git progress parser
+        run: python3 -m unittest discover -s .github/oranos-ci/tests -p 'test_*.py' -v
