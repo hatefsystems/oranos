@@ -28,7 +28,6 @@ readonly GIT_CACHE_PATH="/var/cache/oranos/git"
 readonly CIPD_CACHE_DIR="/var/cache/oranos/cipd"
 readonly ARTIFACT_BASE="/srv/oranos/data/artifacts"
 export GIT_CACHE_PATH CIPD_CACHE_DIR
-export DEPOT_TOOLS_UPDATE=0
 
 [[ "$(id -un)" == "oranos-runner" ]] || fail "Run as oranos-runner, never root."
 require_mount /srv/oranos/build
@@ -88,12 +87,35 @@ fi
 
 # Reuse a single checkout for Android and Linux. The Android checkout includes
 # Linux host dependencies; target_os makes both sets explicit for future syncs.
-if ! grep -Eq "^target_os *=.*android.*linux|^target_os *=.*linux.*android" "$CHECKOUT/.gclient"; then
-  if grep -qE '^target_os *=' "$CHECKOUT/.gclient"; then
-    fail "Existing .gclient target_os must be reviewed before changing it."
-  fi
-  printf '\ntarget_os = ["android", "linux"]\n' >> "$CHECKOUT/.gclient"
-fi
+# The initial Android fetch may already define target_os. Configure both
+# platforms without appending a duplicate assignment, and make the fork the
+# authoritative solution source for subsequent pinned gclient syncs.
+python3 - "$CHECKOUT/.gclient" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+config = path.read_text()
+upstream = "https://chromium.googlesource.com/chromium/src.git"
+oranos = "https://github.com/hatefsystems/oranos.git"
+if upstream in config:
+    config = config.replace(upstream, oranos, 1)
+elif oranos not in config:
+    raise SystemExit("Unexpected Chromium solution URL in .gclient")
+assignments = list(re.finditer(r"(?m)^[ \t]*target_os[ \t]*=[^\n]*$", config))
+if len(assignments) > 1:
+    raise SystemExit("Duplicate target_os assignments in .gclient")
+replacement = 'target_os = ["android", "linux"]'
+if assignments:
+    match = assignments[0]
+    config = config[:match.start()] + replacement + config[match.end():]
+else:
+    config = config.rstrip() + "\n" + replacement + "\n"
+path.write_text(config)
+PY
+
+git -C "$SRC" remote set-url origin https://github.com/hatefsystems/oranos.git
 
 if ! git -C "$SRC" remote get-url oranos >/dev/null 2>&1; then
   git -C "$SRC" remote add oranos https://github.com/hatefsystems/oranos.git
@@ -162,7 +184,8 @@ case "$MODE" in
 esac
 
 printf 'repository=hatefsystems/oranos\nsource_sha=%s\ntarget=%s\nrunner=%s\nrelease_signed=false\n'   "$SOURCE_SHA" "$MODE" "${RUNNER_NAME:-unknown}" > "$ARTIFACT_DIR/build-info.txt"
-( cd "$ARTIFACT_DIR" && sha256sum ChromePublic-arm64.apk chrome-linux-x64 2>/dev/null | sed '/No such file/d' > SHA256SUMS.txt ) || true
-[[ -s "$ARTIFACT_DIR/SHA256SUMS.txt" ]] ||
-  ( cd "$ARTIFACT_DIR" && find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 | xargs -0 sha256sum > SHA256SUMS.txt )
+case "$MODE" in
+  android) ( cd "$ARTIFACT_DIR" && sha256sum ChromePublic-arm64.apk > SHA256SUMS.txt ) ;;
+  linux) ( cd "$ARTIFACT_DIR" && sha256sum chrome-linux-x64 > SHA256SUMS.txt ) ;;
+esac
 echo "Artifacts: $ARTIFACT_DIR"
