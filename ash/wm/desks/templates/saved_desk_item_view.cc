@@ -126,7 +126,7 @@ SavedDeskItemView::SavedDeskItemView(std::unique_ptr<DeskTemplate> saved_desk)
   auto launch_template_callback = base::BindRepeating(
       &SavedDeskItemView::OnGridItemPressed, weak_ptr_factory_.GetWeakPtr());
 
-  const std::u16string saved_desk_name = saved_desk_->template_name();
+  const std::u16string& saved_desk_name = saved_desk_->template_name();
   DCHECK(!saved_desk_name.empty());
   const bool is_admin_managed =
       saved_desk_->source() == DeskTemplateSource::kPolicy;
@@ -234,7 +234,7 @@ SavedDeskItemView::SavedDeskItemView(std::unique_ptr<DeskTemplate> saved_desk)
   layer()->SetFillsBoundsOpaquely(false);
 
   // Create a shadow for the view.
-  shadow_ = SystemDecoration::CreateShadowOnNinePatchLayerForView(
+  shadow_ = SystemDecoration::CreateForView(
       this, SystemDecoration::ShadowType::kElevation12);
   shadow_->SetRoundedCorners(gfx::RoundedCornersF(kSaveDeskCornerRadius));
 

@@ -66,6 +66,7 @@ BASE_DECLARE_FEATURE(kAndroidNewTabButtonTabstripWebUI);
 BASE_DECLARE_FEATURE(kAndroidOmniboxFocusedNewTabPage);
 BASE_DECLARE_FEATURE(kAndroidOpenIncognitoAsWindowRestrictions);
 BASE_DECLARE_FEATURE(kAndroidPageInfoAsAppMenuItem);
+BASE_DECLARE_FEATURE(kAndroidProgressBarCancelOnWindowInvisible);
 BASE_DECLARE_FEATURE(kAndroidProgressBarVisualUpdate);
 BASE_DECLARE_FEATURE(kAndroidSaveCardNonBlockingDialog);
 BASE_DECLARE_FEATURE(kAndroidSetGoogleAccountInHelp);
@@ -75,6 +76,7 @@ BASE_DECLARE_FEATURE(kAndroidStartupImprovements);
 BASE_DECLARE_FEATURE(kAndroidSwapPressureTabDiscard);
 BASE_DECLARE_FEATURE(kAndroidTabDeclutterArchiveOnDesktop);
 BASE_DECLARE_FEATURE(kAndroidTabDeclutterDedupeTabIdsKillSwitch);
+BASE_DECLARE_FEATURE(kAndroidTabPersistentStoreActiveTabPrefs);
 BASE_DECLARE_FEATURE(kAndroidTabSkipSaveTabsKillswitch);
 BASE_DECLARE_FEATURE(kAndroidTabUiRefactor);
 BASE_DECLARE_FEATURE(kAndroidTabstripStartupCaptureBugFix);
@@ -82,6 +84,7 @@ BASE_DECLARE_FEATURE(kAndroidThemeModule);
 BASE_DECLARE_FEATURE(kAndroidThemeResourceProvider);
 BASE_DECLARE_FEATURE(kAndroidToolbarCaptureOnDesktop);
 BASE_DECLARE_FEATURE(kAndroidToolbarScrollAblation);
+BASE_DECLARE_FEATURE(kAndroidUnifiedKeyboardShortcuts);
 BASE_DECLARE_FEATURE(kAndroidUserEducationFramework);
 BASE_DECLARE_FEATURE(kAndroidVerticalTabs);
 BASE_DECLARE_FEATURE(kAndroidXRUsesSurfaceControl);
@@ -99,6 +102,7 @@ BASE_DECLARE_FEATURE(kApb144Patch8);
 BASE_DECLARE_FEATURE(kAppSpecificHistory);
 BASE_DECLARE_FEATURE(kAppSpecificHistoryViewIntent);
 BASE_DECLARE_FEATURE(kArchivedTabsTeardown);
+BASE_DECLARE_FEATURE(kAsyncFirstFrameDrawn);
 BASE_DECLARE_FEATURE(kAsyncNotificationManager);
 BASE_DECLARE_FEATURE(kAsyncNotificationManagerForDownload);
 BASE_DECLARE_FEATURE(kAutomotiveBackButtonBarStreamline);
@@ -150,7 +154,6 @@ BASE_DECLARE_FEATURE(kCCTRetainingStateInMemory);
 BASE_DECLARE_FEATURE(kCCTTabModalDialog);
 BASE_DECLARE_FEATURE(kCCTTabSwitcherEnabledForChromeExperiment);
 BASE_DECLARE_FEATURE(kCCTTabSwitcherEnabledForEmbedderExperiment);
-BASE_DECLARE_FEATURE(kCacheDeprecatedSystemLocationSetting);
 BASE_DECLARE_FEATURE(kCacheIsGoogleSigned);
 BASE_DECLARE_FEATURE(kCacheIsMultiInstanceApi31Enabled);
 BASE_DECLARE_FEATURE(kCctTabResumption);
@@ -217,6 +220,7 @@ BASE_DECLARE_FEATURE(kEnableToolbarPositioningInResizeMode);
 BASE_DECLARE_FEATURE(kEnableXAxisActivityTransition);
 BASE_DECLARE_FEATURE(kEnforceIncognitoIsolation);
 BASE_DECLARE_FEATURE(kExcludeChromeInIncognitoShareSheet);
+BASE_DECLARE_FEATURE(kFREStringChanges);
 BASE_DECLARE_FEATURE(kFixToolbarHairlineRegression);
 BASE_DECLARE_FEATURE(kFlyoutInBookmarksBar);
 BASE_DECLARE_FEATURE(kForceTranslucentNotificationTrampoline);
@@ -372,6 +376,17 @@ BASE_DECLARE_FEATURE(kXplatSyncedSetupThemes);
 
 // clang-format on
 
+// FeatureParams exposed to Java through the k*ParamsExposedToJava arrays.
+// Alphabetical:
+// go/keep-sorted start
+BASE_DECLARE_FEATURE_PARAM(bool, kAndroidThemeModuleForceDependencies);
+BASE_DECLARE_FEATURE_PARAM(bool, kAndroidThemeResourceProviderForceLight);
+BASE_DECLARE_FEATURE_PARAM(bool, kNtpAuroraChangeButtonColor);
+BASE_DECLARE_FEATURE_PARAM(int, kNtpAuroraPaddingStyle);
+BASE_DECLARE_FEATURE_PARAM(int, kNtpAuroraV2ActionChips);
+BASE_DECLARE_FEATURE_PARAM(int, kNtpAuroraV2LayoutType);
+// go/keep-sorted end
+
 // For FeatureParam, Alphabetical:
 inline constexpr base::FeatureParam<bool> kAndroidBottomBarShowDomainOnlyParam(
     &kAndroidBottomBar,
@@ -439,6 +454,21 @@ inline constexpr base::FeatureParam<bool>
     kEnableAndroidSidePanelDisableAnimations(&kEnableAndroidSidePanel,
                                              "disable_animations",
                                              false);
+
+inline constexpr base::FeatureParam<bool> kFREStringChangesPersonalized(
+    &kFREStringChanges,
+    "personalized",
+    /*default_value=*/false);
+
+inline constexpr base::FeatureParam<bool> kFREStringChangesSafety(
+    &kFREStringChanges,
+    "safety",
+    /*default_value=*/false);
+
+inline constexpr base::FeatureParam<bool> kFREStringChangesSeamlessness(
+    &kFREStringChanges,
+    "seamlessness",
+    /*default_value=*/false);
 
 inline constexpr base::FeatureParam<int> kGestureUserEducationPageDelay(
     &kGestureUserEducationBackSwipe,

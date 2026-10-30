@@ -68,7 +68,6 @@
 #include "third_party/blink/renderer/platform/scheduler/public/event_loop.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
-#include "third_party/blink/renderer/platform/wtf/cross_thread_copier.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -778,25 +777,26 @@ bool OffscreenCanvas::BeginFrame() {
 bool OffscreenCanvas::PushFrameIfNeeded() {
   if (needs_push_frame_ && context_) {
     bool should_call_push_frame = false;
-    scoped_refptr<CanvasResource> canvas_resource =
+    scoped_refptr<ExportedCanvasResource> exported_resource =
         context_->GetResourceForPushFrame(should_call_push_frame);
+
     if (should_call_push_frame) {
-      return PushFrame(std::move(canvas_resource));
+      return PushFrame(std::move(exported_resource));
     }
   }
   return false;
 }
 
 bool OffscreenCanvas::PushFrame(
-    scoped_refptr<CanvasResource>&& canvas_resource) {
+    scoped_refptr<ExportedCanvasResource>&& exported_resource) {
   TRACE_EVENT0("blink", "OffscreenCanvas::PushFrame");
   DCHECK(needs_push_frame_);
   needs_push_frame_ = false;
 
-  if (!canvas_resource) {
+  if (!exported_resource) {
     return false;
   }
-  canvas_resource->SetOriginClean(OriginClean());
+  exported_resource->SetOriginClean(OriginClean());
   current_frame_damage_rect_.Intersect(gfx::Rect(Size()));
 
   // We can't submit empty CompositorFrames, but contexts not always obeys it
@@ -804,9 +804,6 @@ bool OffscreenCanvas::PushFrame(
   if (Size().IsEmpty()) {
     return false;
   }
-
-  auto exported_resource =
-      base::MakeRefCounted<ExportedCanvasResource>(std::move(canvas_resource));
 
   auto* dispatcher = GetOrCreateResourceDispatcher();
   if (placeholder_client_) {

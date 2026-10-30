@@ -1,7 +1,7 @@
 {
     "chromium.android": {
         "android-10-x86-nofieldtrial-rel": {
-            "webview_trichrome_cts_tests full_mode": {
+            "webview_trichrome_cts_tests": {
                 "shards": 3,
                 "try_builder": "android-x86-rel"
             }
@@ -52,7 +52,7 @@
                 "try_builder": "linux-chromeos-rel"
             },
             "browser_tests": {
-                "shards": 81,
+                "shards": 100,
                 "try_builder": "linux-chromeos-rel"
             },
             "components_unittests": {
@@ -116,7 +116,7 @@
                 "try_builder": "linux-rel"
             },
             "browser_tests": {
-                "shards": 25,
+                "shards": 35,
                 "try_builder": "linux-rel"
             },
             "components_unittests": {

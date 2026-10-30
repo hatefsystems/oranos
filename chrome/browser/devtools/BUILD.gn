@@ -171,6 +171,8 @@ static_library("devtools") {
     "//components/autofill/content/browser",
     "//components/autofill/core/browser",
     "//components/enterprise/buildflags",
+    "//components/optimization_guide/content/browser",
+    "//components/optimization_guide/proto:optimization_guide_proto",
     "//components/paint_preview/buildflags",
     "//components/variations/service",
     "//components/vector_icons",
@@ -277,6 +279,9 @@ static_library("devtools") {
       "devtools_window_android.cc",
       "protocol/browser_handler_android.cc",
       "protocol/browser_handler_android.h",
+      "protocol/page_handler.cc",
+      "protocol/page_handler.h",
+      "protocol/page_handler_android.cc",
       "protocol/target_handler_android.cc",
       "protocol/target_handler_android.h",
     ]
@@ -286,14 +291,10 @@ static_library("devtools") {
       "//chrome/browser/ui/android/tab_model",
       "//chrome/browser/ui/browser_window",
       "//chrome/browser/ui/browser_window:create_browser_window",
+      "//printing/buildflags",
       "//ui/base",
     ]
     if (enable_printing) {
-      sources += [
-        "protocol/page_handler.cc",
-        "protocol/page_handler.h",
-        "protocol/page_handler_android.cc",
-      ]
       deps += [
         "//chrome/browser/printing",
         "//components/printing/browser/headless",
@@ -598,6 +599,7 @@ source_set("unit_tests") {
     "//chrome/test/base:chrome_render_view_host_test_harness",
     "//chrome/test/base:testing_browser_process",
     "//content/test:test_support",
+    "//testing/gmock",
     "//testing/gtest",
   ]
 
@@ -606,6 +608,7 @@ source_set("unit_tests") {
       "aida_client_unittest.cc",
       "devtools_availability_checker_unittest.cc",
       "devtools_contents_resizing_strategy_unittest.cc",
+      "devtools_embedder_message_dispatcher_unittest.cc",
       "devtools_file_helper_unittest.cc",
       "devtools_file_system_indexer_unittest.cc",
       "devtools_file_watcher_unittest.cc",
@@ -617,10 +620,24 @@ source_set("unit_tests") {
 
     if (!is_android) {
       sources += [
+        "chrome_devtools_manager_delegate_unittest.cc",
         "devtools_navigation_gating_rule_manager_unittest.cc",
         "devtools_navigation_gating_service_factory_unittest.cc",
         "devtools_navigation_gating_service_unittest.cc",
         "remote_debugging_server_unittest.cc",
+      ]
+      deps += [
+        "//chrome/browser/infobars",
+        "//chrome/browser/ui/browser_window",
+        "//chrome/browser/ui/browser_window/test:test_support",
+        "//chrome/browser/ui/startup",
+        "//chrome/browser/ui/tabs:tab_model",
+        "//chrome/browser/ui/tabs:tab_strip",
+        "//chrome/browser/ui/tabs:test_support",
+        "//chrome/browser/ui/views:layout_provider",
+        "//components/infobars/content",
+        "//components/infobars/core",
+        "//testing/gmock",
       ]
     }
   }
@@ -740,7 +757,16 @@ if (enable_devtools_frontend) {
     }
 
     if (!is_android) {
-      sources += [ "devtools_remote_server_infobar_browsertest.cc" ]
+      sources += [
+        "devtools_remote_server_infobar_browsertest.cc",
+        "devtools_remote_server_infobar_connection_browsertest.cc",
+      ]
+      deps += [
+        "//chrome/browser/ui/startup",
+        "//net",
+        "//net:test_support",
+        "//ui/views",
+      ]
     }
 
     if (!is_android || enable_desktop_android_extensions) {

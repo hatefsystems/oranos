@@ -402,7 +402,7 @@ void ImageBitmapRenderingContext::Trace(Visitor* visitor) const {
   CanvasRenderingContext::Trace(visitor);
 }
 
-scoped_refptr<CanvasResource>
+scoped_refptr<ExportedCanvasResource>
 ImageBitmapRenderingContext::GetResourceForPushFrame(
     bool& should_call_push_frame) {
   should_call_push_frame = false;
@@ -487,7 +487,7 @@ ImageBitmapRenderingContext::GetResourceForPushFrame(
 
   cc::PaintFlags paint_flags;
   paint_flags.setBlendMode(SkBlendMode::kSrc);
-  scoped_refptr<CanvasResource> resource =
+  scoped_refptr<ExportedCanvasResource> resource =
       resource_provider_for_offscreen_canvas_
           ->DoExternalOverdrawAndProduceResource([&](cc::PaintCanvas& canvas) {
             canvas.drawImage(image->PaintImageForCurrentFrame(), 0, 0,

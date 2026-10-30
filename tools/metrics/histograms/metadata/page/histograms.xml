@@ -1042,7 +1042,6 @@ chromium-metrics-reviews@google.com.
   <variant name=".subresource-filter-internals"/>
   <variant name=".suggest-internals"/>
   <variant name=".support-tool"/>
-  <variant name=".sync-confirmation"/>
   <variant name=".sync-internals"/>
   <variant name=".sys-internals"/>
   <variant name=".system"/>
@@ -1890,7 +1889,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="PageLoad.Clients.DocWrite.Block.{PageLoadClientsDocWriteTimingMetric}"
-    units="ms" expires_after="2027-02-14">
+    units="ms" expires_after="2027-04-25">
   <owner>csharrison@chromium.org</owner>
   <owner>speed-metrics-dev@chromium.org</owner>
   <summary>
@@ -5577,7 +5576,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="PageLoad.Internal.ErrorCode" enum="InternalErrorLoadEvent"
-    expires_after="2027-02-21">
+    expires_after="2027-04-25">
   <owner>csharrison@chromium.org</owner>
   <owner>bmcquade@chromium.org</owner>
   <summary>

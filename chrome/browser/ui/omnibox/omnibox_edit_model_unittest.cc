@@ -242,7 +242,10 @@ class OmniboxEditModelTest : public testing::Test {
   std::unique_ptr<TestOmniboxView> view_;
 };
 
-TEST_F(OmniboxEditModelTest, DISABLED_InlineAutocompleteText) {
+// Verifies that `OmniboxEditModel` properly updates inline autocomplete text
+// in the attached view during typing, reverting, and accepting temporary text.
+// Ensures that `inline_autocompletion()` reflects the expected suggestions.
+TEST_F(OmniboxEditModelTest, InlineAutocompleteText) {
   // Test if the model updates the inline autocomplete text in the view.
   EXPECT_EQ(std::u16string(), view()->inline_autocompletion());
   model()->SetUserText(u"he");
@@ -2129,20 +2132,20 @@ TEST_F(OmniboxEditModelPopupTest,
   // Match 2: regular search match.
   matches.push_back(AutocompleteMatch(
       nullptr, 800, false, omnibox::AutocompleteMatchType::kSearchSuggest));
-  // Match 3: IPH disclaimer.
+  // Match 3: IPH with link.
   AutocompleteMatch disclaimer_iph(
       nullptr, 700, false, omnibox::AutocompleteMatchType::kNullResultMessage);
-  disclaimer_iph.iph_type = IphType::kHistoryEmbeddingsDisclaimer;
+  disclaimer_iph.iph_type = IphType::kGemini;
   disclaimer_iph.iph_link_url = GURL("chrome://settings");
   disclaimer_iph.contents = u"Disclaimer Text";
   matches.push_back(disclaimer_iph);
   // Match 4: regular search match.
   matches.push_back(AutocompleteMatch(
       nullptr, 600, false, omnibox::AutocompleteMatchType::kSearchSuggest));
-  // Match 5: IPH settings promo.
+  // Match 5: Second IPH with link.
   AutocompleteMatch settings_promo_iph(
       nullptr, 500, false, omnibox::AutocompleteMatchType::kNullResultMessage);
-  settings_promo_iph.iph_type = IphType::kHistoryEmbeddingsSettingsPromo;
+  settings_promo_iph.iph_type = IphType::kHistoryScopePromo;
   settings_promo_iph.iph_link_url = GURL("chrome://settings");
   settings_promo_iph.contents = u"Settings Promo Text";
   matches.push_back(settings_promo_iph);

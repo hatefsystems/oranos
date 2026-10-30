@@ -115,9 +115,9 @@
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension_set.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/base/page_transition_types.h"
-#include "ui/base/window_open_disposition.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_features.h"
@@ -348,15 +348,16 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
         startup_tabs_(startup_tabs),
         active_window_id_(SessionID::InvalidValue()),
         restore_started_(base::TimeTicks::Now()) {
-    DCHECK(restore_browser_ || restore_apps_);
+    CHECK(restore_browser_ || restore_apps_, base::NotFatalUntil::M163);
 
     auto& active_restorers = GetActiveSessionRestorers();
     // Only one SessionRestoreImpl should be operating on the profile at the
     // same time.
-    DCHECK(std::ranges::find_if(active_restorers,
-                                [profile](SessionRestoreImpl* restorer) {
-                                  return restorer->profile_ == profile;
-                                }) == active_restorers.end());
+    CHECK(std::ranges::find_if(active_restorers,
+                               [profile](SessionRestoreImpl* restorer) {
+                                 return restorer->profile_ == profile;
+                               }) == active_restorers.end(),
+          base::NotFatalUntil::M163);
 
     active_restorers.insert(this);
 
@@ -369,7 +370,7 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
   bool synchronous() const { return synchronous_; }
 
   BrowserWindowInterface* Restore() {
-    DCHECK(!is_foreign_session_restore_);
+    CHECK(!is_foreign_session_restore_, base::NotFatalUntil::M163);
     if (restore_browser_) {
       SessionServiceBase* service =
           SessionServiceFactory::GetForProfileForSessionRestore(profile_);
@@ -392,7 +393,7 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
       // an incoherent state.
       web_app::WebAppProvider* provider =
           web_app::WebAppProvider::GetForLocalAppsUnchecked(profile_);
-      DCHECK(provider);
+      CHECK(provider, base::NotFatalUntil::M163);
 
       provider->on_registry_ready().Post(
           FROM_HERE, base::BindOnce(&SessionRestoreImpl::WebAppRegistryReady,
@@ -425,7 +426,7 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
   std::vector<BrowserWindowInterface*> RestoreForeignSession(
       std::vector<const sessions::SessionWindow*>::const_iterator begin,
       std::vector<const sessions::SessionWindow*>::const_iterator end) {
-    DCHECK(is_foreign_session_restore_);
+    CHECK(is_foreign_session_restore_, base::NotFatalUntil::M163);
     std::vector<BrowserWindowInterface*> windows;
     std::vector<RestoredTab> restored_tabs;
     // Create a browser instance to put the restored tabs in.
@@ -464,15 +465,16 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
   // NEW_WINDOW, in which case the tab will be opened in a new browser. Returns
   // the WebContents of the restored tab.
   WebContents* RestoreForeignTab(const sessions::SessionTab& tab,
-                                 WindowOpenDisposition disposition) {
-    DCHECK(is_foreign_session_restore_);
-    DCHECK(!tab.navigations.empty());
+                                 ui::mojom::WindowOpenDisposition disposition) {
+    CHECK(is_foreign_session_restore_, base::NotFatalUntil::M163);
+    CHECK(!tab.navigations.empty(), base::NotFatalUntil::M163);
     int selected_index = tab.current_navigation_index;
     selected_index = std::max(
         0,
         std::min(selected_index, static_cast<int>(tab.navigations.size() - 1)));
 
-    bool use_new_window = disposition == WindowOpenDisposition::kNewWindow;
+    bool use_new_window =
+        disposition == ui::mojom::WindowOpenDisposition::kNewWindow;
 
     BrowserWindowInterface* browser =
         use_new_window ? CreateBrowserWindow(BrowserWindowCreateParams(
@@ -482,8 +484,8 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
     RecordAppLaunchForTab(browser, tab, selected_index);
 
     WebContents* web_contents;
-    if (disposition == WindowOpenDisposition::kCurrentTab) {
-      DCHECK(!use_new_window);
+    if (disposition == ui::mojom::WindowOpenDisposition::kCurrentTab) {
+      CHECK(!use_new_window, base::NotFatalUntil::M163);
       web_contents = chrome::ReplaceRestoredTab(
           browser, tab.navigations, selected_index, tab.extension_app_id,
           nullptr, tab.user_agent_override, tab.extra_data,
@@ -494,7 +496,8 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
       web_contents = chrome::AddRestoredTab(
           browser, tab.navigations, tab_index, selected_index,
           tab.extension_app_id, std::nullopt,
-          disposition == WindowOpenDisposition::kNewForegroundTab,  // selected
+          disposition ==
+              ui::mojom::WindowOpenDisposition::kNewForegroundTab,  // selected
           tab.pinned, base::TimeTicks(), base::Time(), nullptr,
           tab.user_agent_override, tab.extra_data,
           true /* from_session_restore */, std::nullopt);
@@ -513,7 +516,7 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
 
     // Since FinishedTabCreation() is not called here, |this| will leak if we
     // are not in sychronous mode.
-    DCHECK(synchronous_);
+    CHECK(synchronous_, base::NotFatalUntil::M163);
 
     SessionRestore::on_session_restored_callbacks()->Notify(profile_, 1);
 
@@ -693,8 +696,8 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
   }
 
   void WebAppRegistryReady() {
-    DCHECK_EQ(web_app_registry_ready_, false);
-    DCHECK(restore_apps_);
+    CHECK_EQ(web_app_registry_ready_, false, base::NotFatalUntil::M163);
+    CHECK(restore_apps_, base::NotFatalUntil::M163);
     web_app_registry_ready_ = true;
 
     ProcessSessionWindowsIfReady();
@@ -956,7 +959,7 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
       // Newly created browsers should be shown by RestoreTabsToBrowser. If they
       // aren't shown, they are likely to be never shown.
       if (browser != browser_) {
-        DCHECK(did_show_browser);
+        CHECK(did_show_browser, base::NotFatalUntil::M163);
       }
 
       int total_tab_count =
@@ -1039,8 +1042,9 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
   void RecordAppLaunchForTab(BrowserWindowInterface* browser,
                              const sessions::SessionTab& tab,
                              int selected_index) {
-    DCHECK(selected_index >= 0 &&
-           selected_index < static_cast<int>(tab.navigations.size()));
+    CHECK(selected_index >= 0 &&
+              selected_index < static_cast<int>(tab.navigations.size()),
+          base::NotFatalUntil::M163);
     GURL url = tab.navigations[selected_index].virtual_url();
     const extensions::Extension* extension =
         extensions::ExtensionRegistry::Get(profile())
@@ -1196,7 +1200,7 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
         last_active_time_ticks, last_active_time,
         session_storage_namespace.get(), tab.user_agent_override,
         tab.extra_data, true /* from_session_restore */, is_active_browser);
-    DCHECK(web_contents);
+    CHECK(web_contents, base::NotFatalUntil::M163);
 
     RestoredTab restored_tab(web_contents, is_selected_tab,
                              tab.extension_app_id.empty(), tab.pinned,
@@ -1409,8 +1413,8 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
   }
 
   void ShowBrowser(BrowserWindowInterface* browser, int selected_tab_index) {
-    DCHECK(browser);
-    DCHECK(browser->GetTabStripModel()->count());
+    CHECK(browser, base::NotFatalUntil::M163);
+    CHECK(browser->GetTabStripModel()->count(), base::NotFatalUntil::M163);
     browser->GetTabStripModel()->ActivateTabAt(
         selected_tab_index,
         TabStripUserGestureDetails(
@@ -1441,9 +1445,9 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
         add_types |= AddTabTypes::ADD_ACTIVE;
       }
       NavigateParams params(browser, url, ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
-      params.disposition = is_first_tab
-                               ? WindowOpenDisposition::kNewForegroundTab
-                               : WindowOpenDisposition::kNewBackgroundTab;
+      params.disposition =
+          is_first_tab ? ui::mojom::WindowOpenDisposition::kNewForegroundTab
+                       : ui::mojom::WindowOpenDisposition::kNewBackgroundTab;
       params.tabstrip_add_types = add_types;
       is_first_tab = false;
       Navigate(&params);
@@ -1613,15 +1617,16 @@ BrowserWindowInterface* SessionRestore::RestoreSession(
         g_browser_process->profile_manager()
             ->GetProfileAttributesStorage()
             .GetProfileAttributesWithPath(profile->GetPath());
-    DCHECK(!entry || !entry->IsSigninRequired());
+    CHECK(!entry || !entry->IsSigninRequired(), base::NotFatalUntil::M163);
   }
 #endif
 #if BUILDFLAG(IS_CHROMEOS)
   ash::BootTimesRecorder::Get()->AddLoginTimeMarker("SessionRestore-Start",
                                                     false);
 #endif
-  DCHECK(profile);
-  DCHECK(SessionServiceFactory::GetForProfile(profile));
+  CHECK(profile, base::NotFatalUntil::M163);
+  CHECK(SessionServiceFactory::GetForProfile(profile),
+        base::NotFatalUntil::M163);
   profile->set_restored_last_session(true);
 
   LogSessionServiceRestoreInitiatedEvent(profile, (behavior & SYNCHRONOUS) != 0,
@@ -1705,7 +1710,7 @@ void SessionRestore::RestoreForeignSessionWindows(
 WebContents* SessionRestore::RestoreForeignSessionTab(
     content::WebContents* source_web_contents,
     const sessions::SessionTab& tab,
-    WindowOpenDisposition disposition,
+    ui::mojom::WindowOpenDisposition disposition,
     bool skip_renderer_creation) {
   BrowserWindowInterface* browser =
       GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(

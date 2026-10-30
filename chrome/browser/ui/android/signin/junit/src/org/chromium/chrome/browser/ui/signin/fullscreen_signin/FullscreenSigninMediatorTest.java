@@ -12,9 +12,11 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -41,6 +43,7 @@ import org.chromium.base.Promise;
 import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRule;
 import org.chromium.base.test.RobolectricUtil;
+import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.privacy.settings.PrivacyPreferencesManager;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileProvider;
@@ -49,17 +52,25 @@ import org.chromium.chrome.browser.signin.services.BadgeConfig;
 import org.chromium.chrome.browser.signin.services.DisplayableProfileData;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.chrome.browser.signin.services.SigninManager;
+import org.chromium.chrome.browser.signin.services.SigninMetricsUtils;
+import org.chromium.chrome.browser.signin.services.SigninMetricsUtilsJni;
+import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.browser.ui.signin.ForcedSigninStatusProvider;
 import org.chromium.chrome.browser.ui.signin.R;
 import org.chromium.chrome.browser.ui.signin.SigninAndHistorySyncCoordinator.SigninFlow;
 import org.chromium.chrome.browser.ui.signin.fullscreen_signin.FullscreenSigninCoordinator.Delegate;
 import org.chromium.chrome.browser.ui.signin.fullscreen_signin.FullscreenSigninMediator.LoadPoint;
 import org.chromium.chrome.test.util.browser.signin.AccountManagerTestRule;
+import org.chromium.components.externalauth.ExternalAuthUtils;
+import org.chromium.components.prefs.PrefService;
 import org.chromium.components.signin.SigninFeatures;
 import org.chromium.components.signin.base.AccountInfo;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
+import org.chromium.components.signin.metrics.SigninFunnelEvent;
 import org.chromium.components.signin.test.util.AccountCapabilitiesBuilder;
 import org.chromium.components.signin.test.util.TestAccounts;
+import org.chromium.components.sync.SyncService;
+import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modelutil.PropertyModel;
 
@@ -96,6 +107,10 @@ public class FullscreenSigninMediatorTest {
     @Mock private SigninManager mSigninManagerMock;
     @Mock private AccountPreviewDataService mAccountPreviewDataServiceMock;
     @Mock private ForcedSigninStatusProvider mForcedSigninStatusProviderMock;
+    @Mock private SigninMetricsUtils.Natives mSigninMetricsUtilsJniMock;
+    @Mock private ExternalAuthUtils mExternalAuthUtilsMock;
+    @Mock private PrefService mPrefServiceMock;
+    @Mock private SyncService mSyncServiceMock;
 
     private final OneshotSupplierImpl<ProfileProvider> mProfileSupplier =
             new OneshotSupplierImpl<>();
@@ -109,6 +124,7 @@ public class FullscreenSigninMediatorTest {
 
     // Config used by createMediator(). Tests can change these before calling it.
     private int mLogoId;
+    private String mSelectedAccountEmail;
 
     public FullscreenSigninMediatorTest(boolean isIdentityManagerSourceOfAccounts) {
         mIsIdentityManagerSourceOfAccounts = isIdentityManagerSourceOfAccounts;
@@ -124,6 +140,7 @@ public class FullscreenSigninMediatorTest {
         IdentityServicesProvider.setAccountPreviewDataServiceForTesting(
                 mAccountPreviewDataServiceMock);
         ForcedSigninStatusProvider.setInstanceForTesting(mForcedSigninStatusProviderMock);
+        SigninMetricsUtilsJni.setInstanceForTesting(mSigninMetricsUtilsJniMock);
 
         lenient().when(mProfileProviderMock.getOriginalProfile()).thenReturn(mProfileMock);
         mProfileSupplier.set(mProfileProviderMock);
@@ -381,6 +398,282 @@ public class FullscreenSigninMediatorTest {
         verify(mSigninManagerMock).signin(eq(TestAccounts.ACCOUNT1), anyInt(), any());
     }
 
+    @Test
+    public void testSigninFunnel_promoShownWithAccount() {
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
+        setUpSigninSupported(true);
+        createMediator();
+        verify(mSigninMetricsUtilsJniMock, never()).logSigninFunnelEvent(anyInt(), anyInt());
+
+        initializeNative();
+
+        verify(mSigninMetricsUtilsJniMock)
+                .logSigninFunnelEvent(
+                        SigninAccessPoint.START_PAGE, SigninFunnelEvent.PROMO_SHOWN_WITH_ACCOUNT);
+    }
+
+    @Test
+    public void testSigninFunnel_promoShownNoAccount() {
+        setUpSigninSupported(true);
+        createMediator();
+
+        initializeNative();
+
+        verify(mSigninMetricsUtilsJniMock)
+                .logSigninFunnelEvent(
+                        SigninAccessPoint.START_PAGE, SigninFunnelEvent.PROMO_SHOWN_NO_ACCOUNT);
+    }
+
+    @Test
+    public void testSigninFunnel_notLoggedWhenSigninNotSupported() {
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
+        setUpSigninSupported(false);
+        createMediator();
+
+        initializeNative();
+        mMediator.reset();
+
+        verify(mSigninMetricsUtilsJniMock, never()).logSigninFunnelEvent(anyInt(), anyInt());
+        verify(mDelegateMock, never()).logPromoShownFunnelEventOnBackPress(anyInt(), anyInt());
+    }
+
+    @Test
+    public void testSigninFunnel_notLoggedAfterDestroy() {
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
+        setUpSigninSupported(true);
+        createMediator();
+        destroyMediator();
+
+        initializeNative();
+
+        verify(mSigninMetricsUtilsJniMock, never()).logSigninFunnelEvent(anyInt(), anyInt());
+    }
+
+    @Test
+    public void testSigninFunnel_promoShownLoggedAgainOnReset_coordinatorReused() {
+        // Simulates a flow that reuses the coordinator on back press, like the FRE.
+        doAnswer(
+                        invocation -> {
+                            SigninMetricsUtils.logSigninFunnelEvent(
+                                    invocation.getArgument(0), invocation.getArgument(1));
+                            return null;
+                        })
+                .when(mDelegateMock)
+                .logPromoShownFunnelEventOnBackPress(anyInt(), anyInt());
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
+        setUpSigninSupported(true);
+        createMediator();
+        initializeNative();
+
+        mMediator.reset();
+
+        verify(mSigninMetricsUtilsJniMock, times(2))
+                .logSigninFunnelEvent(
+                        SigninAccessPoint.START_PAGE, SigninFunnelEvent.PROMO_SHOWN_WITH_ACCOUNT);
+    }
+
+    @Test
+    public void testSigninFunnel_promoShownNotLoggedAgainOnReset_coordinatorRecreated() {
+        // Simulates a flow that recreates the coordinator on back press, like the fullscreen
+        // sign-in promo, where the delegate doesn't log the event again.
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
+        setUpSigninSupported(true);
+        createMediator();
+        initializeNative();
+
+        mMediator.reset();
+
+        verify(mSigninMetricsUtilsJniMock, times(1))
+                .logSigninFunnelEvent(
+                        SigninAccessPoint.START_PAGE, SigninFunnelEvent.PROMO_SHOWN_WITH_ACCOUNT);
+    }
+
+    @Test
+    public void testPendingChildAccountShowsSupervisedUi() {
+        // The selected account isn't on the device yet, so it becomes a pending selection.
+        setUpSigninSupported(true);
+        mSelectedAccountEmail = TestAccounts.CHILD_ACCOUNT.getEmail();
+        createMediator();
+        initializeNative();
+        assertNoAccountIsDisplayed();
+        assertFalse(mModel.get(FullscreenSigninProperties.SHOW_ACCOUNT_SUPERVISION_NOTICE));
+
+        // The parental check needs the account in AccountManagerFacade first.
+        mAccountManagerTestRule.getAccountManagerFacade().addAccount(TestAccounts.CHILD_ACCOUNT);
+        mAccountManagerTestRule
+                .getIdentityManager()
+                .addOrUpdateExtendedAccountInfo(TestAccounts.CHILD_ACCOUNT);
+        RobolectricUtil.runAllBackgroundAndUi();
+
+        assertSelectedAccountIsDisplayed(TestAccounts.CHILD_ACCOUNT);
+        assertTrue(mModel.get(FullscreenSigninProperties.SHOW_ACCOUNT_SUPERVISION_NOTICE));
+        assertNull(mModel.get(FullscreenSigninProperties.SUBTITLE_STRING));
+        assertTrue(mModel.get(FullscreenSigninProperties.SHOULD_HIDE_DISMISS_BUTTON));
+        assertFalse(mModel.get(FullscreenSigninProperties.ENABLE_ACCOUNT_SELECTION));
+    }
+
+    @Test
+    public void testSigninFunnel_signinButtonClicked_ignoredIfAlreadyClicked() {
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
+        setUpSigninSupported(true);
+        createMediator();
+        initializeNative();
+
+        mModel.get(FullscreenSigninProperties.ON_CONTINUE_AS_CLICKED).onClick(null);
+        mModel.get(FullscreenSigninProperties.ON_CONTINUE_AS_CLICKED).onClick(null);
+
+        verify(mSigninMetricsUtilsJniMock, times(1))
+                .logSigninFunnelEvent(
+                        SigninAccessPoint.START_PAGE, SigninFunnelEvent.SIGNIN_BUTTON_CLICKED);
+    }
+
+    @Test
+    public void testSigninFunnel_signinDeclinedButtonClicked_ignoredIfAlreadyClicked() {
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
+        setUpSigninSupported(true);
+        createMediator();
+        initializeNative();
+
+        mModel.get(FullscreenSigninProperties.ON_CONTINUE_AS_CLICKED).onClick(null);
+        mModel.get(FullscreenSigninProperties.ON_DISMISS_CLICKED).onClick(null);
+
+        verify(mSigninMetricsUtilsJniMock, never())
+                .logSigninFunnelEvent(
+                        SigninAccessPoint.START_PAGE,
+                        SigninFunnelEvent.SIGNIN_DECLINED_BUTTON_CLICKED);
+    }
+
+    @Test
+    public void testSigninFunnel_accountPickerShown() {
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
+        setUpSigninSupported(true);
+        createMediator();
+        initializeNative();
+
+        mModel.get(FullscreenSigninProperties.ON_SELECTED_ACCOUNT_CLICKED).onClick(null);
+
+        verify(mSigninMetricsUtilsJniMock)
+                .logSigninFunnelEvent(
+                        SigninAccessPoint.START_PAGE,
+                        SigninFunnelEvent.CHOOSE_OTHER_ACCOUNT_CLICKED);
+        verify(mSigninMetricsUtilsJniMock)
+                .logSigninFunnelEvent(
+                        SigninAccessPoint.START_PAGE, SigninFunnelEvent.ACCOUNT_PICKER_SHOWN);
+    }
+
+    @Test
+    public void testSigninFunnel_defaultAccountSelected() {
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT2);
+        setUpSigninSupported(true);
+        createMediator();
+        initializeNative();
+
+        mMediator.onAccountSelected(TestAccounts.ACCOUNT1);
+
+        verify(mSigninMetricsUtilsJniMock)
+                .logSigninFunnelEvent(
+                        SigninAccessPoint.START_PAGE, SigninFunnelEvent.DEFAULT_ACCOUNT_SELECTED);
+    }
+
+    @Test
+    public void testSigninFunnel_nonDefaultAccountSelected() {
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT2);
+        setUpSigninSupported(true);
+        createMediator();
+        initializeNative();
+
+        mMediator.onAccountSelected(TestAccounts.ACCOUNT2);
+
+        verify(mSigninMetricsUtilsJniMock)
+                .logSigninFunnelEvent(
+                        SigninAccessPoint.START_PAGE,
+                        SigninFunnelEvent.NON_DEFAULT_ACCOUNT_SELECTED);
+    }
+
+    @Test
+    public void testSigninFunnel_pendingSelectedAccount_noAccountSelectedEventLogged() {
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT2);
+        setUpSigninSupported(true);
+        mSelectedAccountEmail = TestAccounts.ACCOUNT2.getEmail();
+        createMediator();
+        initializeNative();
+
+        assertSelectedAccountIsDisplayed(TestAccounts.ACCOUNT2);
+        verify(mSigninMetricsUtilsJniMock, never())
+                .logSigninFunnelEvent(anyInt(), eq(SigninFunnelEvent.DEFAULT_ACCOUNT_SELECTED));
+        verify(mSigninMetricsUtilsJniMock, never())
+                .logSigninFunnelEvent(anyInt(), eq(SigninFunnelEvent.NON_DEFAULT_ACCOUNT_SELECTED));
+    }
+
+    @Test
+    public void testSigninFunnel_accountPickerDismissed() {
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
+        setUpSigninSupported(true);
+        createMediator();
+        initializeNative();
+
+        mMediator.onAccountPickerDismissed();
+
+        verify(mSigninMetricsUtilsJniMock)
+                .logSigninFunnelEvent(
+                        SigninAccessPoint.START_PAGE, SigninFunnelEvent.ACCOUNT_PICKER_DISMISSED);
+    }
+
+    @Test
+    public void testSigninFunnel_accountPickerDismissed_notLoggedAfterDestroy() {
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
+        setUpSigninSupported(true);
+        createMediator();
+        initializeNative();
+
+        FullscreenSigninMediator mediator = mMediator;
+        destroyMediator();
+        mediator.onAccountPickerDismissed();
+
+        verify(mSigninMetricsUtilsJniMock, never())
+                .logSigninFunnelEvent(anyInt(), eq(SigninFunnelEvent.ACCOUNT_PICKER_DISMISSED));
+    }
+
+    @Test
+    public void testSigninFunnel_accountAdded() {
+        setUpSigninSupported(true);
+        createMediator();
+        initializeNative();
+
+        mMediator.onAccountAdded(TestAccounts.ACCOUNT1.getEmail());
+
+        verify(mSigninMetricsUtilsJniMock)
+                .logSigninFunnelEvent(
+                        SigninAccessPoint.START_PAGE, SigninFunnelEvent.ACCOUNT_ADDED);
+    }
+
+    @Test
+    public void testSigninFunnel_accountAdded_notLoggedAfterDestroy() {
+        setUpSigninSupported(true);
+        createMediator();
+        initializeNative();
+
+        FullscreenSigninMediator mediator = mMediator;
+        destroyMediator();
+        mediator.onAccountAdded(TestAccounts.ACCOUNT1.getEmail());
+
+        verify(mSigninMetricsUtilsJniMock, never())
+                .logSigninFunnelEvent(anyInt(), eq(SigninFunnelEvent.ACCOUNT_ADDED));
+    }
+
+    private void setUpSigninSupported(boolean isSigninSupported) {
+        when(mExternalAuthUtilsMock.canUseGooglePlayServices()).thenReturn(isSigninSupported);
+        ExternalAuthUtils.setInstanceForTesting(mExternalAuthUtilsMock);
+        if (!isSigninSupported) return;
+
+        UserPrefs.setPrefServiceForTesting(mPrefServiceMock);
+        lenient().when(mPrefServiceMock.getBoolean(Pref.SIGNIN_ALLOWED)).thenReturn(true);
+        SyncServiceFactory.setInstanceForTesting(mSyncServiceMock);
+    }
+
     private void createMediator() {
         mMediator =
                 new FullscreenSigninMediator(
@@ -395,7 +688,7 @@ public class FullscreenSigninMediatorTest {
                                 mLogoId,
                                 /* shouldDisableSignin= */ false,
                                 /* surveyType= */ null,
-                                /* selectedAccountEmail= */ null,
+                                mSelectedAccountEmail,
                                 SigninFlow.DEFAULT_SIGNIN),
                         SigninAccessPoint.START_PAGE);
         mModel = mMediator.getModel();

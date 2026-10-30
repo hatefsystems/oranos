@@ -225,6 +225,12 @@ BASE_FEATURE(kAutofillEnableNewCardBenefitsToggleText,
 // components.
 BASE_FEATURE(kAutofillEnableOAuth2TokenFix, base::FEATURE_DISABLED_BY_DEFAULT);
 
+// When enabled, loyalty cards and Wallet direct offers are moved from the
+// Payments settings leaf into a new "Offers and loyalty cards" settings leaf,
+// with a separate toggle to control them.
+BASE_FEATURE(kAutofillEnableOffersAndLoyaltyCardsSettings,
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // When enabled, offers will be displayed in the Clank keyboard accessory during
 // downstream.
 BASE_FEATURE(kAutofillEnableOffersInClankKeyboardAccessory,
@@ -233,12 +239,6 @@ BASE_FEATURE(kAutofillEnableOffersInClankKeyboardAccessory,
 // When enabled, an "Autofill payments" omnibox chip will appear for relevant
 // payment checkout forms.
 BASE_FEATURE(kAutofillEnableOmniboxAutofill, base::FEATURE_DISABLED_BY_DEFAULT);
-
-// When enabled, a Google Pay omnibox chip will appear when a Google Pay button
-// is detected on the page, and clicking the chip will simulate clicking the
-// Google Pay button.
-BASE_FEATURE(kAutofillEnableOmniboxGPayButton,
-             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // When enabled, Chrome will use the Pay Now Pay Later tabs UI for payments
 // autofill when buy now pay later options are available for the merchant

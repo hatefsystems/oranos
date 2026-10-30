@@ -67,6 +67,7 @@
 #include "ui/display/screen.h"
 #include "ui/display/test/virtual_display_util.h"
 #include "ui/display/types/display_constants.h"
+#include "ui/views/widget/any_widget_observer.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
 
@@ -495,6 +496,46 @@ IN_PROC_BROWSER_TEST_F(FullscreenControllerInteractiveTest,
   }
   ASSERT_FALSE(IsPointerLocked());
   ASSERT_FALSE(IsWindowFullscreenForTabOrPending());
+}
+
+// Tests that escaping pointer lock and fullscreen together still blocks an
+// immediate pointer lock request from the page.
+IN_PROC_BROWSER_TEST_F(FullscreenControllerInteractiveTest,
+                       EscapingPointerLockAndFullscreenBlocksRelock) {
+  auto test_server_handle = embedded_test_server()->StartAndReturnHandle();
+  ASSERT_TRUE(test_server_handle);
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kFullscreenPointerLockHTML)));
+
+  // Enter fullscreen, then lock the pointer with a user gesture.
+  ASSERT_NO_FATAL_FAILURE(ToggleTabFullscreen(true));
+  PressKeyAndWaitForPointerLockRequest(ui::VKEY_1);
+  ASSERT_TRUE(IsPointerLocked());
+
+  {
+    ui_test_utils::FullscreenWaiter waiter(browser(),
+                                           {.tab_fullscreen = false});
+    SendEscapeToExclusiveAccessManager();
+    waiter.Wait();
+  }
+  ASSERT_FALSE(IsPointerLocked());
+
+  // Wait for the page to see the unlock, so the next request reaches the
+  // browser instead of failing in the renderer.
+  WebContents* tab = browser()->GetTabStripModel()->GetActiveWebContents();
+  ASSERT_TRUE(content::ExecJs(tab, R"(new Promise(resolve => {
+        if (!document.pointerLockElement) {
+          resolve();
+          return;
+        }
+        document.addEventListener('pointerlockchange', resolve, {once: true});
+      }))",
+                              content::EXECUTE_SCRIPT_NO_USER_GESTURE));
+
+  // Lock the pointer with a user gesture right after the escape. It should be
+  // rejected.
+  PressKeyAndWaitForPointerLockRequest(ui::VKEY_1);
+  EXPECT_FALSE(IsPointerLocked());
 }
 
 // Tests pointer lock then fullscreen.
@@ -938,9 +979,8 @@ IN_PROC_BROWSER_TEST_F(FullscreenControllerInteractiveTest,
 }
 
 // Tests that showing a chooser bubble exits tab fullscreen.
-// TODO(http://crbug.com/493319451): Re-enable when the flakiness is fixed.
 IN_PROC_BROWSER_TEST_F(FullscreenControllerInteractiveTest,
-                       DISABLED_ChooserBubbleExitsTabFullscreen) {
+                       ChooserBubbleExitsTabFullscreen) {
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL("about:blank")));
   content::WebContents* web_contents =
       browser()->GetTabStripModel()->GetActiveWebContents();
@@ -953,12 +993,21 @@ IN_PROC_BROWSER_TEST_F(FullscreenControllerInteractiveTest,
   EXPECT_TRUE(fullscreen_controller->IsTabFullscreen());
 
   // Trigger a chooser bubble, which should exit fullscreen.
+  // Create `fullscreen_waiter` before showing the dialog so `Wait()` waits for
+  // the asynchronous `FullscreenController::NotifyFullscreenChange()` task.
+  ui_test_utils::FullscreenWaiter fullscreen_waiter(browser(),
+                                                    {.tab_fullscreen = false});
+  views::NamedWidgetShownWaiter widget_waiter(
+      views::test::AnyWidgetTestPasskey{}, "ChooserBubbleUiViewDelegate");
   base::OnceClosure close_chooser = chrome::ShowDeviceChooserDialog(
       web_contents->GetPrimaryMainFrame(),
       std::make_unique<FakeUsbChooserController>(/*device_count=*/1));
 
-  ui_test_utils::FullscreenWaiter(browser(), {.tab_fullscreen = false}).Wait();
+  views::Widget* bubble_widget = widget_waiter.WaitIfNeededAndGet();
+  ASSERT_NE(bubble_widget, nullptr);
+  fullscreen_waiter.Wait();
   EXPECT_FALSE(fullscreen_controller->IsTabFullscreen());
+  EXPECT_FALSE(bubble_widget->IsClosed());
 
   // While bubble is showing, tab fullscreen cannot be entered.
   EXPECT_FALSE(content::ExecJs(web_contents,
@@ -971,6 +1020,7 @@ IN_PROC_BROWSER_TEST_F(FullscreenControllerInteractiveTest,
   // Now we should be able to enter tab fullscreen again.
   EXPECT_TRUE(content::ExecJs(web_contents,
                               "document.documentElement.requestFullscreen()"));
+  ui_test_utils::FullscreenWaiter(browser(), {.tab_fullscreen = true}).Wait();
   EXPECT_TRUE(fullscreen_controller->IsTabFullscreen());
 }
 

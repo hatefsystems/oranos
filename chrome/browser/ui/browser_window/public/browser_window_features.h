@@ -97,11 +97,12 @@ class ScrimViewController;
 class SearchboxContextData;
 class SessionServiceBrowserHelper;
 class SharingWindowController;
-class SidePanelCoordinator;
 class SidePanelRegistry;
+class SidePanelUI;
 class SigninViewController;
 class SplitViewIphController;
 class TabDragServiceFeature;
+class TabGroupFocusIphController;
 class TabListBridge;
 
 namespace send_tab_to_self {
@@ -112,8 +113,7 @@ class TabStripModel;
 class TabStripServiceFeature;
 class TabsFromOtherDevicesSidePanelCoordinator;
 class ToastService;
-class TranslateBubbleController;
-class UIControllerFactory;
+class TranslateController;
 class UnloadController;
 class UpgradeNotificationController;
 class VerticalTabIphController;
@@ -449,13 +449,14 @@ class BrowserWindowFeatures {
   std::unique_ptr<TabsFromOtherDevicesSidePanelCoordinator>
       tabs_from_other_devices_side_panel_coordinator_;
   std::unique_ptr<ToastService> toast_service_;
-  std::unique_ptr<TranslateBubbleController> translate_bubble_controller_;
+  std::unique_ptr<TranslateController> translate_bubble_controller_;
   std::unique_ptr<ttc::EntrypointController> ttc_entrypoint_controller_;
   std::unique_ptr<UpgradeNotificationController>
       upgrade_notification_controller_;
   std::unique_ptr<BrowserUserEducationInterface> user_education_;
   std::unique_ptr<send_tab_to_self::SendTabToSelfIphController>
       send_tab_to_self_iph_controller_;
+  std::unique_ptr<TabGroupFocusIphController> tab_group_focus_iph_controller_;
   std::unique_ptr<VerticalTabIphController> vertical_tab_iph_controller_;
   std::unique_ptr<tabs::VerticalTabStripStateController>
       vertical_tab_strip_state_controller_;
@@ -495,8 +496,7 @@ class BrowserWindowFeatures {
   std::unique_ptr<ScrimViewController> scrim_view_controller_;
   std::unique_ptr<tab_groups::SharedTabGroupFeedbackController>
       shared_tab_group_feedback_controller_;
-  std::unique_ptr<SidePanelCoordinator> side_panel_coordinator_;
-  std::unique_ptr<UIControllerFactory> ui_controller_factory_;
+  std::unique_ptr<SidePanelUI> side_panel_coordinator_;
   std::unique_ptr<skills::SkillsUiWindowController>
       skills_ui_window_controller_;
   std::unique_ptr<split_tabs::SplitTabHighlightController>

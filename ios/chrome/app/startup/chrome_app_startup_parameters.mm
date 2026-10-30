@@ -63,16 +63,16 @@ void LogWidgetKitAction(WidgetKitExtensionAction action) {
 
 // LINT.IfChange
 // TODO(crbug.com/462018636): This code will be soon migrated to
-// task_request_url_context.mm, so any change should be reflected also there.
-// Contact fedegermi for additional information or support.
+// task_request_for_xcallback_url_context.mm, so any change should be reflected
+// also there. Contact fedegermi for additional information or support.
 TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
     const std::string& poa_param) {
-  if (poa_param == "default-browser-settings") {
+  if (poa_param == kPostOpeningActionDefaultBrowserSettings) {
     return SHOW_DEFAULT_BROWSER_SETTINGS;
   }
   return NO_ACTION;
 }
-// LINT.ThenChange(//ios/chrome/app/task_request_url_context.mm)
+// LINT.ThenChange(//ios/chrome/app/task_request_for_xcallback_url_context.mm)
 
 }  // namespace
 
@@ -191,11 +191,7 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
     // TODO(crbug.com/41004788): Temporary fix.
     NSString* action = [completeURL path];
     // Currently only "open" and "app-group-command" are supported.
-    if ([action
-            isEqualToString:
-                [NSString
-                    stringWithFormat:
-                        @"/%s", app_group::kChromeAppGroupXCallbackCommand]]) {
+    if (IsXCallbackAppGroupCommandPath(action)) {
       UMA_HISTOGRAM_ENUMERATION(kUMAMobileSessionStartActionHistogram,
                                 START_ACTION_XCALLBACK_APPGROUP_COMMAND,
                                 MOBILE_SESSION_START_ACTION_COUNT);
@@ -205,7 +201,7 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
                                  forceApplicationMode:forceApplicationMode];
     }
 
-    if (![action isEqualToString:@"/open"]) {
+    if (!IsXCallbackOpenCommandPath(action)) {
       UMA_HISTOGRAM_ENUMERATION(kUMAMobileSessionStartActionHistogram,
                                 START_ACTION_XCALLBACK_OTHER,
                                 MOBILE_SESSION_START_ACTION_COUNT);
@@ -219,14 +215,15 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
 
     std::map<std::string, std::string> parameters =
         ExtractQueryParametersFromXCallbackURL(parsedURL);
-    GURL URLQueryParam = GURL(parameters["url"]);
+    GURL URLQueryParam = GURL(parameters[kXCallbackOpenCommandURLParameter]);
     if (!URLQueryParam.is_valid() ||
         (!URLQueryParam.SchemeIs(url::kHttpScheme) &&
          !URLQueryParam.SchemeIs(url::kHttpsScheme))) {
       return nil;
     }
     TabOpeningPostOpeningAction postOpeningAction =
-        XCallbackPoaToPostOpeningAction(parameters["poa"]);
+        XCallbackPoaToPostOpeningAction(
+            parameters[kPostOpeningActionParameter]);
 
     ChromeAppStartupParameters* startupParameters =
         [[ChromeAppStartupParameters alloc]

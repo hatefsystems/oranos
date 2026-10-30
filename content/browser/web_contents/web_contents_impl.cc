@@ -342,7 +342,7 @@ RenderFrameHostImpl* FindOpenerRFH(const WebContents::CreateParams& params) {
 // user interaction observers.
 bool IsUserInteractionInputType(blink::WebInputEvent::Type type) {
   // TODO(mustaq): This list should be based off the HTML spec:
-  // https://html.spec.whatwg.org/multipage/interaction.html#tracking-user-activation,
+  // https://html.spec.whatwg.org/multipage/interaction.html#activation-triggering-input-event,
   // and kGestureScrollBegin is a clear outlier.
   return type == blink::WebInputEvent::Type::kMouseDown ||
          type == blink::WebInputEvent::Type::kGestureScrollBegin ||
@@ -1195,6 +1195,28 @@ void WebContentsImpl::WebContentsObserverList::AddObserver(
 void WebContentsImpl::WebContentsObserverList::RemoveObserver(
     WebContentsObserver* observer) {
   observers_.RemoveObserver(observer);
+}
+
+void WebContentsImpl::WebContentsObserverList::
+    NotifyObserversUntilNavigationDeleted(
+        NavigationObserverMethod observer_method,
+        NavigationHandle* navigation_handle) {
+  TRACE_EVENT0(
+      TRACE_DISABLED_BY_DEFAULT("content.verbose"),
+      "WebContentsObserverList::NotifyObserversUntilNavigationDeleted");
+  base::AutoReset<bool> scope(&is_notifying_observers_, true);
+  base::WeakPtr<NavigationRequest> weak_navigation_request =
+      NavigationRequest::From(navigation_handle)->GetWeakPtr();
+  for (WebContentsObserver& observer : observers_) {
+    TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("content.verbose"),
+                 "Dispatching WebContentsObserver callback");
+    (observer.*observer_method)(navigation_handle);
+    if (!weak_navigation_request) {
+      // An observer deleted the NavigationRequest. Don't notify the remaining
+      // observers, as they would get a dangling NavigationHandle.
+      return;
+    }
+  }
 }
 
 // WebContentsImpl -------------------------------------------------------------
@@ -2264,6 +2286,8 @@ void WebContentsImpl::SetPageBaseBackgroundColor(std::optional<SkColor> color) {
 }
 
 void WebContentsImpl::SetColorProviderSource(ui::ColorProviderSource* source) {
+  base::AutoReset<bool> setting_source(&is_setting_color_provider_source_,
+                                       true);
   ColorProviderSourceObserver::Observe(source);
 }
 
@@ -5873,6 +5897,14 @@ FrameTree* WebContentsImpl::CreateNewWindow(
         new_contents_impl->GetPrimaryMainFrame()->browsing_context_state());
   }
 
+  // Creating and showing the new window's view, and AddNewContents(), can run
+  // a nested message loop (e.g. UpdateLegacyWin() on Windows) in which the
+  // opener's tab or frame is closed. If so, stop creating the window; the
+  // caller already handles the opener frame being gone. See
+  // crbug.com/574739217.
+  base::WeakPtr<WebContentsImpl> weak_this = weak_factory_.GetWeakPtr();
+  base::WeakPtr<RenderFrameHostImpl> weak_opener = opener->GetWeakPtr();
+
   // Save the window for later if we're not suppressing the opener (since it
   // will be shown immediately).
   if (!params.opener_suppressed) {
@@ -5883,11 +5915,17 @@ FrameTree* WebContentsImpl::CreateNewWindow(
       // newly created object and give it one of its own member variables.
       RenderWidgetHostViewBase* widget_view = new_view->CreateViewForWidget(
           new_contents_impl->GetRenderViewHost()->GetWidget());
+      if (!weak_this || !weak_opener || !widget_view) {
+        return nullptr;
+      }
       view_->SetOverscrollControllerEnabled(CanOverscrollContent());
       if (!renderer_started_hidden) {
         // RenderWidgets for frames always initialize as hidden. If the renderer
         // created this window as visible, then we show it here.
         widget_view->ShowWithVisibility(PageVisibilityState::kVisible);
+        if (!weak_this || !weak_opener) {
+          return nullptr;
+        }
       }
     }
     // Save the created window associated with the route so we can show it
@@ -5928,14 +5966,13 @@ FrameTree* WebContentsImpl::CreateNewWindow(
   bool was_blocked = false;
   base::WeakPtr<WebContentsImpl> weak_new_contents =
       new_contents_impl->weak_factory_.GetWeakPtr();
-  base::WeakPtr<WebContentsImpl> weak_this = weak_factory_.GetWeakPtr();
   WebContentsImpl* contents_to_load = new_contents_impl;
   if (delegate_) {
     WebContents* web_contents_navigated = delegate_->AddNewContents(
         this, std::move(new_contents), params.target_url, params.disposition,
         *params.features, has_user_gesture, &was_blocked);
 
-    if (!weak_this) {
+    if (!weak_this || !weak_opener) {
       // `this` may be deleted after AddNewContents() due to a nested message
       // loop (e.g. the window hosting the opener is closed). See
       // crbug.com/527676561.
@@ -6283,8 +6320,16 @@ void WebContentsImpl::ShowCreatedWidget(ChildProcessId process_id,
     }
   }
 
+  // InitAsPopup() can run a nested message loop (UpdateLegacyWin() on Windows)
+  // in which the popup is closed, e.g. because its parent loses focus, which
+  // deletes `render_widget_host_impl`.
+  base::WeakPtr<RenderWidgetHostImpl> weak_widget =
+      render_widget_host_impl->GetWeakPtr();
   widget_host_view->InitAsPopup(view, transformed_rect,
                                 transformed_anchor_rect);
+  if (!weak_widget) {
+    return;
+  }
 
   // Renderer-owned popup widgets wait for the renderer to request for them
   // to be shown. We signal that this condition is satisfied by calling Init().
@@ -7672,21 +7717,26 @@ bool WebContentsImpl::GotResponseToPointerLockRequest(
     blink::mojom::PointerLockResult result) {
   OPTIONAL_TRACE_EVENT0("content",
                         "WebContentsImpl::GotResponseToPointerLockRequest");
-  if (pointer_lock_widget_) {
-    auto* web_contents =
-        WebContentsImpl::FromRenderWidgetHostImpl(pointer_lock_widget_);
-    if (web_contents != this) {
-      return web_contents->GotResponseToPointerLockRequest(result);
-    }
+  // Ignore the response if this WebContents has no pointer lock request of its
+  // own. Clearing the parent chain here would drop a lock held by an outer
+  // WebContents.
+  if (!pointer_lock_widget_) {
+    return false;
+  }
 
-    if (pointer_lock_widget_->GotResponseToPointerLockRequest(result)) {
-      return true;
-    }
+  auto* web_contents =
+      WebContentsImpl::FromRenderWidgetHostImpl(pointer_lock_widget_);
+  if (web_contents != this) {
+    return web_contents->GotResponseToPointerLockRequest(result);
+  }
 
-    if (pointer_lock_widget_ && pointer_lock_widget_->GetView() &&
-        pointer_lock_widget_->GetView()->IsPointerLocked()) {
-      return true;
-    }
+  if (pointer_lock_widget_->GotResponseToPointerLockRequest(result)) {
+    return true;
+  }
+
+  if (pointer_lock_widget_ && pointer_lock_widget_->GetView() &&
+      pointer_lock_widget_->GetView()->IsPointerLocked()) {
+    return true;
   }
 
   SetPointerLockWidgetInParentChain(nullptr);
@@ -8056,8 +8106,10 @@ void WebContentsImpl::DidStartNavigation(NavigationHandle* navigation_handle) {
   const GURL url = navigation_handle->GetURL();
 
   base::ElapsedTimer duration;
-  observers_.NotifyObservers(&WebContentsObserver::DidStartNavigation,
-                             navigation_handle);
+  // On Android, a WebView app can delete the NavigationRequest here, e.g. by
+  // calling stopLoading() from onNavigationStarted().
+  observers_.NotifyObserversUntilNavigationDeleted(
+      &WebContentsObserver::DidStartNavigation, navigation_handle);
   // WARNING: DO NOT use |navigation_handle| after this point. An observer may
   // have destroyed the NavigationRequest, rendering the pointer invalid. See
   // crbug.com/504574017. We set `navigation_handle` to nullptr here to prevent
@@ -8108,8 +8160,10 @@ void WebContentsImpl::DidRedirectNavigation(
 
   {
     SCOPED_UMA_HISTOGRAM_TIMER("WebContentsObserver.DidRedirectNavigation");
-    observers_.NotifyObservers(&WebContentsObserver::DidRedirectNavigation,
-                               navigation_handle);
+    // On Android, a WebView app can delete the NavigationRequest here, e.g. by
+    // calling stopLoading() from onNavigationRedirected().
+    observers_.NotifyObserversUntilNavigationDeleted(
+        &WebContentsObserver::DidRedirectNavigation, navigation_handle);
   }
   // WARNING: DO NOT use |navigation_handle| after this point. An observer may
   // have destroyed the NavigationRequest, rendering the pointer invalid. See
@@ -8154,8 +8208,12 @@ void WebContentsImpl::ReadyToCommitNavigation(
     }
   }
 
-  observers_.NotifyObservers(&WebContentsObserver::ReadyToCommitNavigation,
-                             navigation_handle);
+  // Observers can also delete the NavigationRequest at this point on Android
+  // (which lacks `is_safe_to_delete_` protections), so use
+  // NotifyObserversUntilNavigationDeleted() instead of NotifyObservers() here
+  // as well.
+  observers_.NotifyObserversUntilNavigationDeleted(
+      &WebContentsObserver::ReadyToCommitNavigation, navigation_handle);
   // WARNING: DO NOT use |navigation_handle| after this point. An observer may
   // have destroyed the NavigationRequest, rendering the pointer invalid. See
   // crbug.com/504574017. We set `navigation_handle` to nullptr here to prevent
@@ -8216,6 +8274,10 @@ void WebContentsImpl::DidFinishNavigation(NavigationHandle* navigation_handle) {
 
   {
     SCOPED_UMA_HISTOGRAM_TIMER("WebContentsObserver.DidFinishNavigation");
+    // All observers need this to clean up. Unlike in DidStartNavigation(), an
+    // observer can't delete the NavigationRequest here (even from
+    // onNavigationCompleted() in Android WebView apps), since this
+    // NavigationRequest's owner has already released it.
     observers_.NotifyObservers(&WebContentsObserver::DidFinishNavigation,
                                navigation_handle);
   }
@@ -11192,6 +11254,10 @@ bool WebContentsImpl::DoesWebContentsDisallowServiceWorkerControl() {
          privileged_params_->disallow_service_worker_control;
 }
 
+bool WebContentsImpl::DoesWebContentsDisallowSharedWorkers() {
+  return privileged_params_ && privileged_params_->disallow_shared_workers;
+}
+
 WebContents* WebContentsImpl::GetDocumentPictureInPictureOpener() {
   return picture_in_picture_opener_.get();
 }
@@ -11605,7 +11671,10 @@ void WebContentsImpl::CreateRenderWidgetHostViewForRenderManager(
     RenderWidgetHostViewBase* rwh_view =
         view_->CreateViewForWidget(render_view_host->GetWidget());
     view_->SetOverscrollControllerEnabled(CanOverscrollContent());
-    rwh_view->SetSize(GetSizeForMainFrame());
+    // The view is destroyed if the renderer goes away while it is created.
+    if (rwh_view) {
+      rwh_view->SetSize(GetSizeForMainFrame());
+    }
   }
 
   if (opt_out_frame_eviction_) {
@@ -12823,18 +12892,18 @@ void WebContentsImpl::SetVisibilityForChildViews(bool visible) {
 }
 
 void WebContentsImpl::ScheduleColorRelatedStateChanges() {
-  if (color_related_state_change_scheduled_) {
+  if (!scheduled_color_related_state_change_.IsCancelled()) {
     return;
   }
-  color_related_state_change_scheduled_ = true;
-  GetUIThreadTaskRunner({})->PostTask(
-      FROM_HERE,
+  scheduled_color_related_state_change_.Reset(
       base::BindOnce(&WebContentsImpl::HandleColorRelatedStateChanges,
                      weak_factory_.GetWeakPtr()));
+  GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE, scheduled_color_related_state_change_.callback());
 }
 
 void WebContentsImpl::HandleColorRelatedStateChanges() {
-  color_related_state_change_scheduled_ = false;
+  scheduled_color_related_state_change_.Cancel();
 
   // This can be reached re-entrantly during ~WebContentsImpl, after the
   // primary main frame has begun being destroyed. Bail out before
@@ -12927,7 +12996,8 @@ void WebContentsImpl::OnColorProviderChanged() {
 
   observers_.NotifyObservers(&WebContentsObserver::OnColorProviderChanged);
 
-  if (base::FeatureList::IsEnabled(features::kThemeChangeOptimization)) {
+  if (!is_setting_color_provider_source_ &&
+      base::FeatureList::IsEnabled(features::kThemeChangeOptimization)) {
     ScheduleColorRelatedStateChanges();
   } else {
     HandleColorRelatedStateChanges();

@@ -177,13 +177,11 @@ class MigrationTest : public SyncTest,
   explicit MigrationTest(TestType test_type) : SyncTest(test_type) {
     if (GetSetupSyncMode() == SetupSyncMode::kSyncTransportOnly) {
       scoped_feature_list_.InitWithFeatures(
-          {syncer::kReplaceSyncPromosWithSignInPromos,
-           switches::kEnablePreferencesAccountStorage,
+          {switches::kEnablePreferencesAccountStorage,
            syncer::kSeparateLocalAndAccountSearchEngines,
            syncer::kSpellcheckSeparateLocalAndAccountDictionaries,
            syncer::kSeparateLocalAndAccountThemes,
-           switches::kSyncEnableBookmarksInTransportMode,
-           syncer::kReadingListEnableSyncTransportModeUponSignIn},
+           switches::kSyncEnableBookmarksInTransportMode},
           {});
     }
   }

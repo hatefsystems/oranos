@@ -863,9 +863,19 @@ void VariationsService::StoreSeed(std::string seed_data,
                                   bool is_gzip_compressed) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  base::OnceCallback<void(bool, VariationsSeed)> done_callback =
-      base::BindOnce(&VariationsService::OnSeedStoreResult,
-                     weak_ptr_factory_.GetWeakPtr(), is_delta_compressed);
+  const UpdateSeedDateResult date_result =
+      field_trial_creator_.seed_store()->GetSeedDateUpdateResult(seed_date);
+  const bool day_changed = date_result == UpdateSeedDateResult::kNewDay ||
+                           date_result == UpdateSeedDateResult::kNoOldDate;
+  const bool geo_changed =
+      !country_code.empty() &&
+      (country_code != field_trial_creator_.seed_store()->GetLatestCountry() ||
+       geo_level1 != field_trial_creator_.seed_store()->GetLatestGeoLevel1());
+  const bool geo_or_day_changed = geo_changed || day_changed;
+
+  base::OnceCallback<void(bool, VariationsSeed)> done_callback = base::BindOnce(
+      &VariationsService::OnSeedStoreResult, weak_ptr_factory_.GetWeakPtr(),
+      is_delta_compressed, geo_or_day_changed);
   field_trial_creator_.seed_store()->StoreSeedData(
       std::move(done_callback), std::move(seed_data), std::move(seed_signature),
       std::move(country_code), std::move(geo_level1), seed_date,
@@ -874,6 +884,7 @@ void VariationsService::StoreSeed(std::string seed_data,
 }
 
 void VariationsService::OnSeedStoreResult(bool is_delta_compressed,
+                                          bool geo_or_day_changed,
                                           bool store_success,
                                           VariationsSeed seed) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -905,6 +916,9 @@ void VariationsService::OnSeedStoreResult(bool is_delta_compressed,
     }
 
     NotifySeedFetched();
+    if (geo_or_day_changed) {
+      NotifyCountryOrAdminAreaChanged();
+    }
   }
 }
 
@@ -1177,6 +1191,14 @@ void VariationsService::NotifySeedFetched() {
   }
 }
 
+void VariationsService::NotifyCountryOrAdminAreaChanged() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  for (auto& observer : observer_list_) {
+    observer.OnCountryOrAdminAreaChanged();
+  }
+}
+
 void VariationsService::OnSimpleLoaderComplete(
     std::optional<std::string> response_body) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -1271,9 +1293,22 @@ void VariationsService::OnSimpleLoaderComplete(
         latency, now);
   }
 
+  std::string_view country_code;
+  std::string_view geo_level1;
+  // Only trust the header contents when the response was received over HTTPS.
+  // This does not apply to the seed signature as that can't be easily forged.
+  // Note: In the case of an insecure fetch, the empty `country_code` and
+  // `geo_level1` strings will be ignored downstream and the existing location
+  // values in Local State will be preserved.
+  if (!last_request_was_http_retry_) {
+    country_code = GetHeaderValue(headers.get(), "X-Country");
+    geo_level1 = GetHeaderValue(headers.get(), "X-Geo-Level-1");
+  }
+
   if (response_code == net::HTTP_NOT_MODIFIED) {
     // TODO(crbug.com/420652919): Reject responses without a date.
-    RecordSuccessfulFetchSeedNotModified(response_date);
+    RecordSuccessfulFetchSeedNotModified(response_date, country_code,
+                                         geo_level1);
     return;
   }
 
@@ -1292,17 +1327,6 @@ void VariationsService::OnSimpleLoaderComplete(
 
   std::string_view signature =
       GetHeaderValue(headers.get(), "X-Seed-Signature");
-  std::string_view country_code;
-  std::string_view geo_level1;
-  // Only trust the header contents when the seed was fetched over HTTPS. This
-  // does not apply to the seed signature as that can't be easily forged.
-  // Note: In the case of an insecure fetch, the empty `country_code` and
-  // `geo_level1` strings will be ignored downstream and the existing location
-  // values in Local State will be preserved.
-  if (!last_request_was_http_retry_) {
-    country_code = GetHeaderValue(headers.get(), "X-Country");
-    geo_level1 = GetHeaderValue(headers.get(), "X-Geo-Level-1");
-  }
   StoreSeed(std::move(*response_body), std::string(signature),
             std::string(country_code), std::string(geo_level1),
             response_date.value_or(base::Time()), is_delta_compressed,
@@ -1683,7 +1707,9 @@ void VariationsService::RecordSuccessfulFetchNewSeed() {
 }
 
 void VariationsService::RecordSuccessfulFetchSeedNotModified(
-    std::optional<base::Time> response_date) {
+    std::optional<base::Time> response_date,
+    std::string_view country_code,
+    std::string_view geo_level1) {
   // Update the client-side fetch time to the current time.
   field_trial_creator_.seed_store()->RecordLastFetchTime(base::Time::Now());
   safe_seed_manager_.RecordSuccessfulFetch(field_trial_creator_.seed_store());
@@ -1691,8 +1717,16 @@ void VariationsService::RecordSuccessfulFetchSeedNotModified(
   // Callers set `response_date` to std::nullopt for insecure HTTP retries
   // because unauthenticated Date headers cannot be trusted. A null date logs
   // kNoNewDate and keeps the stored seed date.
-  field_trial_creator_.seed_store()->UpdateSeedDateAndLogDayChange(
-      response_date.value_or(base::Time()));
+  const UpdateSeedDateResult date_result =
+      field_trial_creator_.seed_store()->UpdateSeedDateAndLogDayChange(
+          response_date.value_or(base::Time()));
+  const bool geo_changed =
+      field_trial_creator_.seed_store()->UpdateSessionCountryAndGeoLevel1(
+          country_code, geo_level1);
+  if (geo_changed || date_result == UpdateSeedDateResult::kNewDay ||
+      date_result == UpdateSeedDateResult::kNoOldDate) {
+    NotifyCountryOrAdminAreaChanged();
+  }
 }
 
 VariationsSeedStore* VariationsService::GetSeedStoreForTesting() {

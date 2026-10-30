@@ -39,6 +39,7 @@
 #include "third_party/blink/renderer/core/html/canvas/canvas_context_creation_attributes_core.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_performance_monitor.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context_host.h"
+#include "third_party/blink/renderer/platform/graphics/exported_canvas_resource.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_types_3d.h"
 #include "third_party/blink/renderer/platform/heap/member.h"
 #include "third_party/blink/renderer/platform/heap/prefinalizer.h"
@@ -205,7 +206,7 @@ class CORE_EXPORT CanvasRenderingContext
 
   // WebGL-specific methods
   virtual void ClearMarkedCanvasDirty() {}
-  virtual scoped_refptr<CanvasResource> PaintRenderingResultsToResource(
+  virtual scoped_refptr<ExportedCanvasResource> PaintRenderingResultsToResource(
       SourceDrawingBuffer source_buffer,
       FlushReason reason) {
     NOTREACHED();
@@ -306,7 +307,7 @@ class CORE_EXPORT CanvasRenderingContext
   virtual base::ByteSize AllocatedBufferSize() const = 0;
 
   // OffscreenCanvas-specific methods.
-  virtual scoped_refptr<CanvasResource> GetResourceForPushFrame(
+  virtual scoped_refptr<ExportedCanvasResource> GetResourceForPushFrame(
       bool& should_call_push_frame) {
     should_call_push_frame = false;
     return nullptr;

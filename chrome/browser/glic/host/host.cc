@@ -31,6 +31,7 @@
 #include "chrome/browser/glic/public/glic_instance_metrics_backwards_compatibility.h"
 #include "chrome/browser/glic/public/glic_keyed_service.h"
 #include "chrome/browser/glic/public/glic_keyed_service_factory.h"
+#include "chrome/browser/glic/public/glic_provider_spec.h"
 #include "chrome/browser/glic/public/service/glic_instance_coordinator.h"
 #include "chrome/browser/glic/service/glic_instance_coordinator_impl.h"
 #include "chrome/common/actor_webui.mojom.h"
@@ -120,7 +121,9 @@ void Host::HibernateImpl(bool is_destroying) {
   }
   client_state_ = {};
   page_handler_ = nullptr;
+  login_page_committed_ = false;
   contents_changed_subscription_ = {};
+  native_loading_changed_subscription_ = {};
   // The web client is about to go away, so any previous verdict about it is
   // stale. Clear it before `contents_` is destroyed, since tearing the client
   // down recomputes the load state, and that recompute must not see the old
@@ -135,6 +138,9 @@ void Host::HibernateImpl(bool is_destroying) {
   if (!is_destroying) {
     // Covers hibernating with no web client to tear down.
     UpdateClientLoadState();
+    UpdateNativeLoadingState();
+  } else {
+    is_showing_native_loading_ = false;
   }
 }
 
@@ -214,13 +220,18 @@ void Host::Awaken() {
   TRACE_EVENT("glic", "Host::CreateContents");
   VLOG(1) << "Glic [Host] CreateContents";
 
+  login_page_committed_ = false;
   contents_ = instance_delegate_->CreateWebContentsManager();
   metrics_.OnContentsCreated();
   contents_changed_subscription_ =
       contents_->RegisterWebContentsChangedCallback(base::BindRepeating(
           &Host::OnActiveWebContentsChanged, base::Unretained(this)));
+  native_loading_changed_subscription_ =
+      contents_->RegisterNativeLoadingChangedCallback(base::BindRepeating(
+          &Host::OnNativeLoadingChanged, base::Unretained(this)));
   contents_->AttachToHost(this);
   UpdateVisibility();
+  UpdateNativeLoadingState();
 }
 
 void Host::OnActiveWebContentsChanged(content::WebContents* new_contents) {
@@ -246,6 +257,7 @@ void Host::PanelWillOpen(mojom::InvocationSource invocation_source,
   VLOG(1) << "Glic [Host] PanelWillOpen";
   CHECK(delegate_);
   panel_open_ = true;
+  client_state_.open_complete = false;
   invocation_source_ = invocation_source;
   if (auto* client = GetPrimaryWebClient()) {
     client->PanelWillOpen(
@@ -267,6 +279,7 @@ void Host::PanelWasClosed() {
   VLOG(1) << "Glic [Host] PanelWasClosed";
   panel_open_ = false;
   client_state_.open_complete = false;
+  pending_additional_contexts_.clear();
   if (auto* client = GetPrimaryWebClient()) {
     client->PanelWasClosed(base::DoNothing());
   }
@@ -311,6 +324,8 @@ void Host::WebUIPageHandlerAdded(GlicPageHandler* page_handler) {
     }
   }
   page_handler_ = page_handler;
+  login_page_committed_ = false;
+  UpdateNativeLoadingState();
 }
 
 void Host::WebUIPageHandlerRemoved(GlicPageHandler* page_handler) {
@@ -318,6 +333,7 @@ void Host::WebUIPageHandlerRemoved(GlicPageHandler* page_handler) {
     return;
   }
   page_handler_ = nullptr;
+  login_page_committed_ = false;
   WebUiStateChanged(page_handler, mojom::WebUiState::kUninitialized);
   SetClientLoadFailed(false);
   // TODO(harringtond): Web client liveness needs detangled from the page
@@ -326,9 +342,12 @@ void Host::WebUIPageHandlerRemoved(GlicPageHandler* page_handler) {
   if (GetPrimaryWebClient()) {
     UnsetWebClient();
   }
+  UpdateNativeLoadingState();
 }
 
 void Host::LoginPageCommitted(GlicPageHandler* page_handler) {
+  login_page_committed_ = true;
+  UpdateNativeLoadingState();
   observers_.Notify(&Observer::LoginPageCommitted);
 }
 
@@ -373,6 +392,14 @@ void Host::NotifyWindowIntentToShow() {
   }
 }
 
+void Host::WaitForLoad(base::OnceCallback<void(bool failed)> callback) {
+  if (!contents_) {
+    std::move(callback).Run(/*failed=*/true);
+    return;
+  }
+  contents_->WaitForLoad(std::move(callback));
+}
+
 void Host::Zoom(mojom::ZoomAction zoom_action, ZoomSource source) {
   if (glic_service().IsNoWebviewEnabled()) {
     if (contents_) {
@@ -391,6 +418,7 @@ GlicWebClientAccess* Host::GetPrimaryWebClient() const {
 }
 
 void Host::UnsetWebClient() {
+  client_state_.open_complete = false;
   if (auto* manager = web_client_manager()) {
     manager->UnsetWebClient();
   }
@@ -409,11 +437,6 @@ void Host::WebClientInitialized() {
   }
   auto* client = GetPrimaryWebClient();
   CHECK(client);
-
-  for (auto& [source, context] : pending_additional_contexts_) {
-    client->NotifyAdditionalContext(std::move(context));
-  }
-  pending_additional_contexts_.clear();
 
   if (is_manually_resizing_) {
     client->ManualResizeChanged(true);
@@ -480,8 +503,9 @@ void Host::ManualResizeChanged(bool resizing) {
   }
 }
 
-bool Host::IsPrimaryClientOpen() {
-  return client_state_.open_complete;
+bool Host::IsPrimaryClientOpen() const {
+  return panel_open_ && client_state_.open_complete &&
+         GetPrimaryWebClient() != nullptr;
 }
 
 InstanceId Host::GetInstanceId() const {
@@ -511,6 +535,7 @@ void Host::UpdateVisibility() {
     return;
   }
   web_contents_visibility_ = visibility;
+  UpdateNativeLoadingState();
   if (contents_) {
     contents_->SetVisibility(visibility);
   }
@@ -545,6 +570,7 @@ void Host::OnGuestWebClientCleared(bool had_web_client) {
     instance_delegate().OnWebClientCleared();
   }
   client_state_ = {};
+  UpdateClientLoadState();
   observers_.Notify(&Observer::WebClientDisconnected);
 }
 
@@ -607,6 +633,7 @@ void Host::OnWebClientStateChanged(mojom::WebClientState state) {
   // the one place the load state needs recomputing as the client comes and
   // goes.
   UpdateClientLoadState();
+  UpdateNativeLoadingState();
   observers_.Notify(&Observer::WebClientStateChanged, state);
 }
 
@@ -616,7 +643,11 @@ void Host::PanelWillOpenComplete(GlicWebClientAccess* client,
   if (GetPrimaryWebClient() == client) {
     if (panel_open_) {
       client_state_.open_complete = true;
+      for (auto& [source, context] : pending_additional_contexts_) {
+        client->NotifyAdditionalContext(std::move(context));
+      }
     }
+    pending_additional_contexts_.clear();
     SetDragResizeEnabled(open_info->can_user_resize);
     // Notify observers that the client is ready even if `panel_open_` is false
     // (e.g. if the user backgrounded or closed the panel during load) so that
@@ -640,15 +671,22 @@ void Host::WebUiStateChanged(GlicPageHandler* page_handler,
   }
   // UI State has changed
   primary_webui_state_ = new_state;
+  UpdateNativeLoadingState();
   observers_.Notify(&Observer::WebUiStateChanged, primary_webui_state_);
 }
 
 void Host::ClientLoadErrorOccurred(ClientLoadErrorReason reason) {
+  client_load_error_reason_ = reason;
   observers_.Notify(&Observer::ClientLoadErrorOccurred, reason);
 }
 
 void Host::SetClientLoadFailed(bool failed) {
   client_load_failed_ = failed;
+  if (!failed) {
+    // The failure is withdrawn (reload, retry on show), and with it its cause.
+    // A host that fails again reports the new cause before the new failure.
+    client_load_error_reason_.reset();
+  }
   UpdateClientLoadState();
 }
 
@@ -674,6 +712,7 @@ void Host::UpdateClientLoadState() {
   if (web_state == mojom::WebClientState::kResponsive ||
       web_state == mojom::WebClientState::kUnresponsive) {
     state = ClientLoadState::kReady;
+    client_load_error_reason_.reset();
   } else if (client_load_failed_) {
     state = ClientLoadState::kError;
   } else {
@@ -683,7 +722,90 @@ void Host::UpdateClientLoadState() {
     return;
   }
   client_load_state_ = state;
+  UpdateNativeLoadingState();
   observers_.Notify(&Observer::ClientLoadStateChanged, client_load_state_);
+}
+
+void Host::OnNativeLoadingChanged(bool is_showing) {
+  UpdateNativeLoadingState();
+}
+
+bool Host::IsShowingNativeLoading() const {
+  return is_showing_native_loading_;
+}
+
+void Host::OnGuestNavigationStarted() {
+  login_page_committed_ = false;
+  UpdateNativeLoadingState();
+}
+
+void Host::UpdateNativeLoadingState() {
+  const bool should_show = ComputeIsShowingNativeLoading();
+  if (is_showing_native_loading_ == should_show) {
+    return;
+  }
+  is_showing_native_loading_ = should_show;
+  observers_.Notify(&Observer::NativeLoadingStateChanged,
+                    is_showing_native_loading_);
+  if (contents_) {
+    contents_->OnHostNativeLoadingChanged(is_showing_native_loading_);
+  }
+}
+
+bool Host::ComputeIsShowingNativeLoading() const {
+  if (!features::IsGlicNativeLoadingPlaceholderEnabled() || !contents_) {
+    return false;
+  }
+  if (auto* service = GlicKeyedService::Get(profile_);
+      service && service->IsNoWebviewEnabled()) {
+    return contents_->IsShowingNativeLoading();
+  }
+  if (GetExpectedVisibility() != content::Visibility::VISIBLE) {
+    return false;
+  }
+  if (client_load_state_ != ClientLoadState::kLoading) {
+    return false;
+  }
+  const GlicWebClientManager* client_manager = web_client_manager();
+  if (GetGlicProviderSpec(profile_).SupportsSsr() &&
+      (!features::kGlicShowLoaderUntilMainPageOnload.Get() ||
+       (client_manager && client_manager->guest_main_page_loaded()))) {
+    return false;
+  }
+  if (login_page_committed_) {
+    return false;
+  }
+  if (client_manager &&
+      client_manager->last_committed_page_type().has_value() &&
+      *client_manager->last_committed_page_type() !=
+          mojom::GuestPageType::kRegular) {
+    return false;
+  }
+  switch (primary_webui_state_) {
+    case mojom::WebUiState::kUninitialized:
+    case mojom::WebUiState::kBeginLoad:
+    case mojom::WebUiState::kShowLoading:
+    case mojom::WebUiState::kHoldLoading:
+    case mojom::WebUiState::kFinishLoading:
+      return true;
+    case mojom::WebUiState::kWarmed:
+      // `GlicAppController` enters `kWarmed` once the web client reports
+      // itself warmed, so the client is normally connected by now. Keep the
+      // native placeholder visible defensively until a client connects.
+      return web_client_state() == mojom::WebClientState::kUninitialized;
+    case mojom::WebUiState::kError:
+    case mojom::WebUiState::kOffline:
+    case mojom::WebUiState::kUnavailable:
+    case mojom::WebUiState::kReady:
+    case mojom::WebUiState::kUnresponsive:
+    case mojom::WebUiState::kSignIn:
+    case mojom::WebUiState::kGuestError:
+    case mojom::WebUiState::kDisabledByAdmin:
+    case mojom::WebUiState::kLocationMismatch:
+    case mojom::WebUiState::kIneligibleAccount:
+    case mojom::WebUiState::kGuestLoaded:
+      return false;
+  }
 }
 
 void Host::NotifyInstanceActivationChanged(bool is_active) {
@@ -705,11 +827,11 @@ void Host::OnTaskTabsVisibilityChanged(bool has_visible_tab) {
 }
 
 void Host::NotifyAdditionalContext(mojom::AdditionalContextPtr context) {
-  if (auto* client = GetPrimaryWebClient()) {
-    client->NotifyAdditionalContext(std::move(context));
-  } else {
-    pending_additional_contexts_[context->source] = std::move(context);
+  if (IsPrimaryClientOpen()) {
+    GetPrimaryWebClient()->NotifyAdditionalContext(std::move(context));
+    return;
   }
+  pending_additional_contexts_[context->source] = std::move(context);
 }
 
 content::RenderProcessHost* Host::GetWebClientRenderProcessHost() const {

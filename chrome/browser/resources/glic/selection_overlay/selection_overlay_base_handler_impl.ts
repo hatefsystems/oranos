@@ -75,6 +75,11 @@ export class SelectionOverlayBaseHandlerImpl extends
         .callbackRouter.setInteractionOptions.addListener(callback);
   }
 
+  addSetSidePanelOpenListener(callback: (open: boolean) => void): number {
+    return BrowserProxyImpl.getInstance()
+        .callbackRouter.setSidePanelOpen.addListener(callback);
+  }
+
   addClearRegionSelectionListener(callback: () => void): number {
     return BrowserProxyImpl.getInstance()
         .callbackRouter.setPostRegionSelections.addListener(
@@ -187,5 +192,10 @@ export class SelectionOverlayBaseHandlerImpl extends
   openSettings(): void {
     const proxy = BrowserProxyImpl.getInstance();
     proxy.handler.openSettings();
+  }
+
+  openDogfoodFeedback(): void {
+    const proxy = BrowserProxyImpl.getInstance();
+    proxy.handler.openDogfoodFeedback();
   }
 }

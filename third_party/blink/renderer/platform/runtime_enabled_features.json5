@@ -769,7 +769,6 @@
     },
     {
       name: "AttributionReporting",
-      status: "stable",
       base_feature: "none",
       public: true,
     },
@@ -799,6 +798,10 @@
     {
       name: "AudioVideoTracks",
       status: "experimental",
+    },
+    {
+      name: "AudioWorkletProcessorErrorEventType",
+      status: "stable",
     },
     {
       // Shared MessagePort between AudioWorklet and AudioWorkletGlobalScope.
@@ -1217,6 +1220,14 @@
       status: "stable",
     },
     {
+      // Keeps the bar caret width independent of the element transform scale,
+      // so scaling an editable down does not fade the caret away and scaling it
+      // up does not make it fat.
+      // https://crbug.com/353556446
+      name: "CaretWidthIgnoresTransform",
+      status: "stable",
+    },
+    {
       // Kill switch for changes to RenderFrameMetadataObserverImpl in connection with Engagement
       // Signals. See https://crrev.com/c/4544201 and https://crbug.com/1458640.
       name: "CCTNewRFMPushBehavior",
@@ -1462,6 +1473,12 @@
       base_feature_status: "enabled",
       copied_from_base_feature_if: "overridden",
       status: "experimental",
+    },
+    {
+      name: "ConsistentFormControlPaintSnapping",
+      // Keep checkbox/radio painted size constant regardless of sub-pixel
+      // position. https://crbug.com/41288048
+      status: "stable",
     },
     {
       name: "ConstructableStylesheetCache",
@@ -1940,6 +1957,15 @@
       status: "stable",
     },
     {
+      // Math functions that return a <number> (e.g. round(), sign()) keep
+      // the percent hint of their arguments, so that e.g.
+      // calc(100% / round(100% / 10px)) is a <length-percentage> rather
+      // than a <percentage>.
+      // https://drafts.csswg.org/css-values-4/#calc-type-checking
+      name: "CSSNumberMathFunctionPercentHint",
+      status: "stable",
+    },
+    {
       // https://drafts.csswg.org/cssom/#dom-window-getcomputedstyle
       name: "CSSOMGetComputedStylePseudoElementRequiresColon",
       status: "experimental",
@@ -2236,6 +2262,14 @@
       // https://issues.chromium.org/41297237: CSS `text-transform: full-width` value
       name: "CSSTextTransformFullWidth",
       status: "experimental",
+    },
+    {
+      // Enable Unicode uppercasing to Mtavruli. Disable to restore the legacy
+      // mapping if font regressions are reported in the field.
+      // TODO(crbug.com/40127672): Remove this kill switch and the legacy mapping
+      // two milestones after the Stable launch, if rollback is no longer needed.
+      name: "CSSTextTransformGeorgianUppercase",
+      status: "stable",
     },
     {
       // crbug.com/41297237: Support multi-keyword values in CSS `text-transform`.
@@ -2908,6 +2942,11 @@
       status: "experimental",
     },
     {
+      // https://crbug.com/578672563
+      name: "ExclusionSpaceCopyOnWrite",
+      status: "stable",
+    },
+    {
       name: "ExperimentalContentSecurityPolicyFeatures",
       status: "experimental",
       base_feature: "none",
@@ -3251,6 +3290,13 @@
       status: "stable",
     },
     {
+      // Enables asymmetric diacritic matching in Find-in-Page so base
+      // characters match diacritic variants while explicit diacritics only
+      // match that diacritic (https://crbug.com/40518349).
+      name: "FindInPageAsymmetricDiacriticSearch",
+      status: "test",
+    },
+    {
       name: "FirstLetterParagraphOffsets",
       status: "stable",
     },
@@ -3535,6 +3581,10 @@
       public: true,
     },
     {
+      name: "GamepadUserActivationFocus",
+      status: "stable",
+    },
+    {
       name: "GamepadWindowEventHandlers",
       status: "stable",
     },
@@ -3693,6 +3743,13 @@
       status: "experimental",
     },
     {
+      // Kill switch for hiding the selection of a readonly text control
+      // once the control is no longer focused, matching editable controls.
+      // https://crbug.com/40768970
+      name: "HideUnfocusedReadonlyTextControlSelection",
+      status: "stable",
+    },
+    {
       // Kill switch for setting `display: none` on the media controls
       // container when it is not needed.
       // Lands in M147 and can be removed in M149. https://crbug.com/40591804
@@ -3827,6 +3884,14 @@
       status: "test",
     },
     {
+      // Defers image loads triggered from
+      // HTMLPlugInElement::CustomStyleForLayoutObject to a DOM manipulation
+      // task instead of loading synchronously during style recalc.
+      // https://crbug.com/575053155
+      name: "HTMLPlugInDeferStyleRecalcImageLoad",
+      status: "stable",
+    },
+    {
       // When enabled, specifies visual affordances for printing such as headers,
       // footers and page numbers, to be PDF annotations.
       // See section 14.8.2.2.1 here for info:
@@ -3931,7 +3996,12 @@
     {
       // See crbug.com/40910996 crbug.com/569803503
       name: "InlineContainingBlockSkipOpaque",
-      status: "test",
+      status: "stable",
+    },
+    {
+      // crbug.com/576888320
+      name: "InlineCursorMoveToEarlierFragmentainer",
+      status: "stable",
     },
     {
       name: "InlineCursorSkipNonIfc",
@@ -4012,12 +4082,13 @@
     {
       // https://chromestatus.com/feature/5152834368700416
       name: "InstallElement",
-      status: {"Android": "", "default": "test"},
-      origin_trial_feature_name: "InstallElement",
-      origin_trial_os: ["win", "mac", "linux", "chromeos"],
+      status: {
+        "Android": "",
+        "iOS": "",
+        "Fuchsia": "",
+        "default": "stable",
+      },
       public: true,
-      base_feature_status: "enabled",
-      copied_from_base_feature_if: "overridden",
     },
     {
       name: "InstallOnDeviceSpeechRecognition",
@@ -4040,6 +4111,13 @@
       // If enabled, BeginMainFrame will always be requested when there are
       // active IntersectionObservers and also active composited animations.
       name: "IntersectionObserverCompositedAnimationsForceMainFrames",
+      status: "stable",
+    },
+    {
+      // Lets invalidation sets use "is focused" as a feature, so that a
+      // selector like `.a :focus` only invalidates the focused descendant of
+      // `.a` instead of its whole subtree. Kill switch.
+      name: "InvalidationSetFocusFeature",
       status: "stable",
     },
     {
@@ -4098,10 +4176,6 @@
     },
     {
       name: "LayoutCloneForScrollableOverflowChange",
-      status: "stable",
-    },
-    {
-      name: "LayoutContainingBlockReturnsBox",
       status: "stable",
     },
     {
@@ -4327,7 +4401,7 @@
     {
       // Enables MathMLAnchorElement
       name: "MathMLAnchorElement",
-      status: "test",
+      status: "experimental",
     },
     {
       // Enables mirroring for stretchy and large MathML operators when
@@ -5084,6 +5158,7 @@
     {
       name: "PermissionsPolicyForSharedWorkers",
       status: "experimental",
+      public: true,
     },
     {
       name: "PermissionsRequestRevoke",
@@ -5146,6 +5221,13 @@
     },
     {
       name: "PositionOutsideTabSpanCheckSiblingNode",
+      status: "stable",
+    },
+    {
+      // Kill switch for https://crbug.com/382679385 which recomputes the
+      // dimensions of an out-of-flow positioned box when computing dimensions
+      // changes its scrollbars.
+      name: "PositionTryFreezeScrollbars",
       status: "stable",
     },
     {
@@ -5569,10 +5651,6 @@
     },
     {
       name: "RespectOverscrollBehaviorForScrollBubbling",
-      status: "stable",
-    },
-    {
-      name: "ResponsiveIframes",
       status: "stable",
     },
     {
@@ -6192,6 +6270,7 @@
     },
     {
       name: "SharedWorker",
+      browser_process_read_write_access: true,
       public: true,
       status: "stable",
     },
@@ -6666,6 +6745,10 @@
       status: "stable",
     },
     {
+      name: "SyncCrossDocumentAnimationTiming",
+      status: "stable",
+    },
+    {
       name: "SynthesizedKeyboardEventsForAccessibilityActions",
       status: "experimental",
     },
@@ -6808,6 +6891,11 @@
       status: "experimental",
     },
     {
+      // https://crbug.com/578671521
+      name: "TextEncodingDetectorTldHint",
+      status: "stable",
+    },
+    {
       name: "TextFragmentAPI",
       status: "experimental",
     },
@@ -6905,7 +6993,6 @@
       name: "TopicsAPI",
       base_feature: "none",
       public: true,
-      status: "stable",
     },
     // This feature allows touch dragging and a context menu to occur
     // simultaneously, with the assumption that the menu is non-modal.  Without
@@ -7026,6 +7113,13 @@
       status: "experimental",
     },
     {
+      // Make the browser process verify user activation notification calls
+      // from renderers before updating its own states and propagating the
+      // information to other renderers (https://crbug.com/40091540).
+      name: "TrustedUserActivationTriggers",
+      status: "experimental",
+    },
+    {
       name: "TwoPhaseViewTransition",
       status: "experimental",
     },
@@ -7123,6 +7217,10 @@
       status: {
         "ChromeOS": "stable",
       },
+    },
+    {
+      name: "UsedPositionRelativeInsets",
+      status: "stable",
     },
     {
       // Android currently uses low-quality interpolation, while other platforms
@@ -7265,6 +7363,13 @@
       name: "VisibilityCollapseColumn",
     },
     {
+      // Kill switch for https://crbug.com/569257985. Allows animation-tainted
+      // var() data to be substituted into -internal-visited-* properties
+      // whenever it may be substituted into their unvisited counterparts.
+      name: "VisitedAnimationTaintedSubstitution",
+      status: "stable",
+    },
+    {
       // Guards the removal of legacy visual rect inflation when mapping through
       // nested 2D transforms. Prevents rotated or skewed descendants from being
       // repeatedly expanded while computing visible bounds.
@@ -7296,12 +7401,13 @@
     {
       // https://chromestatus.com/feature/5183481574850560
       name: "WebAppInstallation",
-      status: {"Android": "", "default": "test"},
-      origin_trial_feature_name: "WebAppInstallation",
-      origin_trial_os: ["win", "mac", "linux", "chromeos"],
+      status: {
+        "Android": "",
+        "iOS": "",
+        "Fuchsia": "",
+        "default": "stable",
+      },
       public: true,
-      base_feature_status: "enabled",
-      copied_from_base_feature_if: "overridden",
     },
     {
       // This needs to be kept as a runtime flag
@@ -7769,7 +7875,7 @@
     },
     {
       name: "WebTransportExportKeyingMaterial",
-      status: "experimental",
+      status: "stable",
     },
     {
       name: "WebTransportHeaders",
@@ -7985,17 +8091,18 @@
     },
     {
       // Supports the "split", "splitposition", and "splitsize" features in
-      // window.open(), which request that the new content be opened in a split
-      // tab alongside the opener.
+      // window.open(), and the "windowfeatures" content attribute on <a>,
+      // <area>, and <form>, which request that the new content be opened in a
+      // split tab alongside the opener.
       //
       // The base::Feature is enabled by default, and serves as a kill switch
       // for the browser-side implementation. The Blink side follows the
-      // "test" status unless the base::Feature is overridden, in which case
-      // both sides follow the override. This keeps the renderer and browser
-      // consistent, so that the browser can reject split requests from a
-      // renderer when the base::Feature is disabled.
+      // RuntimeEnabledFeature status unless the base::Feature is overridden,
+      // in which case both sides follow the override. This keeps the renderer
+      // and browser consistent, so that the browser can reject split requests
+      // from a renderer when the base::Feature is disabled.
       name: "WindowOpenSplitTab",
-      status: "test",
+      status: "experimental",
       base_feature_status: "enabled",
       copied_from_base_feature_if: "overridden",
     },
@@ -8036,7 +8143,7 @@
       // with its responseXML document.
       // https://crbug.com/466303347
       name: "XMLRustForNonXslt",
-      status: "stable",
+      status: "experimental",
     },
     {
       name: "XMLSerializerConsistentDefaultNsDeclMatching",

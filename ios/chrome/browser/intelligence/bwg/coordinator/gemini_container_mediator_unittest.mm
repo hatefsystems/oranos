@@ -47,6 +47,7 @@
 #import "ios/chrome/browser/intelligence/bwg/utils/gemini_test_utils.h"
 #import "ios/chrome/browser/intelligence/features/features.h"
 #import "ios/chrome/browser/intelligence/proto_wrappers/page_context_wrapper.h"
+#import "ios/chrome/browser/intelligence/zero_state_suggestions/ui/gemini_zero_state_consumer.h"
 #import "ios/chrome/browser/intelligence/zero_state_suggestions/zero_state_suggestions_service.h"
 #import "ios/chrome/browser/ntp/model/new_tab_page_tab_helper.h"
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service_factory.h"
@@ -241,6 +242,9 @@ constexpr actor::ActorTaskId kTaskId = actor::ActorTaskId(1);
     (std::optional<NSInteger>)height {
   _mediumDetentHeight = height;
   _setMediumDetentHeightCallCount++;
+}
+
+- (void)setAssistantContainerMediumDetentPercentage:(NSInteger)percentage {
 }
 
 - (void)setAssistantContainerGrabberHidden:(BOOL)hidden
@@ -1715,6 +1719,55 @@ TEST_F(GeminiContainerMediatorTest,
   EXPECT_EQ(std::nullopt, fake_container_handler.mediumDetentHeight);
 }
 
+// Tests that fetching zero-state suggestions updates the consumer and adapts
+// the medium detent height of the assistant container when in zero state.
+TEST_F(GeminiContainerMediatorTest,
+       TestFetchZeroStateSuggestionsAdaptsMediumDetentHeight) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      {kAssistantContainer, kIOSGeminiBottomSheetMigration,
+       kZeroStateSuggestions, kZeroStateSuggestionsCentralization},
+      {});
+
+  constexpr CGFloat kInitialHeight = 388.0;
+  constexpr CGFloat kReducedHeight = 330.0;
+
+  FakeAssistantContainerCommandsHandler* fake_container_handler =
+      [[FakeAssistantContainerCommandsHandler alloc] init];
+  mediator_.containerHandler = fake_container_handler;
+
+  FakeGeminiContainerConsumer* consumer =
+      [[FakeGeminiContainerConsumer alloc] init];
+  consumer.contentHeight = kInitialHeight;
+  mediator_.consumer = consumer;
+
+  id mock_zero_state_consumer =
+      OCMProtocolMock(@protocol(GeminiZeroStateConsumer));
+  mediator_.zeroStateConsumer = mock_zero_state_consumer;
+
+  web::FakeWebState* web_state = AppendActiveWebState();
+  web_state->SetCurrentURL(GURL("https://example.com"));
+  web_state->SetVisibleURL(GURL("https://example.com"));
+
+  [mediator_ connect];
+  EXPECT_EQ(std::optional<NSInteger>(kInitialHeight),
+            fake_container_handler.mediumDetentHeight);
+
+  // Simulate consumer content height shrinking when fewer suggestions arrive on
+  // a subsequent fetch (e.g. New Chat).
+  OCMExpect([mock_zero_state_consumer setZeroStateSuggestions:nil]);
+  OCMExpect([mock_zero_state_consumer
+      setZeroStateSuggestions:[OCMArg checkWithBlock:^BOOL(id value) {
+        consumer.contentHeight = kReducedHeight;
+        return value != nil;
+      }]]);
+
+  [mediator_ fetchZeroStateSuggestions:startup_state_];
+  EXPECT_OCMOCK_VERIFY(mock_zero_state_consumer);
+  EXPECT_EQ(std::optional<NSInteger>(kReducedHeight),
+            fake_container_handler.mediumDetentHeight);
+}
+
 // Test that entering the Tab Grid minimizes the assistant container and stops
 // observing after `disconnect`.
 TEST_F(GeminiContainerMediatorTest, TestWillEnterTabGridMinimizesContainer) {
@@ -2079,6 +2132,95 @@ TEST_F(GeminiContainerMediatorTest,
       &shared_tabs_delegate_,
       multi_tab_mediator.gatewayManager.tabPickerHandler.sharedTabsDelegate);
   [multi_tab_mediator disconnect];
+}
+
+// Tests that changing the page content sharing preference updates the partial
+// page context attachment state and propagates it to shared tabs.
+TEST_F(GeminiContainerMediatorTest, TestOnPageContentPrefChanged) {
+  @autoreleasepool {
+    web::FakeWebState* web_state =
+        static_cast<web::FakeWebState*>(AppendActiveWebState());
+    web_state->WasShown();
+    web_state->SetCurrentURL(GURL("https://example.com"));
+    web_state->SetContentsMimeType("text/html");
+
+    id mock_wrapper_class = OCMClassMock([PageContextWrapper class]);
+    MediatorFakePageContextWrapper* fake_wrapper =
+        [[MediatorFakePageContextWrapper alloc]
+              initWithWebState:web_state
+            completionCallback:base::DoNothing()];
+    OCMStub([mock_wrapper_class alloc]).andReturn(fake_wrapper);
+
+    [mediator_ connect];
+
+    // Preference defaults to true in tests.
+    EXPECT_TRUE(
+        profile_->GetPrefs()->GetBoolean(prefs::kIOSBWGPageContentSetting));
+    EXPECT_EQ(ios::provider::GeminiPageContextAttachmentState::kAttached,
+              shared_tabs_delegate_.last_saved_active_page_context_
+                  .geminiPageContextAttachmentState);
+
+    int call_count = shared_tabs_delegate_.save_active_page_context_call_count_;
+
+    // Toggle page content preference to false.
+    profile_->GetPrefs()->SetBoolean(prefs::kIOSBWGPageContentSetting, false);
+
+    EXPECT_GT(shared_tabs_delegate_.save_active_page_context_call_count_,
+              call_count);
+    EXPECT_EQ(ios::provider::GeminiPageContextAttachmentState::kUserDisabled,
+              shared_tabs_delegate_.last_saved_active_page_context_
+                  .geminiPageContextAttachmentState);
+
+    call_count = shared_tabs_delegate_.save_active_page_context_call_count_;
+
+    // Toggle page content preference back to true.
+    profile_->GetPrefs()->SetBoolean(prefs::kIOSBWGPageContentSetting, true);
+
+    EXPECT_GT(shared_tabs_delegate_.save_active_page_context_call_count_,
+              call_count);
+    EXPECT_EQ(ios::provider::GeminiPageContextAttachmentState::kAttached,
+              shared_tabs_delegate_.last_saved_active_page_context_
+                  .geminiPageContextAttachmentState);
+
+    [mock_wrapper_class stopMocking];
+  }
+}
+
+// Tests that changing the page content sharing preference while in Gemini Live
+// transcribing mode does not update partial page context.
+TEST_F(GeminiContainerMediatorTest,
+       TestOnPageContentPrefChangedIgnoredInLiveTranscribing) {
+  AppendActiveWebState();
+  [mediator_ connect];
+
+  [mediator_ didSwitchToMode:ios::provider::GeminiViewMode::kLive];
+  [mediator_
+      didUpdateProcessingStatus:ios::provider::GeminiClientMode::kTranscribing
+                      sessionID:@"test_session"
+                 conversationID:@"test_convo"];
+
+  int call_count = shared_tabs_delegate_.save_active_page_context_call_count_;
+
+  // Toggle page content preference to false.
+  profile_->GetPrefs()->SetBoolean(prefs::kIOSBWGPageContentSetting, false);
+
+  // Partial page context should not be updated while transcribing.
+  EXPECT_EQ(call_count,
+            shared_tabs_delegate_.save_active_page_context_call_count_);
+}
+
+// Tests that preference changes are not observed after mediator disconnects.
+TEST_F(GeminiContainerMediatorTest, TestPrefChangesIgnoredAfterDisconnect) {
+  AppendActiveWebState();
+  [mediator_ connect];
+  [mediator_ disconnect];
+
+  int call_count = shared_tabs_delegate_.save_active_page_context_call_count_;
+
+  profile_->GetPrefs()->SetBoolean(prefs::kIOSBWGPageContentSetting, false);
+
+  EXPECT_EQ(call_count,
+            shared_tabs_delegate_.save_active_page_context_call_count_);
 }
 
 }  // namespace

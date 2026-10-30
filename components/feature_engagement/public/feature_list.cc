@@ -42,9 +42,7 @@ const base::Feature* const kAllFeatures[] = {
     &kIPHAimActivationHint,
     &kIPHAndroidBottomBarAddressBar,
     &kIPHAndroidBottomBarEducation,
-    &kIPHAndroidBottomBarGlic,
-    &kIPHAndroidBottomBarNewTab,
-    &kIPHAndroidBottomBarPromoDialog,
+    &kIPHAndroidBottomBarEducationTooltips,
     &kIPHAndroidTabDeclutter,
     &kIPHAndroidVerticalTabsNewLabel,
     &kIPHAndroidVerticalTabsPromoFeature,
@@ -297,6 +295,7 @@ const base::Feature* const kAllFeatures[] = {
     &kIPHGMCLocalMediaCastingFeature,
     &kIPHGMCSaveVideoFrameFeature,
     &kIPHHistorySearchFeature,
+    &kIPHIndigoContextMenuToastFeature,
     &kIPHLensOverlayFeature,
     &kIPHMemorySaverModeFeature,
     &kIPHMultistepFilterPromoFeature,
@@ -408,8 +407,6 @@ const base::Feature* const kAllFeatures[] = {
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
     // keep-sorted start case=no
-    &kIPHSignInBenefitsFeature,
-    &kIPHSignInBenefitsNewSigninFeature,
     &kIPHSupervisedUserProfileSigninFeature,
 // keep-sorted end
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)

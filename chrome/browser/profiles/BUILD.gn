@@ -12,6 +12,7 @@ import("//components/on_device_translation/buildflags/features.gni")
 import("//components/signin/features.gni")
 import("//components/spellcheck/spellcheck_build_features.gni")
 import("//extensions/buildflags/buildflags.gni")
+import("//third_party/blink/public/public_features.gni")
 
 # This target should be the default place for adding public interface things
 # (ie, non-factory, non-impl). There will likely need to be a :factory or :impl
@@ -173,6 +174,7 @@ source_set("misc") {
     deps += [
       "//chrome/browser/android:profile_key_startup_accessor",
       "//chrome/browser/android:profile_token",
+      "//chrome/browser/flags:flags_android",
       "//chrome/browser/profiles/android:jni_headers",
       "//chrome/common:constants",
       "//content/public/browser",
@@ -207,8 +209,10 @@ source_set("misc") {
       "profile_list_desktop.h",
     ]
     deps += [
+      "//chrome/browser/metrics",
       "//chrome/browser/metrics/desktop_session_duration",
       "//chrome/browser/ui:chrome_pages",
+      "//components/metrics",
     ]
   }
 
@@ -917,6 +921,7 @@ source_set("profiles_extra_parts_impl") {
     "//components/optimization_guide/core",
     "//components/password_manager/content/browser",
     "//components/password_manager/core/browser/features:password_features",
+    "//components/password_manager/core/common:features",
     "//components/payments/content",
     "//components/permissions:permissions_common",
     "//components/policy/content",
@@ -929,6 +934,7 @@ source_set("profiles_extra_parts_impl") {
     "//components/sync/base:features",
     "//media",
     "//services/network/public/cpp",
+    "//third_party/blink/public:buildflags",
     "//ui/webui:buildflags",
   ]
 
@@ -1020,8 +1026,11 @@ source_set("profiles_extra_parts_impl") {
       "//chrome/browser/media_galleries",
       "//chrome/browser/nearby_sharing",
       "//chrome/browser/policy:onc",
-      "//chrome/browser/smart_card",
     ]
+  }
+
+  if (enable_smart_card) {
+    deps += [ "//chrome/browser/smart_card" ]
   }
 
   if (!is_chromeos) {
@@ -1220,7 +1229,10 @@ source_set("unit_tests") {
 
   if (is_android) {
     sources += [ "android/profile_resolver_unittest.cc" ]
-    deps += [ "//chrome/browser/android:profile_token" ]
+    deps += [
+      "//chrome/browser/android:profile_token",
+      "//chrome/browser/flags:flags_android",
+    ]
   }
 
   if (!is_chromeos) {
@@ -1316,6 +1328,7 @@ if (!is_android) {
       "//components/universal_optout:features",
       "//components/user_manager",
       "//content/test:test_support",
+      "//crypto:test_support",
       "//testing/gmock",
       "//testing/gtest",
     ]

@@ -4,6 +4,7 @@
 
 #import "ios/chrome/browser/content_suggestions/coordinator/content_suggestions_coordinator.h"
 
+#import <algorithm>
 #import <optional>
 #import <string_view>
 #import <vector>
@@ -22,7 +23,6 @@
 #import "components/commerce/core/shopping_service.h"
 #import "components/feed/core/v2/public/ios/pref_names.h"
 #import "components/image_fetcher/core/image_data_fetcher.h"
-#import "components/ntp_tiles/features.h"
 #import "components/ntp_tiles/most_visited_sites.h"
 #import "components/ntp_tiles/pref_names.h"
 #import "components/password_manager/core/browser/ui/credential_ui_entry.h"
@@ -40,7 +40,8 @@
 #import "ios/chrome/app/application_delegate/app_state.h"
 #import "ios/chrome/app/profile/profile_state.h"
 #import "ios/chrome/app/tests_hook.h"
-#import "ios/chrome/browser/aim/model/ios_chrome_aim_eligibility_service_factory.h"
+#import "ios/chrome/browser/aim/model/ai_mode_button_service_ios.h"
+#import "ios/chrome/browser/aim/model/ai_mode_button_service_ios_factory.h"
 #import "ios/chrome/browser/app_store_bundle/model/app_store_bundle_service_factory.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator.h"
@@ -338,12 +339,10 @@ using segmentation_platform::TipIdentifier;
   NSMutableArray* moduleMediators = [NSMutableArray array];
 
   if (!IsNTPRedesignEnabled()) {
-    AimEligibilityService* aimEligibilityService =
-        ntp_tiles::GetAimButtonRefactorArm() ==
-                ntp_tiles::AimButtonRefactorArm::kAimAsMvt
-            ? IOSChromeAimEligibilityServiceFactory::GetForProfile(profile)
-            : nullptr;
-
+    AIModeButtonServiceIOS* aimButtonService =
+        GetAimButtonRefactorArm() == AimButtonRefactorArm::kAimAsMvt
+            ? AIModeButtonServiceIOSFactory::GetForProfile(profile)
+            : nil;
     _mostVisitedTilesMediator = [[MostVisitedTilesMediator alloc]
         initWithMostVisitedSite:std::move(mostVisitedFactory)
                  historyService:historyService
@@ -355,7 +354,7 @@ using segmentation_platform::TipIdentifier;
           accountManagerService:accountManagerService
               engagementTracker:engagementTracker
               layoutGuideCenter:LayoutGuideCenterForBrowser(self.browser)
-          aimEligibilityService:aimEligibilityService];
+            aiModeButtonService:aimButtonService];
     _mostVisitedTilesMediator.contentSuggestionsDelegate = self.delegate;
     _mostVisitedTilesMediator.actionFactory = [[BrowserActionFactory alloc]
         initWithBrowser:self.browser
@@ -473,7 +472,9 @@ using segmentation_platform::TipIdentifier;
                                            image_fetcher::ImageDataFetcher>(
                                            profile->GetSharedURLLoaderFactory())
         backgroundCustomizationService:
-            HomeBackgroundCustomizationServiceFactory::GetForProfile(profile)];
+            HomeBackgroundCustomizationServiceFactory::GetForProfile(profile)
+                 localStatePrefService:GetApplicationContext()
+                                           ->GetLocalState()];
     _tipsMediator.presentationAudience = self;
     [moduleMediators addObject:_tipsMediator];
 
@@ -625,9 +626,27 @@ using segmentation_platform::TipIdentifier;
 
 #pragma mark - Public methods
 
+- (void)didOpenMainCustomizationMenu {
+  if (!_tipsMediator ||
+      _tipsMediator.config.identifier != TipIdentifier::kNTPTheme) {
+    return;
+  }
+  segmentation_platform::home_modules::HomeModulesCardRegistry* registry =
+      segmentation_platform::SegmentationPlatformServiceFactory::
+          GetHomeCardRegistryForProfile(self.profile);
+  if (registry) {
+    registry->NotifyCardInteracted(
+        segmentation_platform::kNTPThemeEphemeralModule);
+  }
+  [_tipsMediator removeModuleWithCompletion:nil];
+}
+
 - (void)setWebState:(web::WebState*)webState {
   if (_webState == webState) {
     return;
+  }
+  if (_webState) {
+    [_tipsMediator completeInPlaceInteractionIfNeeded];
   }
   _webState = webState;
   _deferredEphemeralCard = std::nullopt;
@@ -745,8 +764,7 @@ using segmentation_platform::TipIdentifier;
 }
 
 - (void)didTapAIMModule {
-  CHECK_EQ(ntp_tiles::GetAimButtonRefactorArm(),
-           ntp_tiles::AimButtonRefactorArm::kAimAsModule);
+  CHECK_EQ(GetAimButtonRefactorArm(), AimButtonRefactorArm::kAimAsModule);
   [self.NTPActionsDelegate standaloneAIMModuleOpened];
 }
 
@@ -1436,6 +1454,11 @@ using segmentation_platform::TipIdentifier;
   CHECK_EQ(_notificationsOptInAlertCoordinator, alertCoordinator);
   std::vector<PushNotificationClientId> clientIDs =
       alertCoordinator.clientIds.value();
+  if (std::ranges::contains(clientIDs, PushNotificationClientId::kTips)) {
+    [_tipsMediator
+        setTipsNotificationsSwitchEnabled:
+            (result == NotificationsOptInAlertResult::kPermissionGranted)];
+  }
   if (result != NotificationsOptInAlertResult::kOpenedSettings) {
     [_notificationsOptInAlertCoordinator stop];
     _notificationsOptInAlertCoordinator = nil;

@@ -11,17 +11,21 @@
 #include <utility>
 #include <vector>
 
+#include "base/containers/to_vector.h"
 #include "base/feature_list.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/run_until.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/autofill_trigger_source.h"
 #include "components/autofill/core/browser/data_manager/autofill_ai/entity_data_manager.h"
-#include "components/autofill/core/browser/data_manager/autofill_ai/in_memory_entity_suppression_manager.h"
+#include "components/autofill/core/browser/data_manager/autofill_ai/entity_suppression_manager.h"
+#include "components/autofill/core/browser/data_manager/autofill_ai/entity_suppression_sync_bridge.h"
+#include "components/autofill/core/browser/data_manager/autofill_ai/entity_suppression_sync_bridge_test_util.h"
 #include "components/autofill/core/browser/data_model/autofill_ai/entity_instance.h"
 #include "components/autofill/core/browser/data_model/autofill_ai/entity_type.h"
 #include "components/autofill/core/browser/data_model/autofill_ai/entity_type_names.h"
@@ -622,6 +626,25 @@ class AutofillAiKeyMetricsTest
     return BaseAutofillAiTest::CreateEntity(entity_type(), record_type());
   }
 
+  const AutofillField& GetMergeConstraintField(const FormStructure& form) {
+    switch (entity_type().name()) {
+      case EntityTypeName::kPassport:
+      case EntityTypeName::kDriversLicense:
+      case EntityTypeName::kVehicle:
+        return *form.field(1);
+      case EntityTypeName::kKnownTravelerNumber:
+      case EntityTypeName::kRedressNumber:
+      case EntityTypeName::kNationalIdCard:
+        return *form.field(0);
+      case EntityTypeName::kFlightReservation:
+      case EntityTypeName::kShipment:
+        return *form.field(2);
+      case EntityTypeName::kOrder:
+        return *form.field(3);
+    }
+    NOTREACHED();
+  }
+
   void ExpectKeyMetricsRecording(const base::HistogramTester& histogram_tester,
                                  std::string_view key_metric_name,
                                  int sample) {
@@ -747,6 +770,61 @@ TEST_P(AutofillAiKeyMetricsTest, FillingCorrectness) {
     manager().OnFormSubmitted(*form, /*ukm_source_id=*/{});
     ExpectKeyMetricsRecording(histogram_tester, "FillingCorrectness",
                               /*sample=*/0);
+  }
+}
+
+TEST_P(AutofillAiKeyMetricsTest, FillingCorrectnessMergeConstraints) {
+  std::unique_ptr<FormStructure> form = CreateForm();
+  EntityInstance entity = CreateEntity();
+  AddOrUpdateEntityInstance(entity);
+  manager().OnFormSeen(*form);
+  manager().OnAutofillAiSuggestionsShown(
+      *form, *form->field(0), {GetSuggestion(entity)},
+      /*ukm_source_id=*/{}, /*update_suggestions_callback=*/{});
+  manager().OnDidFillSuggestion(
+      entity, *form, *form->field(0),
+      /*filled_fields=*/
+      base::ToVector(form->fields(), &std::unique_ptr<AutofillField>::get),
+      /*ukm_source_id=*/{});
+  const AutofillField& merge_constraint_field = GetMergeConstraintField(*form);
+  const auto expect_merge_constraints_recording =
+      [&](const base::HistogramTester& histogram_tester, int sample) {
+        const std::string aggregate_histogram =
+            "Autofill.Ai.KeyMetrics.FillingCorrectness.MergeConstraints."
+            "PersonalContext";
+        const std::string entity_histogram = base::StrCat(
+            {"Autofill.Ai.KeyMetrics.FillingCorrectness.MergeConstraints.",
+             EntityTypeToMetricsString(entity_type()), ".PersonalContext"});
+        if (record_type() == EntityInstance::RecordType::kPersonalContext) {
+          histogram_tester.ExpectUniqueSample(aggregate_histogram, sample, 1);
+          histogram_tester.ExpectUniqueSample(entity_histogram, sample, 1);
+        } else {
+          histogram_tester.ExpectTotalCount(aggregate_histogram, 0);
+          histogram_tester.ExpectTotalCount(entity_histogram, 0);
+        }
+      };
+  {
+    base::HistogramTester histogram_tester;
+    manager().OnFormSubmitted(*form, /*ukm_source_id=*/{});
+    expect_merge_constraints_recording(histogram_tester, /*sample=*/1);
+  }
+  if (form->field(0) != &merge_constraint_field) {
+    manager().OnEditedAutofilledField(*form, *form->field(0),
+                                      /*ukm_source_id=*/{});
+    base::HistogramTester histogram_tester;
+    manager().OnFormSubmitted(*form, /*ukm_source_id=*/{});
+    ExpectKeyMetricsRecording(histogram_tester, "FillingCorrectness",
+                              /*sample=*/0);
+    expect_merge_constraints_recording(histogram_tester, /*sample=*/1);
+  }
+  {
+    manager().OnEditedAutofilledField(*form, merge_constraint_field,
+                                      /*ukm_source_id=*/{});
+    base::HistogramTester histogram_tester;
+    manager().OnFormSubmitted(*form, /*ukm_source_id=*/{});
+    ExpectKeyMetricsRecording(histogram_tester, "FillingCorrectness",
+                              /*sample=*/0);
+    expect_merge_constraints_recording(histogram_tester, /*sample=*/0);
   }
 }
 
@@ -912,8 +990,13 @@ TEST_F(BaseAutofillAiTest, KeyMetrics_PerRecordType) {
 class AutofillAiPersonalContextSuppressionTest : public BaseAutofillAiTest {
  public:
   AutofillAiPersonalContextSuppressionTest() {
+    std::unique_ptr<EntitySuppressionSyncBridge> bridge =
+        CreateTestEntitySuppressionSyncBridge();
+    EXPECT_TRUE(base::test::RunUntil([&]() { return bridge->IsLoaded(); }));
+    suppression_manager_ =
+        std::make_unique<EntitySuppressionManager>(std::move(bridge));
     ON_CALL(autofill_client(), GetEntitySuppressionManager)
-        .WillByDefault(Return(&suppression_manager_));
+        .WillByDefault(Return(suppression_manager_.get()));
 
     // Recreate `AutofillAiManager` instance because its `AutofillAiLogger`
     // member caches the current `EntitySuppressionManager` of `AutofillClient`
@@ -959,12 +1042,12 @@ class AutofillAiPersonalContextSuppressionTest : public BaseAutofillAiTest {
         {GetSuggestion(passport1), GetSuggestion(passport2),
          GetSuggestion(drivers_license)},
         /*ukm_source_id=*/{}, /*update_suggestions_callback=*/{});
-    suppression_manager_.SuppressEntity(passport1);
+    suppression_manager_->SuppressEntity(passport1);
     return form;
   }
 
  private:
-  InMemoryEntitySuppressionManager suppression_manager_;
+  std::unique_ptr<EntitySuppressionManager> suppression_manager_;
 };
 
 // Tests that, at form submission, one suppression sample is emitted per unique

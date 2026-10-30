@@ -78,7 +78,6 @@
 #include "components/javascript_dialogs/tab_modal_dialog_manager.h"
 #include "components/navigation_interception/intercept_navigation_delegate.h"
 #include "components/no_state_prefetch/browser/no_state_prefetch_manager.h"
-#include "components/optimization_guide/content/browser/page_content_proto_provider.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/paint_preview/buildflags/buildflags.h"
 #include "components/pdf/common/constants.h"
@@ -113,8 +112,8 @@
 #include "third_party/jni_zero/default_conversions.h"
 #include "third_party/skia/include/core/SkRect.h"
 #include "third_party/skia/include/core/SkRegion.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/page_transition_types.h"
-#include "ui/base/window_open_disposition.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/android/rect_jni_conversion.h"
@@ -528,7 +527,7 @@ content::WebContents* TabWebContentsDelegateAndroid::CreateCustomWebContents(
     const GURL& opener_url,
     const std::string& frame_name,
     const GURL& target_url,
-    WindowOpenDisposition disposition,
+    ui::mojom::WindowOpenDisposition disposition,
     const blink::mojom::WindowFeatures& window_features,
     const content::StoragePartitionConfig& partition_config,
     content::SessionStorageNamespaceHandle* session_storage_namespace) {
@@ -600,13 +599,14 @@ WebContents* TabWebContentsDelegateAndroid::OpenURLFromTab(
                                   std::move(navigation_handle_callback));
   }
 
-  WindowOpenDisposition disposition = params.disposition;
-  if (!source || (disposition != WindowOpenDisposition::kCurrentTab &&
-                  disposition != WindowOpenDisposition::kNewForegroundTab &&
-                  disposition != WindowOpenDisposition::kNewBackgroundTab &&
-                  disposition != WindowOpenDisposition::kOffTheRecord &&
-                  disposition != WindowOpenDisposition::kNewPopup &&
-                  disposition != WindowOpenDisposition::kNewWindow)) {
+  ui::mojom::WindowOpenDisposition disposition = params.disposition;
+  if (!source ||
+      (disposition != ui::mojom::WindowOpenDisposition::kCurrentTab &&
+       disposition != ui::mojom::WindowOpenDisposition::kNewForegroundTab &&
+       disposition != ui::mojom::WindowOpenDisposition::kNewBackgroundTab &&
+       disposition != ui::mojom::WindowOpenDisposition::kOffTheRecord &&
+       disposition != ui::mojom::WindowOpenDisposition::kNewPopup &&
+       disposition != ui::mojom::WindowOpenDisposition::kNewWindow)) {
     // We can't handle this here.  Give the parent a chance.
     return WebContentsDelegateAndroid::OpenURLFromTab(
         source, params, std::move(navigation_handle_callback));
@@ -632,7 +632,7 @@ WebContents* TabWebContentsDelegateAndroid::OpenURLFromTab(
     }
   }
 
-  if (disposition == WindowOpenDisposition::kCurrentTab) {
+  if (disposition == ui::mojom::WindowOpenDisposition::kCurrentTab) {
     // Ask the parent to handle in-place opening.
     return WebContentsDelegateAndroid::OpenURLFromTab(
         source, params, std::move(navigation_handle_callback));
@@ -658,18 +658,18 @@ WebContents* TabWebContentsDelegateAndroid::AddNewContents(
     WebContents* source,
     std::unique_ptr<WebContents> new_contents,
     const GURL& target_url,
-    WindowOpenDisposition disposition,
+    ui::mojom::WindowOpenDisposition disposition,
     const blink::mojom::WindowFeatures& window_features,
     bool user_gesture,
     bool* was_blocked) {
   // No code for this yet.
-  CHECK_NE(disposition, WindowOpenDisposition::kSaveToDisk,
+  CHECK_NE(disposition, ui::mojom::WindowOpenDisposition::kSaveToDisk,
            base::NotFatalUntil::M161);
   // Can't create a new contents for the current tab - invalid case.
-  CHECK_NE(disposition, WindowOpenDisposition::kCurrentTab,
+  CHECK_NE(disposition, ui::mojom::WindowOpenDisposition::kCurrentTab,
            base::NotFatalUntil::M161);
 
-  if (disposition == WindowOpenDisposition::kNewPictureInPicture) {
+  if (disposition == ui::mojom::WindowOpenDisposition::kNewPictureInPicture) {
     const GURL& opener_url = source ? source->GetLastCommittedURL() : GURL();
     if (!PictureInPictureWindowManager::IsSupportedForDocumentPictureInPicture(
             opener_url)) {
@@ -751,7 +751,7 @@ WebContents* TabWebContentsDelegateAndroid::AddNewContents(
   // When handled is |true|, ownership has been passed to java, which in turn
   // creates a new TabAndroid instance to own the WebContents.
   if (handled) {
-    if (disposition == WindowOpenDisposition::kNewPictureInPicture) {
+    if (disposition == ui::mojom::WindowOpenDisposition::kNewPictureInPicture) {
       // For Document PiP, immediately enter PiP mode on the native side so that
       // we start observing the opener for navigations immediately.
       PictureInPictureWindowManager::GetInstance()
@@ -819,28 +819,6 @@ TabWebContentsDelegateAndroid::GetInstalledWebappGeolocationContext() {
         std::make_unique<InstalledWebappGeolocationContext>();
   }
   return installed_webapp_geolocation_context_.get();
-}
-
-void TabWebContentsDelegateAndroid::GetAIPageContent(
-    content::WebContents* web_contents,
-    bool include_actionable_elements,
-    base::OnceCallback<void(base::expected<std::string, std::string>)>
-        callback) {
-  auto options = include_actionable_elements
-                     ? optimization_guide::ActionableAIPageContentOptions(
-                           /*on_critical_path=*/false)
-                     : optimization_guide::DefaultAIPageContentOptions(
-                           /*on_critical_path=*/false);
-
-  optimization_guide::GetAIPageContent(
-      web_contents, std::move(options),
-      base::BindOnce([](optimization_guide::AIPageContentResultOrError result)
-                         -> base::expected<std::string, std::string> {
-        if (!result.has_value()) {
-          return base::unexpected(result.error().message);
-        }
-        return base::ok(result->proto.SerializeAsString());
-      }).Then(std::move(callback)));
 }
 
 #if BUILDFLAG(ENABLE_PAINT_PREVIEW)

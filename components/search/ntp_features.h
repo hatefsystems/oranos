@@ -63,7 +63,6 @@ BASE_DECLARE_FEATURE(kNtpLogo);
 BASE_DECLARE_FEATURE(kNtpMiddleSlotPromo);
 BASE_DECLARE_FEATURE(kNtpModulesLoadTimeoutMilliseconds);
 BASE_DECLARE_FEATURE(kNtpModulesOrder);
-BASE_DECLARE_FEATURE(kNtpModulesLoad);
 BASE_DECLARE_FEATURE(kNtpModuleSignInRequirement);
 BASE_DECLARE_FEATURE(kNtpOutlookCalendarModule);
 BASE_DECLARE_FEATURE(kNtpOneGoogleBar);
@@ -80,7 +79,6 @@ enum class NtpSharepointModuleDataType {
 };
 BASE_DECLARE_FEATURE(kNtpShortcuts);
 BASE_DECLARE_FEATURE(kNtpMostVisitedHighDpiFavicons);
-BASE_DECLARE_FEATURE(kNtpHandleMostVisitedNavigationExplicitly);
 BASE_DECLARE_FEATURE(kNtpMostRelevantTabResumptionModule);
 BASE_DECLARE_FEATURE(kNtpMostRelevantTabResumptionAllowFaviconServerFallback);
 BASE_DECLARE_FEATURE(kNtpMostRelevantTabResumptionModuleFallbackToHost);
@@ -108,6 +106,7 @@ BASE_DECLARE_FEATURE(kBookmarkBarUpdatesForTesting);
 BASE_DECLARE_FEATURE(kNtpThreadsRail);
 BASE_DECLARE_FEATURE(kNtpEnableInstantApiAndroid);
 BASE_DECLARE_FEATURE(kNtpShortcutsReorder);
+BASE_DECLARE_FEATURE(kNtpLazyLoadComposebox);
 
 // Parameter for controlling the luminosity difference for NTP elements on light
 // backgrounds.

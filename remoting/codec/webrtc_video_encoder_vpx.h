@@ -8,8 +8,6 @@
 #include <stdint.h>
 
 #include "base/functional/callback.h"
-#include "base/memory/raw_ptr.h"
-#include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
 #include "remoting/codec/encoder_bitrate_filter.h"
 #include "remoting/codec/scoped_vpx_codec.h"
@@ -41,8 +39,6 @@ class WebrtcVideoEncoderVpx : public WebrtcVideoEncoder {
 
   ~WebrtcVideoEncoderVpx() override;
 
-  void SetTickClockForTests(const base::TickClock* tick_clock);
-
   // WebrtcVideoEncoder interface.
   void SetLosslessColor(bool want_lossless) override;
   void SetEncoderSpeed(int encoder_speed) override;
@@ -65,17 +61,6 @@ class WebrtcVideoEncoderVpx : public WebrtcVideoEncoder {
   void PrepareImage(const webrtc::DesktopFrame* frame,
                     webrtc::DesktopRegion* updated_region);
 
-  // Clears active map.
-  void ClearActiveMap();
-
-  // Updates the active map according to |updated_region|. Active map is then
-  // given to the encoder to speed up encoding.
-  void SetActiveMapFromRegion(const webrtc::DesktopRegion& updated_region);
-
-  // Adds areas changed in the most recent frame to |updated_region|. This
-  // includes both content changes and areas enhanced by cyclic refresh.
-  void UpdateRegionFromActiveMap(webrtc::DesktopRegion* updated_region);
-
   // True if the encoder is for VP9, false for VP8.
   const bool use_vp9_;
 
@@ -87,9 +72,6 @@ class WebrtcVideoEncoderVpx : public WebrtcVideoEncoder {
   ScopedVpxCodec codec_;
 
   vpx_codec_enc_cfg_t config_;
-
-  // Used to generate zero-based frame timestamps.
-  base::TimeTicks timestamp_base_;
 
   // vpx_image_t has a custom deallocator which needs to be called before
   // deletion.
@@ -104,7 +86,10 @@ class WebrtcVideoEncoderVpx : public WebrtcVideoEncoder {
   // TODO(joedow): Remove this flag after we're done with performance tuning.
   const bool use_active_map_ = true;
 
-  raw_ptr<const base::TickClock> clock_;
+  // This timestamp is monotonically increased using the current frame duration.
+  // It's only used for rate control and is not related to the timestamps on the
+  // incoming frames to encode.
+  base::TimeDelta artificial_timestamp_;
 
   EncoderBitrateFilter bitrate_filter_;
 };

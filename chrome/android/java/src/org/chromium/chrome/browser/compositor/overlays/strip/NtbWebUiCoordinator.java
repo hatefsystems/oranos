@@ -55,6 +55,7 @@ public class NtbWebUiCoordinator implements AccessibilityState.Listener {
     private int mWidthPx;
     private int mHeightPx;
     private boolean mStripInteractive = true;
+    private boolean mButtonVisible = true;
     // The SystemClock.uptimeMillis() timestamp of the most recent input event forwarded from the
     // WebUI new tab button, consumed when the resulting tab is added to record
     // interaction-to-new-tab latency.
@@ -147,8 +148,11 @@ public class NtbWebUiCoordinator implements AccessibilityState.Listener {
      * @param yDp The y position relative to the parent view, in dp.
      * @param widthDp The width, in dp.
      * @param heightDp The height, in dp.
+     * @param stripHeightDp The total height of the tab strip in dp, used to clamp the bottom edge
+     *     of the input view so it does not overlap the toolbar below.
      */
-    public void updateBounds(float xDp, float yDp, float widthDp, float heightDp) {
+    public void updateBounds(
+            float xDp, float yDp, float widthDp, float heightDp, float stripHeightDp) {
         if (mNativePtr == 0) return;
         assert mInputView != null && mEventForwarder != null;
         DisplayMetrics metrics = mInputView.getResources().getDisplayMetrics();
@@ -156,18 +160,25 @@ public class NtbWebUiCoordinator implements AccessibilityState.Listener {
         int heightPx = ViewUtils.dpToPx(metrics, heightDp);
         int xPx = ViewUtils.dpToPx(metrics, xDp);
         int yPx = ViewUtils.dpToPx(metrics, yDp);
+        int stripHeightPx = ViewUtils.dpToPx(metrics, stripHeightDp);
+        // Clamp the input view's bottom edge to the tab strip height so it does not intercept
+        // touches on the toolbar below, while keeping the WebContents sized to the full touch
+        // target so the button remains centered.
+        int inputHeightPx = Math.max(0, Math.min(heightPx, stripHeightPx - yPx));
         mInputView.setTranslationX(xPx);
         mInputView.setTranslationY(yPx);
+        ViewGroup.LayoutParams params = mInputView.getLayoutParams();
+        if (params.width != widthPx || params.height != inputHeightPx) {
+            params.width = widthPx;
+            params.height = inputHeightPx;
+            mInputView.setLayoutParams(params);
+        }
         // The parent view is aligned with the compositor surface. Touch sequences transferred to
         // Viz are in compositor surface coordinates, so Viz needs the input view's origin.
         mEventForwarder.setContainerViewOriginInCompositorSurface(xPx, yPx);
         if (widthPx != mWidthPx || heightPx != mHeightPx) {
             mWidthPx = widthPx;
             mHeightPx = heightPx;
-            ViewGroup.LayoutParams params = mInputView.getLayoutParams();
-            params.width = widthPx;
-            params.height = heightPx;
-            mInputView.setLayoutParams(params);
             if (widthPx > 0 && heightPx > 0) {
                 NtbWebUiCoordinatorJni.get().resize(mNativePtr, widthPx, heightPx);
             }
@@ -186,6 +197,15 @@ public class NtbWebUiCoordinator implements AccessibilityState.Listener {
         if (mStripInteractive == interactive) return;
         mStripInteractive = interactive;
         updateInputViewVisibility();
+    }
+
+    /**
+     * Sets whether the new tab button is visible (e.g. faded out during tab strip reorder mode).
+     */
+    public void setButtonVisible(boolean visible) {
+        if (mNativePtr == 0 || mButtonVisible == visible) return;
+        mButtonVisible = visible;
+        NtbWebUiCoordinatorJni.get().setButtonVisible(mNativePtr, visible);
     }
 
     /** Destroys the WebUI and removes the input view. */
@@ -231,6 +251,8 @@ public class NtbWebUiCoordinator implements AccessibilityState.Listener {
         WebContents getWebContents(long hostPtr);
 
         void resize(long hostPtr, int widthPx, int heightPx);
+
+        void setButtonVisible(long hostPtr, boolean visible);
 
         void destroy(long hostPtr);
     }

@@ -11,11 +11,11 @@ export function getHtml(this: OmniboxEverywhereOmniboxElement) {
     <div id="inputWrapper" @focusout="${this.onInputWrapperFocusout}"
         @keydown="${this.onInputWrapperKeydown}"
         @dragenter="${this.dragAndDropHandler.handleDragEnter}"
-        @dragover="${this.dragAndDropHandler.handleDragOver}"
+        @dragover="${this.onInputWrapperDragover_}"
         @dragleave="${this.dragAndDropHandler.handleDragLeave}"
         @drop="${this.dragAndDropHandler.handleDrop}">
       <search-animated-glow
-        .animationState="${this.animationState}"
+        .animationState="${this.computeGlowAnimationState_()}"
         .energyEffectAnimationEnabled="${this.energyEffectAnimationEnabled_}"
         part="animated-glow">
       </search-animated-glow>
@@ -33,6 +33,7 @@ export function getHtml(this: OmniboxEverywhereOmniboxElement) {
           ?input-has-matches="${this.hasMatches()}"
           ?allow-file-paste="${this.canAddFileContext_()}"
           @focusin="${this.onInputFocusin_}"
+          @searchbox-input-empty-changed="${this.onSearchboxInputEmptyChanged_}"
           @searchbox-input-files-pasted="${this.onSearchboxInputFilesPasted_}"
           @searchbox-input-text-updated="${this.onSearchboxInputTextUpdated_}"
           @input-focus-changed="${this.onInputFocusChanged}">
@@ -65,7 +66,9 @@ export function getHtml(this: OmniboxEverywhereOmniboxElement) {
             ?hidden="${!this.dropdownIsVisible}">
         </cr-searchbox-dropdown>
       </div>
-      <div id="bottomControls">
+      <div id="bottomControls"
+          @animationend="${this.onBottomControlsAnimationEnd_}"
+          @animationcancel="${this.onBottomControlsAnimationEnd_}">
         ${this.isFuseboxEnabled ? html`
         <div class="contextualEntrypointContainer
                     contextualEntrypointContainerCompact">

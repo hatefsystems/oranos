@@ -11,6 +11,10 @@
 #include "build/build_config.h"
 #include "extensions/buildflags/buildflags.h"
 
+#if BUILDFLAG(IS_WIN)
+#include "base/win/windows_version.h"
+#endif
+
 namespace policy::features {
 
 BASE_FEATURE(kPolicyBlocklistProceedUntilResponse,
@@ -26,7 +30,23 @@ BASE_FEATURE(kEnhancedSecurityEventFields,
              base::FEATURE_ENABLED_BY_DEFAULT);
 #endif
 
+bool IsEnhancedSecurityEventFieldsEnabled() {
+  if (!base::FeatureList::IsEnabled(kEnhancedSecurityEventFields)) {
+    return false;
+  }
+#if BUILDFLAG(IS_WIN)
+  // TODO(crbug.com/577109904): Re-enable once network name query is made
+  // asynchronous to avoid UI thread hangs during WLAN queries.
+  if (base::win::GetVersion() >= base::win::Version::WIN11_24H2) {
+    return false;
+  }
+#endif
+  return true;
+}
+
 BASE_FEATURE(kUseCECFlagInPolicyData, base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kUserPolicyCacheSizeLimit2MB, base::FEATURE_ENABLED_BY_DEFAULT);
 
 #if BUILDFLAG(IS_ANDROID)
 BASE_FEATURE(kInitializePoliciesForSignedInUserInNewEntryPoints,
@@ -106,5 +126,8 @@ const base::FeatureParam<base::TimeDelta>
 bool IsMigrateSecureConnectApiToDmServerEnabled() {
   return base::FeatureList::IsEnabled(kMigrateSecureConnectApiToDmServer);
 }
+
+BASE_FEATURE(kPolicyUserInfoFetcherUseOmitBugWorkaround,
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace policy::features

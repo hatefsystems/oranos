@@ -32,10 +32,17 @@ public class AwWebSurface {
      * Blink and Compose (positive means the finger moves right/down).
      */
     public interface EventListener {
-        /** Called when the surface needs to be redrawn. */
-        void onInvalidate();
+        /**
+         * Called when the surface needs to be redrawn. {@code insideVSync} is true during a VSync
+         * BeginFrame (equivalent to {@link View#invalidate()}) and false outside VSync (equivalent
+         * to {@link View#postInvalidateOnAnimation()}).
+         */
+        void onInvalidate(boolean insideVSync);
 
-        /** Notified of overscroll. The velocity is zero unless it comes from a fling. */
+        /**
+         * Notified of overscroll, except on axes where the page stops it from chaining with CSS
+         * overscroll-behavior. The velocity is zero unless it comes from a fling.
+         */
         void onOverScroll(float deltaX, float deltaY, float velocityX, float velocityY);
     }
 
@@ -76,6 +83,10 @@ public class AwWebSurface {
             mAwContents.setWebSurface(null);
             mAwContents.setInvalidateListener(null);
             mAwContents.getSettings().setForceFullscreenUnsupported(false);
+            AwDisplayCutoutController cutoutController = mAwContents.getDisplayCutoutController();
+            if (cutoutController != null) {
+                cutoutController.setInsetViewportBelowWindow(true);
+            }
             WebContents webContents = mAwContents.getWebContents();
             if (webContents != null) {
                 AwWebSurfaceJni.get().setForWebContents(webContents, null);
@@ -86,13 +97,20 @@ public class AwWebSurface {
             mAwContents.setWebSurface(this);
             mAwContents.setInvalidateListener(mEventListener::onInvalidate);
             mAwContents.getSettings().setForceFullscreenUnsupported(true);
+            // Don't shrink the page's viewport when the surface extends off the bottom of the
+            // screen (e.g. inside a LazyColumn), so the page hits its bottom edge and overscrolls
+            // to let the parent scroll the surface into view.
+            AwDisplayCutoutController cutoutController = mAwContents.getDisplayCutoutController();
+            if (cutoutController != null) {
+                cutoutController.setInsetViewportBelowWindow(false);
+            }
             mAwContents.setOverScrollMode(View.OVER_SCROLL_NEVER);
             onWebContentsChanged();
             if (mWidth > 0 && mHeight > 0) {
                 mAwContents.getViewMethods().onSizeChanged(mWidth, mHeight, 0, 0);
             }
         }
-        mEventListener.onInvalidate();
+        mEventListener.onInvalidate(/* insideVSync= */ false);
     }
 
     /** Binds the native peer to the current WebContents, which AwContents swaps for popups. */

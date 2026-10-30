@@ -12,6 +12,7 @@
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/functional/callback_helpers.h"
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/bind.h"
@@ -46,6 +47,8 @@ class FakeSessionJournal : public SessionJournal {
            std::vector<actor::mojom::JournalDetailsPtr> details,
            Track track) override {}
   void HandleServerJournalEvent(const ServerJournalEvent& event) override {}
+  void LogAudio(std::string_view mime_type,
+                base::span<const uint8_t> data) override {}
 };
 
 class FakeSessionController : public SessionController {
@@ -56,6 +59,7 @@ class FakeSessionController : public SessionController {
   // SessionController overrides:
   Profile* GetProfile() override { return profile_; }
   SessionJournal& GetJournal() override { return session_journal_; }
+  DebugSink* GetDebugSink() override { return debug_sink_; }
   SessionLifecycle GetSessionLifecycle() const override {
     return session_lifecycle_;
   }
@@ -91,6 +95,7 @@ class FakeSessionController : public SessionController {
     last_output_transcription_ = text;
   }
   void OnModelAudioEnvelopeReady(const AudioEnvelope& envelope) override {}
+  void OnSpeakerChanged(Speaker speaker) override {}
   void OnSessionInitialized() override { ++session_initialized_count_; }
   void OnError(ErrorCode error) override {
     last_error_ = error;
@@ -136,6 +141,8 @@ class FakeSessionController : public SessionController {
   std::vector<ToolDefinition> tools_;
   SessionLifecycle session_lifecycle_ = SessionLifecycle::kInitializing;
   FakeSessionJournal session_journal_;
+  // Null, as in production while the debug tools are off.
+  raw_ptr<DebugSink> debug_sink_ = nullptr;
 };
 
 }  // namespace
@@ -472,6 +479,45 @@ TEST_F(ConversationImplTest, SessionGoesLiveOnlyOnceBackendInitialized) {
   conversation.OnBackendInitialized();
   EXPECT_EQ(session_controller_.GetSessionLifecycle(), SessionLifecycle::kLive);
   EXPECT_EQ(session_controller_.session_initialized_count(), 1);
+}
+
+TEST_F(ConversationImplTest, MuteStopsAndResumesCapture) {
+  ConversationImpl& conversation = CreateConversation();
+  conversation.Start();
+  conversation.OnBackendInitialized();
+  EXPECT_TRUE(audio_controller().is_capturing());
+  EXPECT_FALSE(conversation.IsMicMuted());
+
+  conversation.SetMicMuted(true);
+  EXPECT_TRUE(conversation.IsMicMuted());
+  EXPECT_FALSE(audio_controller().is_capturing());
+
+  conversation.SetMicMuted(false);
+  EXPECT_FALSE(conversation.IsMicMuted());
+  EXPECT_TRUE(audio_controller().is_capturing());
+}
+
+TEST_F(ConversationImplTest, AudioCapturedBeforeMuteIsNotSent) {
+  ConversationImpl& conversation = CreateConversation();
+  conversation.Start();
+  conversation.OnBackendInitialized();
+
+  // A full chunk is captured and posted to the main thread...
+  auto bus = media::AudioBus::Create(1, 1600);
+  std::ranges::fill(bus->channel(0), 0.25f);
+  audio_controller().Capture(bus.get(), base::TimeTicks::Now(), {}, 1.0);
+
+  // ...but the user mutes before it arrives.
+  EXPECT_CALL(backend(), SendAudioChunk(testing::_)).Times(0);
+  conversation.SetMicMuted(true);
+  // Runs the tasks posted so far, including the one delivering the chunk.
+  base::RunLoop run_loop;
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, run_loop.QuitClosure());
+  run_loop.Run();
+
+  ASSERT_TRUE(session_controller_.last_audio_level().has_value());
+  EXPECT_FLOAT_EQ(*session_controller_.last_audio_level(), 0.0f);
 }
 
 }  // namespace ttc

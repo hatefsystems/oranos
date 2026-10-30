@@ -7,10 +7,12 @@
 #include <optional>
 #include <utility>
 
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/sync/base/features.h"
 #include "components/sync/base/time.h"
 #include "components/sync/service/device_statistics_request.h"
 #include "components/sync/service/device_statistics_tracker.h"
@@ -40,10 +42,12 @@ DeviceStatisticsScheduler::DeviceStatisticsScheduler(
   CHECK(pref_service_);
   CHECK(identity_manager_);
 
-  if (identity_manager_->AreRefreshTokensLoaded()) {
-    ScheduleNextRun();
-  } else {
-    identity_manager_observation_.Observe(identity_manager_);
+  if (base::FeatureList::IsEnabled(kSyncRecordDeviceStatisticsMetrics)) {
+    if (identity_manager_->AreRefreshTokensLoaded()) {
+      ScheduleNextRun();
+    } else {
+      identity_manager_observation_.Observe(identity_manager_);
+    }
   }
 }
 
@@ -82,9 +86,7 @@ base::Time DeviceStatisticsScheduler::ComputeEarliestAllowedTimeToRun() const {
   // The metrics should be recorded once per calendar day, so the next possible
   // time is midnight on the following day.
   base::Time earliest_allowed =
-      last_recorded_at.is_null()
-          ? now
-          : (last_recorded_at + base::Days(1)).LocalMidnight();
+      last_recorded_at.is_null() ? now : last_recorded_at.NextLocalMidnight();
 
   if (earliest_allowed > now) {
     // Recording has already happened today. Wait (somewhat arbitrarily) until
@@ -92,6 +94,13 @@ base::Time DeviceStatisticsScheduler::ComputeEarliestAllowedTimeToRun() const {
     // immediate succession if the previous recording happened just before
     // midnight.
     earliest_allowed += base::Hours(12);
+  }
+
+  // Defense-in-depth against clock/timezone changes: never run again within
+  // 12 hours of the last attempt.
+  if (!last_recorded_at.is_null()) {
+    earliest_allowed =
+        std::max(earliest_allowed, last_recorded_at + base::Hours(12));
   }
 
   // If metrics reporting is disabled, try again one day from now at the
@@ -109,6 +118,7 @@ base::Time DeviceStatisticsScheduler::ComputeEarliestAllowedTimeToRun() const {
 }
 
 void DeviceStatisticsScheduler::ScheduleNextRun() {
+  CHECK(base::FeatureList::IsEnabled(kSyncRecordDeviceStatisticsMetrics));
   CHECK(!next_run_timer_.IsRunning());
   CHECK(!tracker_);
   CHECK(identity_manager_->AreRefreshTokensLoaded());

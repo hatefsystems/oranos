@@ -21,8 +21,8 @@
 #include "chrome/browser/download/offline_item_utils.h"
 #include "chrome/browser/download/status_text_builder_utils.h"
 #include "chrome/browser/enterprise/connectors/common.h"
-#include "chrome/browser/safe_browsing/advanced_protection_status_manager.h"
-#include "chrome/browser/safe_browsing/advanced_protection_status_manager_factory.h"
+#include "chrome/browser/safe_browsing/advanced_protection/advanced_protection_status_manager.h"
+#include "chrome/browser/safe_browsing/advanced_protection/advanced_protection_status_manager_factory.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/common/url_constants.h"
@@ -40,10 +40,10 @@
 #include "third_party/blink/public/common/mime_util/mime_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/time_format.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/text/bytes_formatting.h"
 #include "ui/base/ui_base_features.h"
-#include "ui/base/window_open_disposition.h"
 #include "ui/color/color_id.h"
 #include "url/origin.h"
 
@@ -645,6 +645,7 @@ bool DownloadUIModel::IsCommandEnabled(
     case DownloadCommands::SHOW_IN_FOLDER:
     case DownloadCommands::OPEN_WHEN_COMPLETE:
     case DownloadCommands::PLATFORM_OPEN:
+    case DownloadCommands::OPEN_WITH:
     case DownloadCommands::ALWAYS_OPEN_TYPE:
     case DownloadCommands::OPEN_WITH_MEDIA_APP:
     case DownloadCommands::EDIT_WITH_MEDIA_APP:
@@ -695,6 +696,7 @@ bool DownloadUIModel::IsCommandChecked(
       return IsPaused();
     case DownloadCommands::SHOW_IN_FOLDER:
     case DownloadCommands::PLATFORM_OPEN:
+    case DownloadCommands::OPEN_WITH:
     case DownloadCommands::CANCEL:
     case DownloadCommands::DISCARD:
     case DownloadCommands::KEEP:
@@ -723,6 +725,7 @@ void DownloadUIModel::ExecuteCommand(DownloadCommands* download_commands,
     case DownloadCommands::SHOW_IN_FOLDER:
     case DownloadCommands::OPEN_WHEN_COMPLETE:
     case DownloadCommands::ALWAYS_OPEN_TYPE:
+    case DownloadCommands::OPEN_WITH:
       NOTREACHED();
     case DownloadCommands::PLATFORM_OPEN:
       OpenUsingPlatformHandler();
@@ -740,7 +743,7 @@ void DownloadUIModel::ExecuteCommand(DownloadCommands* download_commands,
       download_commands->GetBrowser()->OpenURL(
           content::OpenURLParams::CreateBrowserInitiated(
               download_commands->GetLearnMoreURLForInterruptedDownload(),
-              WindowOpenDisposition::kNewForegroundTab,
+              ui::mojom::WindowOpenDisposition::kNewForegroundTab,
               ui::PAGE_TRANSITION_LINK),
           /*navigation_handle_callback=*/{});
       break;
@@ -748,7 +751,7 @@ void DownloadUIModel::ExecuteCommand(DownloadCommands* download_commands,
       download_commands->GetBrowser()->OpenURL(
           content::OpenURLParams::CreateBrowserInitiated(
               GURL(chrome::kInsecureDownloadBlockingLearnMoreUrl),
-              WindowOpenDisposition::kNewForegroundTab,
+              ui::mojom::WindowOpenDisposition::kNewForegroundTab,
               ui::PAGE_TRANSITION_LINK),
           /*navigation_handle_callback=*/{});
       break;
@@ -758,7 +761,7 @@ void DownloadUIModel::ExecuteCommand(DownloadCommands* download_commands,
               google_util::AppendGoogleLocaleParam(
                   GURL(chrome::kDownloadBlockedLearnMoreURL),
                   g_browser_process->GetApplicationLocale()),
-              WindowOpenDisposition::kNewForegroundTab,
+              ui::mojom::WindowOpenDisposition::kNewForegroundTab,
               ui::PAGE_TRANSITION_LINK),
           /*navigation_handle_callback=*/{});
       break;

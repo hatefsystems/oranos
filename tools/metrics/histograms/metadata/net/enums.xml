@@ -1248,6 +1248,16 @@ historical analysis. -->
   <int value="3" label="Chain contained only one certificate"/>
 </enum>
 
+<!-- LINT.IfChange(NetCertificatePrintableStringParseMode) -->
+
+<enum name="NetCertificatePrintableStringParseMode">
+  <int value="0" label="Default (valid PrintableString)"/>
+  <int value="1" label="Allow ASCII"/>
+  <int value="2" label="UTF-8 hack (non-ASCII)"/>
+</enum>
+
+<!-- LINT.ThenChange(//net/cert/x509_certificate.h:PrintableStringParseMode) -->
+
 <!-- LINT.IfChange(NetCertificateSerialNumberType) -->
 
 <enum name="NetCertificateSerialNumberType">
@@ -3885,48 +3895,6 @@ Called by update_net_trust_anchors.py.-->
   <int value="5" label="TLS 1.2"/>
   <int value="6" label="TLS 1.3"/>
   <int value="7" label="QUIC"/>
-</enum>
-
-<enum name="SSLTrustAnchorIDsResult">
-  <summary>
-    Whether a TLS connection relied on the trust anchor ID retry.
-  </summary>
-  <int value="0"
-      label="There was a DNS hint, and the connection succeeded on the
-             initial connection"/>
-  <int value="1"
-      label="There was a DNS hint, and the connection failed on the initial
-             connection, without retrying"/>
-  <int value="2"
-      label="There was a DNS hint, and the connection succeeded after
-             retrying with fresh Trust Anchor IDs"/>
-  <int value="3"
-      label="There was a DNS hint, and the connection failed after retrying
-             with fresh Trust Anchor IDs"/>
-  <int value="4"
-      label="There was no DNS hint, and the connection succeeded on the
-             initial connection"/>
-  <int value="5"
-      label="There was no DNS hint, and the connection failed on the initial
-             connection, without retrying"/>
-  <int value="6"
-      label="There was no DNS hint, and the connection succeeded after
-             retrying with fresh Trust Anchor IDs"/>
-  <int value="7"
-      label="There was no DNS hint, and the connection failed after retrying
-             with fresh Trust Anchor IDs"/>
-  <int value="8"
-      label="There was a DNS hint, and the connection succeeded after
-             retrying with the MTC fallback"/>
-  <int value="9"
-      label="There was a DNS hint, and the connection failed after retrying
-             with the MTC fallback"/>
-  <int value="10"
-      label="There was no DNS hint, and the connection succeeded after
-             retrying with the MTC fallback"/>
-  <int value="11"
-      label="There was no DNS hint, and the connection failed after retrying
-             with the MTC fallback"/>
 </enum>
 
 <!-- LINT.IfChange(StreamSocketCloseReason) -->

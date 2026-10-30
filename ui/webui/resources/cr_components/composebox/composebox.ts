@@ -23,10 +23,10 @@ import {loadTimeData} from '//resources/js/load_time_data.js';
 import type {PropertyValues} from '//resources/lit/v3_0/lit.rollup.js';
 import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
 import {TabAttachmentSource} from '//resources/mojo/components/omnibox/browser/searchbox.mojom-webui.js';
-import type {AutocompleteResult, FileAttachment, PageCallbackRouter as SearchboxPageCallbackRouter, PageHandlerRemote as SearchboxPageHandlerRemote, SearchContext, TabAttachment, TabInfo} from '//resources/mojo/components/omnibox/browser/searchbox.mojom-webui.js';
+import type {FileAttachment, PageCallbackRouter as SearchboxPageCallbackRouter, PageHandlerRemote as SearchboxPageHandlerRemote, SearchContext, TabAttachment, TabInfo} from '//resources/mojo/components/omnibox/browser/searchbox.mojom-webui.js';
 import type {UnguessableToken} from '//resources/mojo/mojo/public/mojom/base/unguessable_token.mojom-webui.js';
 
-import {ComposeboxFile, GlifAnimationState, mapUploadErrorToProcessFilesError, ProcessFilesError, recordBoolean, recordContextAdditionMethod, recordUserAction} from './common.js';
+import {ComposeboxFile, mapUploadErrorToProcessFilesError, ProcessFilesError, recordBoolean, recordContextAdditionMethod, recordUserAction} from './common.js';
 import type {TabUpload} from './common.js';
 import {getCss} from './composebox.css.js';
 import {getHtml} from './composebox.html.js';
@@ -109,20 +109,12 @@ export class ComposeboxElement extends ComposeboxEmbedderMixin
       // Embedders can opt out of public composebox resize events when they do
       // not use them.
       observeResize: {type: Boolean},
-      enableCarouselScrolling: {type: Boolean},
       isOmniboxInCompactMode_: {
         type: Boolean,
         reflect: true,
       },
       isFollowupQuery: {type: Boolean},
-      isZeroState: {
-        type: Boolean,
-        reflect: true,
-      },
-      disableFallbackGlifAnimation: {type: Boolean},
       enableFileHint: {type: Boolean},
-      // TODO(crbug.com/486707842): Move to the Contextual Tasks embedder.
-      glifAnimationState: {type: String, reflect: true},
       isSidePanel: {type: Boolean},
       inputPlaceholderOverride: {type: String},
       // Must be property so can pass it down to children.
@@ -135,16 +127,11 @@ export class ComposeboxElement extends ComposeboxEmbedderMixin
   }
 
   accessor isSidePanel: boolean = false;
-  accessor isZeroState: boolean = false;
-  accessor glifAnimationState: GlifAnimationState =
-      GlifAnimationState.INELIGIBLE;
-  accessor disableFallbackGlifAnimation: boolean = false;
   accessor isFollowupQuery: boolean = false;
   accessor enableFileHint: boolean = false;
   accessor inputPlaceholderOverride: string = '';
   accessor disableComposeboxAnimation: boolean = false;
   accessor observeResize: boolean = true;
-  accessor enableCarouselScrolling: boolean = false;
   accessor lensButtonTriggersOverlay: boolean = false;
   accessor showLensButton: boolean = true;
   accessor ntpRealboxNextEnabled: boolean = false;
@@ -152,7 +139,6 @@ export class ComposeboxElement extends ComposeboxEmbedderMixin
   accessor entrypointName: string = '';
   accessor lensButtonDisabled: boolean = false;
   accessor applyContextButtonBackground: boolean = false;
-  protected isRtl_: boolean = document.documentElement.dir === 'rtl';
 
   // If isCollapsible is set to true, the composebox will be a pill shape until
   // it gets focused, at which point it will expand. If false, defaults to the
@@ -330,7 +316,6 @@ export class ComposeboxElement extends ComposeboxEmbedderMixin
       this.syncResizeObservers_();
     }
   }
-
 
   playGlowAnimation() {
     // If |animationState_| were still EXPANDING, this function would have no
@@ -715,71 +700,6 @@ export class ComposeboxElement extends ComposeboxEmbedderMixin
     super.submitCleanup();
   }
 
-  // TODO(crbug.com/486706573): Refactor this function and move the common logic
-  // to the mixin class. Move embedder specific logic to the embedder class.
-  override onAutocompleteResultChanged(result: AutocompleteResult) {
-    if (this.submitting) {
-      return;
-    }
-    if (result.queryId !== this.activeQueryId) {
-      return;
-    }
-
-    this.maybeCarryOverPreviousMatches(result);
-    this.result = result;
-    /* Indicates when suggestion results have changed so that zero state
-     * suggestion results in contextual tasks composebox can update accordingly.
-     */
-    this.fire('result-changed', result);
-
-    const hasMatches = this.result.matches.length > 0;
-    const firstMatch = hasMatches ? this.result.matches[0] : null;
-    // Zero suggest matches are not allowed to be default. Therefore, this
-    // makes sure zero suggest results aren't focused when they are returned.
-    if (firstMatch && firstMatch.allowedToBeDefaultMatch) {
-      this.selectFirstMatch();
-    } else if (
-        this.input.trim() && hasMatches && this.selectedMatchIndex >= 0 &&
-        this.selectedMatchIndex < this.result.matches.length) {
-      // Restore the selection and update the input. Don't restore when the
-      // user deletes all their input and autocomplete is queried or else the
-      // empty input will change to the value of the first result.
-      this.$.matches.selectIndex(this.selectedMatchIndex);
-
-      // Set the selected match since the `selectedMatchIndex` does not change
-      // (and therefore `selectedMatch` does not get updated since
-      // `onSelectedMatchIndexChanged_` is not called).
-      this.selectedMatch = this.result.matches[this.selectedMatchIndex]!;
-      this.input = this.selectedMatch.fillIntoEdit;
-    } else {
-      this.$.matches.unselect();
-    }
-
-    // Smart compose hints should only be updated from the async response.
-    // This prevents the hint flicker from an empty smart compose response
-    // in the synchronous pass.
-    if (this.haveReceivedSynchronousAutocompleteResponse) {
-      // Populate the smart compose suggestion.
-      const nextHint = this.result.smartComposeInlineHint?.trim() ?
-          this.result.smartComposeInlineHint :
-          '';
-      if (this.smartComposeInlineHint !== nextHint) {
-        this.smartComposeInlineHint = nextHint;
-      }
-
-      // Smart compose stats are incremented on every response from the
-      // server.
-      if (this.smartComposeInlineHint) {
-        this.smartComposeStats.shownCount++;
-        this.smartComposeStats.shownLength +=
-            this.smartComposeInlineHint.length;
-      }
-    }
-
-    this.haveReceivedSynchronousAutocompleteResponse = true;
-  }
-
-
   // TODO(crbug.com/486706573): common logic is moved
   // to the mixin class. Move embedder specific logic to the embedder class.
   override clearAllInputs(
@@ -790,11 +710,6 @@ export class ComposeboxElement extends ComposeboxEmbedderMixin
     this.pendingAutomaticActiveTabTitle = '';
     this.$.composeboxInput.resetHeight();
     super.clearAllInputs(querySubmitted, shouldBlockAutoSuggestedTabs);
-  }
-
-  override shouldDisableFileInputs() {
-    return super.shouldDisableFileInputs() ||
-        this.entrypointName === 'ContextualTasks';
   }
 
   // TODO(crbug.com/486707998): Move this to omnibox composebox.

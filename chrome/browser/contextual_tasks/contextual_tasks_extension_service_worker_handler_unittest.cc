@@ -9,19 +9,30 @@
 #include <vector>
 
 #include "base/base64.h"
+#include "base/run_loop.h"
 #include "base/scoped_observation.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
+#include "chrome/browser/contextual_tasks/contextual_tasks_utils.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_web_contents_user_data.h"
 #include "chrome/browser/contextual_tasks/mock_contextual_tasks_page.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/contextual_tasks/public/features.h"
 #include "components/omnibox/common/logger.h"
+#include "content/public/browser/render_process_host.h"
+#include "content/public/browser/service_worker_external_request_timeout_type.h"
+#include "extensions/browser/activity.h"
 #include "extensions/browser/extension_api_frame_id_map.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/browser/process_manager.h"
+#include "extensions/common/constants.h"
+#include "extensions/common/extension_builder.h"
 #include "mojo/public/cpp/base/proto_wrapper.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/lens_server_proto/aim_communication.pb.h"
 #include "third_party/lens_server_proto/search_communication.pb.h"
 #include "url/gurl.h"
@@ -308,6 +319,176 @@ TEST_F(ContextualTasksExtensionServiceWorkerHandlerTest,
   EXPECT_THAT(
       log_observer.entries()[0].message,
       testing::HasSubstr("SearchToClientMessage dropped: feature disabled"));
+}
+
+TEST_F(ContextualTasksExtensionServiceWorkerHandlerTest,
+       RecordsHandshakeAndErrorHistograms) {
+  base::HistogramTester histogram_tester;
+  const std::string document_id = GetMainFrameDocumentId();
+
+  // 1. Start handshake and complete it: records kSuccess and Latency, and
+  // records 0 dropped queued messages when the page navigates away.
+  base::test::TestFuture<mojo_base::ProtoWrapper> handshake_future;
+  handler_->GetHandshakeMessage(document_id, handshake_future.GetCallback());
+  (void)handshake_future.Take();
+
+  auto* user_data =
+      ContextualTasksWebContentsUserData::GetOrCreateForWebContents(
+          web_contents());
+  lens::ClientToSearchMessage queued_msg;
+  queued_msg.mutable_open_threads_view();
+  user_data->PostSearchMessage(queued_msg);
+
+  lens::SearchToClientMessage handshake_response;
+  handshake_response.mutable_handshake_response()->set_auth_user_index(0);
+  handler_->OnWebviewMessage(SerializeProto(handshake_response), document_id);
+  mock_page_.FlushForTesting();
+
+  histogram_tester.ExpectUniqueSample(
+      "ContextualTasks.ExtensionHandshake.Status",
+      ExtensionHandshakeStatus::kSuccess, 1);
+  histogram_tester.ExpectTotalCount(
+      "ContextualTasks.ExtensionHandshake.Latency", 1);
+
+  // Navigate to a new page to tear down PageSearchState; since the queued
+  // message was flushed on handshake completion, 0 dropped messages should be
+  // recorded.
+  NavigateAndCommit(GURL("https://example.com/next"));
+  histogram_tester.ExpectUniqueSample(
+      "ContextualTasks.ExtensionPostMessage.QueuedSearchMessagesDropped", 0, 1);
+
+  // 2. Start a second handshake on the new page, queue 2 search messages, and
+  // navigate away before the handshake completes: records kFrameDetached and 2
+  // dropped queued messages.
+  const std::string second_doc_id = GetMainFrameDocumentId();
+  base::test::TestFuture<mojo_base::ProtoWrapper> second_handshake_future;
+  handler_->GetHandshakeMessage(second_doc_id,
+                                second_handshake_future.GetCallback());
+  (void)second_handshake_future.Take();
+
+  user_data->PostSearchMessage(queued_msg);
+  user_data->PostSearchMessage(queued_msg);
+
+  NavigateAndCommit(GURL("https://www.google.com/search?udm=50&q=third"));
+  histogram_tester.ExpectBucketCount(
+      "ContextualTasks.ExtensionHandshake.Status",
+      ExtensionHandshakeStatus::kFrameDetached, 1);
+  histogram_tester.ExpectBucketCount(
+      "ContextualTasks.ExtensionPostMessage.QueuedSearchMessagesDropped", 2, 1);
+
+  // 3. Invalid document_id handshakes record kInvalidDocumentId.
+  base::test::TestFuture<mojo_base::ProtoWrapper> invalid_handshake_future;
+  handler_->GetHandshakeMessage("invalid-doc-id",
+                                invalid_handshake_future.GetCallback());
+  (void)invalid_handshake_future.Take();
+  histogram_tester.ExpectBucketCount(
+      "ContextualTasks.ExtensionHandshake.Status",
+      ExtensionHandshakeStatus::kInvalidDocumentId, 1);
+
+  // 4. Dropped inbound/outbound messages record ExtensionPostMessage.Error.
+  const std::string third_doc_id = GetMainFrameDocumentId();
+  handler_->OnWebviewMessage({0x0a, 0x00}, std::nullopt);
+  handler_->OnWebviewMessage({0x0a, 0x00}, "invalid-doc-id");
+  histogram_tester.ExpectBucketCount(
+      "ContextualTasks.ExtensionPostMessage.Error",
+      ExtensionPostMessageError::kInvalidDocumentId, 2);
+
+  handler_->OnWebviewMessage({}, third_doc_id);
+  histogram_tester.ExpectBucketCount(
+      "ContextualTasks.ExtensionPostMessage.Error",
+      ExtensionPostMessageError::kUnexpectedDataType, 1);
+
+  std::vector<uint8_t> oversized(1024 * 1024 + 1, 0x00);
+  handler_->OnWebviewMessage(oversized, third_doc_id);
+  histogram_tester.ExpectBucketCount(
+      "ContextualTasks.ExtensionPostMessage.Error",
+      ExtensionPostMessageError::kMessageTooLarge, 1);
+
+  handler_->OnWebviewMessage({0xff, 0xfe, 0xfd}, third_doc_id);
+  histogram_tester.ExpectBucketCount(
+      "ContextualTasks.ExtensionPostMessage.Error",
+      ExtensionPostMessageError::kProtoParseFailed, 1);
+
+  // Unbound page remote records kMojoPipeClosed on outbound dispatch.
+  ContextualTasksExtensionServiceWorkerHandler unbound_handler(*profile());
+  unbound_handler.OnWebviewMessage(SerializeProto(handshake_response),
+                                   third_doc_id);
+  user_data->PostSearchMessage(queued_msg);
+  histogram_tester.ExpectBucketCount(
+      "ContextualTasks.ExtensionPostMessage.Error",
+      ExtensionPostMessageError::kMojoPipeClosed, 1);
+}
+
+TEST_F(ContextualTasksExtensionServiceWorkerHandlerTest,
+       AcquiresAndReleasesNonExpiringServiceWorkerKeepalive) {
+  scoped_refptr<const extensions::Extension> extension =
+      extensions::ExtensionBuilder("Contextual Tasks")
+          .SetID(extension_misc::kContextualTasksExtensionId)
+          .SetBackgroundContext(
+              extensions::ExtensionBuilder::BackgroundContext::SERVICE_WORKER)
+          .Build();
+  extensions::ExtensionRegistry::Get(profile())->AddEnabled(extension);
+
+  // Shut down the storage partition's ServiceWorkerContextCore so
+  // ProcessManager::DecrementServiceWorkerKeepaliveCount receives kNullContext
+  // instead of kWorkerNotFound for the synthetic WorkerId.
+  profile()->GetDefaultStoragePartition();
+  profile()->NotifyWillBeDestroyed();
+
+  auto* process_manager = extensions::ProcessManager::Get(profile());
+  const extensions::WorkerId worker_id(
+      extension_misc::kContextualTasksExtensionId,
+      main_rfh()->GetProcess()->GetID(),
+      /*version_id=*/1,
+      /*thread_id=*/1, blink::ServiceWorkerToken());
+  process_manager->StartTrackingServiceWorkerRunningInstance(worker_id);
+  EXPECT_TRUE(process_manager
+                  ->GetServiceWorkerKeepaliveDataForRecords(
+                      extension_misc::kContextualTasksExtensionId)
+                  .empty());
+
+  testing::NiceMock<MockContextualTasksExtensionPage> second_mock_page;
+  mojo::Remote<mojom::ExtensionPageHandler> second_handler_remote;
+  handler_->CreateExtensionPageHandler(
+      second_mock_page.BindAndGetRemote(),
+      second_handler_remote.BindNewPipeAndPassReceiver());
+
+  auto keepalives = process_manager->GetServiceWorkerKeepaliveDataForRecords(
+      extension_misc::kContextualTasksExtensionId);
+  ASSERT_EQ(keepalives.size(), 1u);
+  EXPECT_EQ(keepalives[0].worker_id, worker_id);
+  EXPECT_EQ(keepalives[0].activity_type, extensions::Activity::MOJO);
+  EXPECT_EQ(keepalives[0].timeout_type,
+            content::ServiceWorkerExternalRequestTimeoutType::kDoesNotTimeout);
+
+  // Disconnecting the Mojo pipe releases the Service Worker keepalive.
+  second_handler_remote.reset();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(process_manager
+                  ->GetServiceWorkerKeepaliveDataForRecords(
+                      extension_misc::kContextualTasksExtensionId)
+                  .empty());
+
+  // Re-establishing the Mojo connection re-acquires the keepalive, and Clear()
+  // releases it during shutdown.
+  testing::NiceMock<MockContextualTasksExtensionPage> third_mock_page;
+  mojo::Remote<mojom::ExtensionPageHandler> third_handler_remote;
+  handler_->CreateExtensionPageHandler(
+      third_mock_page.BindAndGetRemote(),
+      third_handler_remote.BindNewPipeAndPassReceiver());
+  EXPECT_EQ(process_manager
+                ->GetServiceWorkerKeepaliveDataForRecords(
+                    extension_misc::kContextualTasksExtensionId)
+                .size(),
+            1u);
+
+  handler_->Clear();
+  EXPECT_TRUE(process_manager
+                  ->GetServiceWorkerKeepaliveDataForRecords(
+                      extension_misc::kContextualTasksExtensionId)
+                  .empty());
+
+  process_manager->StopTrackingServiceWorkerRunningInstance(worker_id);
 }
 
 }  // namespace

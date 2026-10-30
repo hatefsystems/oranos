@@ -179,6 +179,19 @@ chromium-metrics-reviews@google.com.
 
 <!-- LINT.ThenChange(//tools/metrics/histograms/metadata/ui/histograms.xml:WebUIHostname) -->
 
+<histogram name="ActivityReporter.IncompleteReports" units="reports"
+    expires_after="2027-01-27">
+  <owner>sorin@chromium.org</owner>
+  <owner>src/components/activity_reporter/OWNERS</owner>
+  <summary>
+    Records the number of activity report update checks still in progress when
+    the activity reporter is destroyed during a clean shutdown. Such reports may
+    have reached the server, but their responses were not processed. Emitted
+    once per session that reports activity; not emitted on Android or after
+    crashes, and rarely on iOS. Typically uploaded on the next browser launch.
+  </summary>
+</histogram>
+
 <histogram name="ActivityReporter.InitialDateLastActiveState"
     enum="InitialDateLastActiveState" expires_after="2027-01-19">
   <owner>noahrose@google.com</owner>
@@ -613,7 +626,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="ClientHints.AcceptCHFrame" enum="AcceptCHFrameRestart"
-    expires_after="2027-02-21">
+    expires_after="2027-04-25">
   <owner>victortan@chromium.org</owner>
   <owner>miketaylr@chromium.org</owner>
   <owner>katabolism-finch@google.com</owner>
@@ -2069,6 +2082,23 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
+<histogram name="FindInPage.SessionOutcome" enum="FindInPageSessionOutcome"
+    expires_after="2027-04-08">
+  <owner>cuianthony@chromium.org</owner>
+  <owner>top-chrome-desktop-ui@google.com</owner>
+  <summary>
+    Records the outcome of an active Find-in-Page session on Desktop when the
+    session ends (e.g. when the Find bar is closed, the page navigates, or the
+    tab is closed). Only recorded for sessions where at least one user-initiated
+    search query completed (excluding passive pre-population from previous
+    searches or page selection when the Find bar is first opened, unless the
+    user edits the query or explicitly steps through matches). A session has
+    seen a zero-match if any completed search yielded 0 matches. A 0-match
+    result does not count as a zero-match if the query was a prefix of the
+    previous query (e.g. the user backspaced) or the same query repeated.
+  </summary>
+</histogram>
+
 <histogram name="Finds.ExecutionTime" units="ms" expires_after="2027-06-01">
   <owner>wylieb@chromium.org</owner>
   <owner>bjfong@google.com</owner>
@@ -2883,6 +2913,27 @@ chromium-metrics-reviews@google.com.
     is received) respectively.
 
     Recorded when the channel gets unpaused.
+  </summary>
+</histogram>
+
+<histogram name="Mojo.Channel.OffThreadSendQueueTime" units="microseconds"
+    expires_after="2027-04-30">
+  <owner>nafisabedin@google.com</owner>
+  <owner>pasko@chromium.org</owner>
+  <improvement direction="LOWER_IS_BETTER"/>
+  <summary>
+    For a channel-associated Mojo message sent from a thread other than the
+    channel's IO thread, measures the time from
+    IPC::ChannelAssociatedGroupController posting the send task until that task
+    starts running on the IO thread. Time spent afterwards queued while the
+    channel is paused or not yet bound is excluded. Messages sent from the IO
+    thread are not recorded.
+
+    Recorded in the sending process. Senders include the browser UI thread (to
+    renderers) and the renderer main thread (to the browser).
+
+    Sub-sampled to 1/1000 sends to reduce measurement overhead. Only recorded on
+    clients with high-resolution clocks.
   </summary>
 </histogram>
 
@@ -4191,17 +4242,6 @@ chromium-metrics-reviews@google.com.
   </token>
 </histogram>
 
-<histogram name="ReduceAcceptLanguage.AcceptLanguageNegotiationRestart"
-    enum="AcceptLanguageNegotiationRestart" expires_after="2026-07-26">
-  <owner>victortan@chromium.org</owner>
-  <owner>awillia@chromium.org</owner>
-  <owner>miketaylr@chromium.org</owner>
-  <summary>
-    Count of requests restarted or the reason why not restarted when reducing
-    accept-language HTTP header.
-  </summary>
-</histogram>
-
 <histogram name="ReduceAcceptLanguage.AcceptLanguagePrefValueIsEmpty"
     enum="BooleanAvailable" expires_after="M145">
   <owner>victortan@chromium.org</owner>
@@ -5110,14 +5150,6 @@ useful for Chirp alerts (go/crca-alerts). -->
     requested.
 
     Warning: this histogram was expired from M83 to M107; data may be missing.
-  </summary>
-</histogram>
-
-<histogram name="SpellCheck.api.showUI" enum="BooleanEnabled"
-    expires_after="M124">
-  <owner>groby@chromium.org</owner>
-  <summary>
-    The number of times the platform spelling UI was enabled/disabled.
   </summary>
 </histogram>
 

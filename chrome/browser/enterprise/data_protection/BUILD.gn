@@ -88,7 +88,12 @@ source_set("unit_tests") {
     ]
     if (toolkit_views) {
       sources += [ "data_protection_overlay_view_unittest.cc" ]
-      deps += [ ":data_protection_view_lib" ]
+      deps += [
+        ":data_protection_view_lib",
+        "//base/test:test_support",
+        "//cc/paint",
+        "//ui/gfx",
+      ]
     }
   }
 }

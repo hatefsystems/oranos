@@ -511,7 +511,6 @@ VISIT_PROTO_FIELDS(const sync_pb::ClientConfigParams& proto) {
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::ClientStatus& proto) {
-  VISIT(hierarchy_conflict_detected);
   VISIT(is_sync_feature_enabled);
 }
 
@@ -720,6 +719,7 @@ VISIT_PROTO_FIELDS(
     const sync_pb::EncryptedTabContextContainerSpecifics& proto) {
   VISIT(uuid);
   VISIT(encryption_key);
+  VISIT_BYTES(container_access_token);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::EntityMetadata& proto) {
@@ -956,7 +956,7 @@ VISIT_PROTO_FIELDS(const sync_pb::ReplacedNavigation& proto) {
 
 VISIT_PROTO_FIELDS(const sync_pb::CryptographerData& proto) {
   VISIT(key_bag);
-  VISIT(default_key_name);
+  VISIT(primary_key_name);
   VISIT(cross_user_sharing_keys);
 }
 
@@ -1001,8 +1001,6 @@ VISIT_PROTO_FIELDS(const sync_pb::CrossUserSharingPrivateKey& proto) {
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::NigoriKey& proto) {
-  VISIT(deprecated_name);
-  VISIT_SECRET(deprecated_user_key);
   VISIT_SECRET(encryption_key);
   VISIT_SECRET(mac_key);
 }
@@ -1542,11 +1540,8 @@ VISIT_PROTO_FIELDS(
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::SyncCycleCompletedEventInfo& proto) {
-  VISIT(num_encryption_conflicts);
-  VISIT(num_hierarchy_conflicts);
   VISIT(num_server_conflicts);
   VISIT(num_updates_downloaded);
-  VISIT(num_reflected_updates_downloaded);
   VISIT(caller_info);
   VISIT_ENUM(get_updates_origin);
 }
@@ -2458,8 +2453,7 @@ VISIT_PROTO_FIELDS(const sync_pb::JourneySpecifics::HistoryEntry& proto) {
   VISIT(visit_timestamp_windows_epoch_micros);
 }
 
-VISIT_PROTO_FIELDS(
-    const sync_pb::JourneySpecifics::ContinuationQuery& proto) {
+VISIT_PROTO_FIELDS(const sync_pb::JourneySpecifics::ContinuationQuery& proto) {
   VISIT(title);
   VISIT(prompt);
 }

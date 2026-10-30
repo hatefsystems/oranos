@@ -168,23 +168,23 @@ constexpr char kCalculatorIconResourceName[] =
 constexpr char kDinoIconResourceName[] =
     "//resources/cr_components/searchbox/icons/dino_cr23.svg";
 constexpr char kDriveDocsIconResourceName[] =
-    "//resources/cr_components/searchbox/icons/drive_docs.svg";
+    "//resources/cr_components/searchbox/icons/drive_docs_custom.svg";
 constexpr char kDriveFolderIconResourceName[] =
-    "//resources/cr_components/searchbox/icons/drive_folder.svg";
+    "//resources/cr_components/searchbox/icons/drive_folder_custom.svg";
 constexpr char kDriveFormIconResourceName[] =
-    "//resources/cr_components/searchbox/icons/drive_form.svg";
+    "//resources/cr_components/searchbox/icons/drive_form_custom.svg";
 constexpr char kDriveImageIconResourceName[] =
-    "//resources/cr_components/searchbox/icons/drive_image.svg";
+    "//resources/cr_components/searchbox/icons/drive_image_custom.svg";
 constexpr char kDriveLogoIconResourceName[] =
     "//resources/cr_components/searchbox/icons/drive_logo.svg";
 constexpr char kDrivePdfIconResourceName[] =
-    "//resources/cr_components/searchbox/icons/drive_pdf.svg";
+    "//resources/cr_components/searchbox/icons/drive_pdf_custom.svg";
 constexpr char kDriveSheetsIconResourceName[] =
-    "//resources/cr_components/searchbox/icons/drive_sheets.svg";
+    "//resources/cr_components/searchbox/icons/drive_sheets_custom.svg";
 constexpr char kDriveSlidesIconResourceName[] =
-    "//resources/cr_components/searchbox/icons/drive_slides.svg";
+    "//resources/cr_components/searchbox/icons/drive_slides_custom.svg";
 constexpr char kDriveVideoIconResourceName[] =
-    "//resources/cr_components/searchbox/icons/drive_video.svg";
+    "//resources/cr_components/searchbox/icons/drive_video_custom.svg";
 constexpr char kEnterpriseIconResourceName[] =
     "//resources/cr_components/searchbox/icons/enterprise.svg";
 constexpr char kExtensionAppIconResourceName[] =
@@ -199,7 +199,7 @@ constexpr char kGoogleAgentspace25IconResourceName[] =
 constexpr char kGoogleGIconResourceName[] =
     "//resources/cr_components/searchbox/icons/google_g_cr23.svg";
 constexpr char kGoogleKeepNoteIconResourceName[] =
-    "//resources/cr_components/searchbox/icons/note.svg";
+    "//resources/cr_components/searchbox/icons/note_custom.svg";
 constexpr char kGoogleSitesIconResourceName[] =
     "//resources/cr_components/searchbox/icons/sites.svg";
 constexpr char kGoogleLensMonochromeLogoIcon[] =
@@ -262,6 +262,20 @@ bool MatchHasSideTypeAndRenderType(
   return suggestion_groups_map.contains(group_id) &&
          suggestion_groups_map.at(group_id).side_type() == side_type &&
          suggestion_groups_map.at(group_id).render_type() == render_type;
+}
+
+// Returns whether the secondary text of `match` has the URL classification.
+// The secondary text is the description, or the contents if they're swapped.
+bool SecondaryTextIsUrl(const AutocompleteMatch& match) {
+  const bool swap = match.swap_contents_and_description;
+  if ((swap ? match.contents : match.description).empty()) {
+    return false;
+  }
+  return std::ranges::any_of(
+      swap ? match.contents_class : match.description_class,
+      [](const ACMatchClassification& classification) {
+        return (classification.style & ACMatchClassification::URL) != 0;
+      });
 }
 
 std::string GetBase64UrlVariations(Profile* profile) {
@@ -562,6 +576,8 @@ base::DictValue SearchboxHandler::GetProfileIndependentWebUIDataSourceDict(
            ntp_composebox::kShowContextMenuHeaders.Get());
   dict.Set("composeboxSingleTabMenuItemEnabled",
            omnibox::IsSingleTabMenuItemInComposeboxEnabled());
+  dict.Set("composeboxTabStateUnificationEnabled",
+           omnibox::IsTabStateUnificationInComposeboxEnabled());
   dict.Set("stsMegaplusShareRelevantOpenTabs",
            GetSmartTabSharingMegaplusString());
   dict.Set(
@@ -637,10 +653,13 @@ base::DictValue SearchboxHandler::GetProfileDependentWebUIDataSourceDict(
   return dict;
 }
 
-std::string SearchboxHandler::AutocompleteIconToResourceName(
-    const gfx::VectorIcon& icon) const {
+// static
+std::string SearchboxHandler::VectorIconToResourceName(
+    const gfx::VectorIcon& icon) {
   if (icon.is_empty()) {
-    return "";  // An empty resource name is effectively a blank icon.
+    // Dropdown rows render blank for an empty resource name, while the
+    // searchbox input falls back to its default icon.
+    return "";
   }
 
   // Keep sorted alphabetically by `if` predicate. E.g.
@@ -860,6 +879,11 @@ std::string SearchboxHandler::AutocompleteIconToResourceName(
   return resource_name;
 }
 
+std::string SearchboxHandler::AutocompleteIconToResourceName(
+    const gfx::VectorIcon& icon) const {
+  return VectorIconToResourceName(icon);
+}
+
 searchbox::mojom::AutocompleteResultPtr
 SearchboxHandler::CreateAutocompleteResult(
     int32_t query_id,
@@ -969,7 +993,8 @@ void SearchboxHandler::PopulateAccessibilityLabels(
     const OmniboxPopupSelection selection(line, state);
     std::u16string label = searchbox::GetAccessibilityLabelForSelection(
         result, selection, header_text, narrated_text,
-        /*include_positional_info=*/true, turl_service);
+        /*include_positional_info=*/true, turl_service,
+        autocomplete_controller()->autocomplete_provider_client());
     // AIM button visibility isn't known here. It only affects whether the IPH
     // row's dismiss button suffix is read after the first match, when the AIM
     // button is focusable in between.
@@ -1085,6 +1110,7 @@ SearchboxHandler::CreateAutocompleteMatch(
   mojom_match->supports_deletion = match.SupportsDeletion();
   mojom_match->suggest_template =
       suggest_template_info::CreateSuggestTemplateInfo(match);
+  mojom_match->secondary_text_is_url = SecondaryTextIsUrl(match);
   if (!match.from_keyword) {
     for (const auto& action : match.actions) {
 // TODO(b/544764632): Implement Pedals for Android.
@@ -1121,9 +1147,8 @@ SearchboxHandler::CreateAutocompleteMatch(
     KeywordState keyword_state;
     std::u16string keyword;
     std::u16string keyword_placeholder;
-    match.GetKeywordUiState(turl_service,
-                            client() && client()->IsHistoryEmbeddingsEnabled(),
-                            &keyword_state, &keyword, &keyword_placeholder);
+    match.GetKeywordUiState(turl_service, &keyword_state, &keyword,
+                            &keyword_placeholder);
 
     searchbox::mojom::KeywordType keyword_type;
     bool has_keyword = false;
@@ -1407,8 +1432,7 @@ void SearchboxHandler::SendAvailableKeywordModels() {
       keyword_model->icon_path = AutocompleteIconToResourceName(keyword_icon);
     }
     keyword_model->placeholder =
-        base::UTF16ToUTF8(AutocompleteMatch::GetKeywordPlaceholder(
-            turl, client() && client()->IsHistoryEmbeddingsEnabled()));
+        base::UTF16ToUTF8(AutocompleteMatch::GetKeywordPlaceholder(turl));
     models.push_back(std::move(keyword_model));
   }
 
@@ -1514,8 +1538,7 @@ void SearchboxHandler::QueryAutocomplete(
     if (is_keyword_selected && template_url) {
       edit_model()->SetKeywordInfo(
           KeywordState::kKeyword, template_url->keyword(),
-          AutocompleteMatch::GetKeywordPlaceholder(
-              template_url, client() && client()->IsHistoryEmbeddingsEnabled()),
+          AutocompleteMatch::GetKeywordPlaceholder(template_url),
           metrics::OmniboxEventProto::SPACE_AT_END);
     } else {
       edit_model()->SetKeywordInfo(KeywordState::kNone, u"", u"",

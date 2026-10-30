@@ -21,6 +21,7 @@
 #import "base/strings/strcat.h"
 #import "base/strings/string_util.h"
 #import "base/strings/stringprintf.h"
+#import "components/actor/public/mojom/actor_types.mojom.h"
 #import "components/optimization_guide/proto/features/common_quality_data.pb.h"
 #import "ios/chrome/browser/ai_prototyping/ttc/model/audio/ttc_audio_controller.h"
 #import "ios/chrome/browser/ai_prototyping/ttc/model/audio/ttc_audio_session_controller.h"
@@ -339,6 +340,15 @@ void TtcConversation::OnGenerationStateChanged(bool started,
   }
 }
 
+void TtcConversation::OnModelTurnStateUpdate(ttc::ModelTurnStateUpdate update,
+                                             int64_t generation_id) {
+  // No-op. Need to be hooked up.
+}
+
+void TtcConversation::OnUserTurnStateUpdate(ttc::UserTurnStateUpdate update) {
+  // No-op. Need to be hooked up.
+}
+
 void TtcConversation::OnTranscriptions(
     const std::string& input_transcription,
     const std::string& output_transcription) {
@@ -356,7 +366,15 @@ void TtcConversation::OnToolCall(const ttc::ToolRequest& tool_request,
                                  ttc::ToolResponseCallback response_callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   LogToolCallReceived(tool_request.name);
-  // Tool call dispatch will be wired in a subsequent CL.
+  if (delegate_) {
+    delegate_->OnToolCall(tool_request, std::move(response_callback));
+    return;
+  }
+  if (response_callback) {
+    std::move(response_callback)
+        .Run(ttc::ToolResponse::Error(
+            actor::mojom::ActionResultCode::kExecutorDestroyed));
+  }
 }
 
 void TtcConversation::OnJournalEvent(
@@ -546,11 +564,10 @@ void TtcConversation::LogToolCallReceived(const std::string& tool_name) {
   if (!journal_) {
     return;
   }
+  // Omits summary so this entry is hidden in simplified journal mode;
+  // `TtcActuationHandler` logs simplified tool execution status instead.
   journal_->Log(TTCJournalComponent::kConversation, "TtcToolCallReceived",
-                TTCJournalDetailsBuilder()
-                    .SetSummary(base::StrCat({"Tool: ", tool_name}))
-                    .Add("tool_name", tool_name)
-                    .Build());
+                TTCJournalDetailsBuilder().Add("tool_name", tool_name).Build());
 }
 
 void TtcConversation::LogToolDefinitionsSent(

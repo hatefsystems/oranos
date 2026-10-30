@@ -101,8 +101,10 @@ class UnboundedSurfaceWindowMac : public UnboundedSurfaceWindow,
   viz::ParentLocalSurfaceIdAllocator local_surface_id_allocator_;
 #ifdef __OBJC__
   NSWindow* __strong window_ = nil;
+  id __strong local_event_monitor_ = nil;
 #else
   raw_ptr<void> window_ = nullptr;
+  raw_ptr<void> local_event_monitor_ = nullptr;
 #endif
 
   std::unique_ptr<ui::RecyclableCompositorMac> recyclable_compositor_;

@@ -58,6 +58,7 @@
 #include "chrome/browser/global_features.h"
 #include "chrome/browser/google/google_brand.h"
 #include "chrome/browser/gpu/gpu_mode_manager.h"
+#include "chrome/browser/headless/headless_mode_util.h"
 #include "chrome/browser/icon_manager.h"
 #include "chrome/browser/intranet_redirect_detector.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
@@ -557,18 +558,6 @@ void BrowserProcessImpl::Init() {
       user_value->GetIfBool().value_or(false) != chrome::IsIsolationEnabled()) {
     local_state()->ClearPref(prefs::kProcessIsolationEnabled);
   }
-
-  // After potentially clearing the untrusted user value, if the effective value
-  // of the pref (which now comes from policies, or a trusted user value, or
-  // default) differs from the actual state, queue a state update.
-  if (local_state()->GetBoolean(prefs::kProcessIsolationEnabled) !=
-      chrome::IsIsolationEnabled()) {
-    UpdateProcessIsolationState();
-  }
-  pref_change_registrar_.Add(
-      prefs::kProcessIsolationEnabled,
-      base::BindRepeating(&BrowserProcessImpl::UpdateProcessIsolationState,
-                          base::Unretained(this)));
 #endif  // BUILDFLAG(IS_WIN)
 
   CHECK(!webrtc_event_log_manager_, base::NotFatalUntil::M162);
@@ -1477,6 +1466,11 @@ void BrowserProcessImpl::StartAutoupdateTimer() {
 #if !BUILDFLAG(IS_CHROMEOS)
 activity_reporter::ActivityReporter* BrowserProcessImpl::activity_reporter() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (!activity_reporter_ && headless::IsHeadlessMode()) {
+    // Headless Chrome is not user-visible, so its use must not be reported as
+    // active use of the browser.
+    activity_reporter_ = activity_reporter::CreateActivityReporterDisabled();
+  }
   if (!activity_reporter_) {
     activity_reporter_ = activity_reporter::CreateActivityReporter(
         base::BindRepeating(
@@ -1722,6 +1716,23 @@ void BrowserProcessImpl::PreMainMessageLoopRun() {
                                 base::TimeTicks::Now() - start_time);
       },
       base::TimeTicks::Now()));
+
+#if BUILDFLAG(IS_WIN)
+  // After potentially clearing the untrusted user value in Init(), if the
+  // effective value of the pref (which now comes from policies, or a trusted
+  // user value, or default) differs from the actual state, queue a state
+  // update. This must happen after `os_crypt_async_` is created so
+  // `SetIsolationState` can wait for `os_crypt_async_` initialization before
+  // re-encrypting the key.
+  if (local_state()->GetBoolean(prefs::kProcessIsolationEnabled) !=
+      chrome::IsIsolationEnabled()) {
+    UpdateProcessIsolationState();
+  }
+  pref_change_registrar_.Add(
+      prefs::kProcessIsolationEnabled,
+      base::BindRepeating(&BrowserProcessImpl::UpdateProcessIsolationState,
+                          base::Unretained(this)));
+#endif  // BUILDFLAG(IS_WIN)
 
   // browser_policy_connector() is created very early because local_state()
   // needs policy to be initialized with the managed preference values.

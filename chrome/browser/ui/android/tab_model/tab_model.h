@@ -194,6 +194,9 @@ class TabModel : public TabListInterface {
     FROM_SESSION_STARTUP_WITH_URLS_PREF,
     // Opened to load an omnibox search query in a new tab in the background.
     FROM_OMNIBOX_BACKGROUND,
+    // Restored by undoing a tab closure: created in the background at the
+    // requested index; selection is handled by the restore logic.
+    FROM_UNDO_CLOSURE,
     // Must be last.
     SIZE
   };
@@ -224,8 +227,6 @@ class TabModel : public TabListInterface {
     KEYBOARD_SHORTCUT,
     // Tab closing is from vertical tab strip.
     VERTICAL_TAB_STRIP,
-    // Tab closing is from Open in app.
-    OPEN_IN_APP,
     // Tab closing is from Quick Delete.
     QUICK_DELETE,
     // Tab closing is from grid tab switcher.

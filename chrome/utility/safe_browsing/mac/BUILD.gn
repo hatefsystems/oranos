@@ -5,8 +5,8 @@
 import("//build/rust/rust_static_library.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
 
-# Pure-Rust parser for UDIF (.dmg) disk images and HFS+/HFSX filesystems.
-# Kept free of `unsafe` code.
+# Pure-Rust parser for UDIF (.dmg) disk images, HFS+/HFSX filesystems, and
+# Mach-O binaries. Kept free of `unsafe` code.
 rust_static_library("dmg_parser") {
   visibility = [ ":*" ]
 
@@ -14,6 +14,7 @@ rust_static_library("dmg_parser") {
   sources = [
     "rust/hfs.rs",
     "rust/lib.rs",
+    "rust/mach_o.rs",
     "rust/udif.rs",
   ]
   deps = [
@@ -69,15 +70,23 @@ rust_static_library("dmg_parser_unittests") {
 
 source_set("read_stream_bridge_hdr") {
   visibility = [ ":*" ]
-  sources = [ "rust/read_stream_bridge.h" ]
-  public_deps = [ "//build/rust:cxx_cppdeps" ]
+  sources = [
+    "read_stream.h",
+    "rust/read_stream_bridge.h",
+  ]
+  public_deps = [
+    "//base",
+    "//build/rust:cxx_cppdeps",
+  ]
 }
 
-# `cxx` FFI bridge exposing `dmg_parser` to C++ (`UDIFParser` / `HFSIterator`).
+# `cxx` FFI bridge exposing `dmg_parser` to C++ (`UDIFParser`, `HFSIterator`,
+# and `MachOImageReader`).
 # Permits `unsafe` for `#[cxx::bridge]` (along with `dmg_decompress`).
 rust_static_library("dmg_ffi_bridge") {
   visibility = [
     ":*",
+    "//chrome/common/safe_browsing:*",
     "//chrome/utility/safe_browsing:*",
   ]
 
@@ -86,10 +95,8 @@ rust_static_library("dmg_ffi_bridge") {
   sources = [ "rust/ffi.rs" ]
   cxx_bindings = [ "rust/ffi.rs" ]
 
-  deps = [
-    ":dmg_parser",
-    ":read_stream_bridge_hdr",
-  ]
+  deps = [ ":dmg_parser" ]
+  public_deps = [ ":read_stream_bridge_hdr" ]
 }
 
 config("dmg_public_config") {
@@ -108,7 +115,6 @@ source_set("dmg_common") {
     "hfs.cc",
     "hfs.h",
     "read_stream.cc",
-    "read_stream.h",
     "rust/read_stream_bridge.cc",
     "udif.cc",
     "udif.h",
@@ -142,6 +148,8 @@ fuzzer_test("safe_browsing_dmg_fuzzer") {
   deps = [
     ":dmg_common",
     "//base",
+    "//base/test:test_support",
+    "//components/safe_browsing/core/common:features",
     "//testing/libfuzzer:libfuzzer_base_wrappers",
   ]
 }
@@ -152,6 +160,8 @@ fuzzer_test("safe_browsing_hfs_fuzzer") {
   deps = [
     ":dmg_common",
     "//base",
+    "//base/test:test_support",
+    "//components/safe_browsing/core/common:features",
     "//testing/libfuzzer:libfuzzer_base_wrappers",
   ]
 

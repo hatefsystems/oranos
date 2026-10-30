@@ -26,15 +26,19 @@ size_t GetMaxConcurrentSessionsLimit() {
 }  // namespace
 
 TransportSessionRegistryImpl::TransportSessionRegistryImpl(
-    base::WeakPtr<TransportChannel> channel)
+    base::WeakPtr<TransportChannel> channel,
+    TransportSessionImpl::DownstreamMessageCallback on_downstream_message)
     : TransportSessionRegistryImpl(std::move(channel),
-                                   GetMaxConcurrentSessionsLimit()) {}
+                                   GetMaxConcurrentSessionsLimit(),
+                                   std::move(on_downstream_message)) {}
 
 TransportSessionRegistryImpl::TransportSessionRegistryImpl(
     base::WeakPtr<TransportChannel> channel,
-    size_t max_concurrent_sessions)
+    size_t max_concurrent_sessions,
+    TransportSessionImpl::DownstreamMessageCallback on_downstream_message)
     : channel_(std::move(channel)),
-      max_concurrent_sessions_(max_concurrent_sessions) {
+      max_concurrent_sessions_(max_concurrent_sessions),
+      on_downstream_message_(std::move(on_downstream_message)) {
   DCHECK(channel_);
 }
 
@@ -88,29 +92,17 @@ void TransportSessionRegistryImpl::DestroySession(std::string_view session_id) {
     for (auto& observer : observers_) {
       observer.OnSessionRemoved(removed_session_id);
     }
-    closed_session_ids_.Put(std::move(removed_session_id));
   }
-}
-
-TransportSessionImpl* TransportSessionRegistryImpl::GetOrCreateSession(
-    std::string_view session_id) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  TransportSessionImpl* existing_session = GetSessionImpl(session_id);
-  if (existing_session) {
-    return existing_session;
-  }
-  if (closed_session_ids_.Get(std::string(session_id)) !=
-      closed_session_ids_.end()) {
-    DVLOG(1) << "Ignoring GetOrCreateSession for already-closed session: "
-             << session_id;
-    return nullptr;
-  }
-  return CreateSession(session_id);
 }
 
 TransportSessionImpl* TransportSessionRegistryImpl::CreateSession(
     std::string_view session_id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (GetSessionImpl(session_id)) {
+    DVLOG(1) << "Ignoring CreateSession for already-active session: "
+             << session_id;
+    return nullptr;
+  }
   base::UmaHistogramExactLinear(
       "Browser.Actuator.Transport.SessionRegistry.ExistingSessionsCount",
       static_cast<int>(sessions_.size()),
@@ -126,7 +118,8 @@ TransportSessionImpl* TransportSessionRegistryImpl::CreateSession(
     return nullptr;
   }
   std::unique_ptr<TransportSessionImpl> session =
-      std::make_unique<TransportSessionImpl>(session_id, channel_);
+      std::make_unique<TransportSessionImpl>(session_id, channel_,
+                                             on_downstream_message_);
   TransportSessionImpl* session_ptr = session.get();
   sessions_.emplace(std::string(session_id), std::move(session));
   for (auto& observer : observers_) {
@@ -138,7 +131,6 @@ TransportSessionImpl* TransportSessionRegistryImpl::CreateSession(
 void TransportSessionRegistryImpl::Clear() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   sessions_.clear();
-  closed_session_ids_.Clear();
 }
 
 base::WeakPtr<TransportSessionRegistryImpl>

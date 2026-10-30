@@ -57,6 +57,13 @@ if (enable_me2me_host) {
     output = "$root_build_dir/remoting/{{source_name_part}}"
   }
 
+  remoting_localize("remoting_me2me_host_desktop_entry") {
+    sources = [ "com.google.ChromeRemoteDesktop.desktop.jinja2" ]
+    locale_list = remoting_locales_without_pseudolocales
+    locale_dir = resources_locale_dir
+    output = "$root_build_dir/remoting/{{source_name_part}}"
+  }
+
   copy("remoting_me2me_host_copy_setup_url_forwarder_script") {
     sources = [ "configure_url_forwarder.py" ]
     outputs = [ "$root_build_dir/remoting/setup-url-forwarder" ]
@@ -91,6 +98,7 @@ if (enable_me2me_host) {
       ":remoting_me2me_host_copy_script",
       ":remoting_me2me_host_copy_setup_url_forwarder_script",
       ":remoting_me2me_host_copy_shared_lib",
+      ":remoting_me2me_host_desktop_entry",
       ":remoting_migrate_host",
       ":remoting_native_messaging_host",
       ":url_forwarder_desktop_entry",
@@ -300,6 +308,8 @@ source_set("platform_impls") {
     "login_session_server.h",
     "peer_connection_bpf_policy_linux.cc",
     "peer_connection_bpf_policy_linux.h",
+    "peer_connection_landlock_policy_linux.cc",
+    "peer_connection_landlock_policy_linux.h",
     "pipewire_audio_capturer.cc",
     "pipewire_audio_capturer.h",
     "pipewire_audio_injector.cc",
@@ -476,6 +486,7 @@ source_set("unit_tests") {
     "gvariant_ref_unittest.cc",
     "gvariant_type_unittest.cc",
     "peer_connection_bpf_policy_linux_unittest.cc",
+    "peer_connection_landlock_policy_linux_unittest.cc",
     "pipewire_audio_capturer_unittest.cc",
     "pipewire_mouse_cursor_capturer_unittest.cc",
     "pulse_audio_capturer_unittest.cc",
@@ -511,6 +522,7 @@ source_set("unit_tests") {
     ":utils",
     ":x11_display_utils",
     "dbus_interfaces:interface_headers",
+    "//base/test:test_support",
     "//dbus",
     "//dbus:dbus_test_service",
     "//remoting/base:errors",

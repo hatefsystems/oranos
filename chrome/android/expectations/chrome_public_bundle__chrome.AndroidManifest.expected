@@ -22,7 +22,7 @@
   <uses-permission android:name="android.permission.USE_FINGERPRINT"/>
   <uses-permission android:name="com.google.android.apps.aicore.service.BIND_SERVICE"/>
   <uses-permission android:name="com.google.android.c2dm.permission.RECEIVE"/>
-  <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="36"/>
+  <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="37"/>
   <application>
     <activity  # DIFF-ANCHOR: f7a9141e
         android:name="androidx.core.pip.contentpip.ContentPipInternalActivity"
@@ -105,6 +105,7 @@
     </activity>  # DIFF-ANCHOR: 610e8ccf
     <activity  # DIFF-ANCHOR: 76686af9
         android:name="org.chromium.chrome.browser.LauncherShortcutActivity"
+        android:configChanges="orientation|keyboardHidden|keyboard|screenSize|mcc|mnc|screenLayout|smallestScreenSize|uiMode|density"
         android:excludeFromRecents="true"
         android:exported="false"
         android:launchMode="singleInstance"
@@ -503,16 +504,6 @@
         <category android:name="android.intent.category.DEFAULT"/>
       </intent-filter>  # DIFF-ANCHOR: 9c5197e9
     </activity>  # DIFF-ANCHOR: aea75380
-    <activity  # DIFF-ANCHOR: 1d9b4077
-        android:name="org.chromium.components.media_router.caf.remoting.CafExpandedControllerActivity"
-        android:configChanges="orientation|keyboardHidden|keyboard|screenSize|mcc|mnc|screenLayout|smallestScreenSize"
-        android:excludeFromRecents="true"
-        android:hardwareAccelerated="true"
-        android:label="Chrome.CafExpandedControllerActivity"
-        android:launchMode="singleTask"
-        android:noHistory="true"
-        android:theme="@style/Theme.Chromium.Activity">
-    </activity>  # DIFF-ANCHOR: 1d9b4077
     <activity  # DIFF-ANCHOR: 5d3091ca
         android:name="org.chromium.components.webxr.XrHostActivity"
         android:configChanges="orientation|keyboardHidden|keyboard|screenSize|mcc|mnc|screenLayout|smallestScreenSize|uiMode|navigation|density|touchscreen|colorMode|fontScale|fontWeightAdjustment"

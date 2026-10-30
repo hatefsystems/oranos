@@ -2078,8 +2078,11 @@ static void PopulateCanvasDrawablePaintState(
   const LayoutReplaced* replaced = To<LayoutReplaced>(canvas->GetLayoutBox());
   const ComputedStyle& style = replaced->Style();
 
-  paint_state.canvas_content_size =
-      gfx::SizeF(replaced->ReplacedContentRect().size);
+  PhysicalRect replaced_content_rect = replaced->ReplacedContentRect();
+  paint_state.canvas_content_offset =
+      gfx::Vector2dF(replaced_content_rect.offset.left.ToFloat(),
+                     replaced_content_rect.offset.top.ToFloat());
+  paint_state.canvas_content_size = gfx::SizeF(replaced_content_rect.size);
   paint_state.canvas_device_pixel_content_box =
       ResizeObserverUtilities::ComputeSnappedDevicePixelContentBox(
           ToLogicalSize(replaced->PhysicalContentBoxRect().size,
@@ -2713,6 +2716,8 @@ void FragmentPaintPropertyTreeBuilder::UpdateFilter() {
   DCHECK(properties_);
   bool was_tainted = properties_->Filter() && properties_->Filter()->Filter() &&
                      properties_->Filter()->Filter()->OriginTainted();
+  bool had_reference_filter =
+      properties_->Filter() && properties_->Filter()->HasReferenceFilter();
   if (NeedsPaintPropertyUpdate()) {
     if (NeedsFilter(object_, full_context_)) {
       EffectPaintPropertyNode::State state;
@@ -2791,8 +2796,10 @@ void FragmentPaintPropertyTreeBuilder::UpdateFilter() {
   }
 
   bool is_tainted = false;
+  bool has_reference_filter = false;
   if (properties_->Filter()) {
     context_.current_effect = properties_->Filter();
+    has_reference_filter = properties_->Filter()->HasReferenceFilter();
     if (const auto* input_clip = properties_->PixelMovingFilterClipExpander()) {
       context_.current.clip = input_clip;
     }
@@ -2805,7 +2812,8 @@ void FragmentPaintPropertyTreeBuilder::UpdateFilter() {
   } else {
     DCHECK(!properties_->PixelMovingFilterClipExpander());
   }
-  if (was_tainted != is_tainted) {
+  if (was_tainted != is_tainted ||
+      had_reference_filter != has_reference_filter) {
     full_context_.force_subtree_update_reasons |=
         PaintPropertyTreeBuilderContext::kSubtreeUpdateIsolationPiercing;
   }
@@ -4128,12 +4136,12 @@ void FragmentPaintPropertyTreeBuilder::UpdatePaintOffset() {
               DynamicTo<ViewTransitionTransitionElement>(object_.GetNode())) {
         auto* scope = DynamicTo<LayoutBox>(
             transition_element->UltimateOriginatingElement().GetLayoutObject());
-        LayoutBox* containing_block = object_.ContainingBlock();
-        if (scope && containing_block == scope) {
+        LayoutBox* container = object_.ContainingBox();
+        if (scope && container == scope) {
           // Undo the scroll origin offset that was applied during
           // UpdateScrollAndScrollTranslation().
           context_.current.paint_offset -=
-              PhysicalOffset(containing_block->ScrollOrigin());
+              PhysicalOffset(container->ScrollOrigin());
         }
       }
     }
@@ -4664,8 +4672,10 @@ void PaintPropertyTreeBuilder::InitPaintProperties() {
                            PaintPropertyChangeType::kNodeAddedOrRemoved);
     }
     if (properties->HasNode<EffectPaintPropertyNodeOrAlias>()) {
-      if (properties->Effect() &&
-          properties->Effect()->HasCanvasDrawableState()) {
+      if ((properties->Effect() &&
+           properties->Effect()->HasCanvasDrawableState()) ||
+          (properties->Filter() && properties->Filter()->Filter() &&
+           properties->Filter()->Filter()->OriginTainted())) {
         context_.force_subtree_update_reasons |=
             PaintPropertyTreeBuilderContext::kSubtreeUpdateIsolationPiercing;
       }
@@ -4683,7 +4693,11 @@ void PaintPropertyTreeBuilder::InitPaintProperties() {
     // SVG resources are painted within one or more other locations in the
     // SVG during paint, and hence have their own independent paint property
     // trees, paint offset, etc.
+    bool is_in_drawable_canvas_subtree =
+        context_.fragment_context.is_in_drawable_canvas_subtree;
     context_.fragment_context = PaintPropertyTreeBuilderFragmentContext();
+    context_.fragment_context.is_in_drawable_canvas_subtree =
+        is_in_drawable_canvas_subtree;
     context_.has_svg_hidden_container_ancestor = true;
 
     PaintPropertyTreeBuilderFragmentContext& fragment_context =

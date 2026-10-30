@@ -306,6 +306,8 @@ chromium-metrics-reviews@google.com.
       summary="tabs opened from Tips Notifications"/>
   <variant name="TypeUnknown"
       summary="tabs opened from a different case than one's listed"/>
+  <variant name="UndoClosure"
+      summary="tabs restored in the background by undoing their closure"/>
   <variant name="Unset" summary="pre-warmed tabs without creation reason"/>
 </variants>
 
@@ -1103,7 +1105,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Android.BackPress.MinimizeAppAndCloseTab.CustomTab.{Task}"
-    enum="MinimizeAppAndCloseTabType" expires_after="2026-12-06">
+    enum="MinimizeAppAndCloseTabType" expires_after="2027-12-06">
   <owner>mschillaci@google.com</owner>
   <owner>adelm@google.com</owner>
   <owner>src/chrome/browser/back_press/android/OWNERS</owner>
@@ -1297,11 +1299,11 @@ chromium-metrics-reviews@google.com.
   <owner>polardz@google.com</owner>
   <summary>
     Recorded when the {IPHType} In-Product Help (IPH) in the Android Bottom Bar
-    triggers. The education tour tooltips (Glic, NewTab, TabSwitcher) record
-    only Shown and Dismissed. MovedToBottom applies to the AddressBar IPH only.
-    A user sees either the standalone IPHs or the tour, never both (standalone
-    IPHs are skipped while education is enabled), so the sources can be
-    separated by the education experiment arm.
+    triggers. Glic, NewTab and TabSwitcher come from the education tour
+    tooltips, which record only Shown and Dismissed. MovedToBottom applies to
+    the AddressBar IPH only. Until the standalone Glic and New Tab IPHs were
+    removed (crbug.com/574563293), they also recorded Glic and NewTab, but only
+    while education was off.
   </summary>
 <!-- LINT.IfChange(AndroidBottomBarIphFeature) -->
 
@@ -1313,17 +1315,6 @@ chromium-metrics-reviews@google.com.
   </token>
 <!-- LINT.ThenChange(//chrome/browser/ui/android/bottombar/java/src/org/chromium/chrome/browser/ui/bottombar/BottomBarMetrics.java:AndroidBottomBarIphFeature) -->
 
-</histogram>
-
-<histogram name="Android.BottomBar.Promo.Event"
-    enum="AndroidBottomBarPromoEvent" expires_after="2027-05-26">
-  <owner>madhavpruthi@google.com</owner>
-  <owner>ckitagawa@chromium.org</owner>
-  <owner>polardz@google.com</owner>
-  <summary>
-    Recorded when the introductory promo dialog for the Android Bottom Bar is
-    shown, accepted, or dismissed.
-  </summary>
 </histogram>
 
 <histogram name="Android.BottomControlsStacker.NumberOfVisibleLayers"
@@ -1769,7 +1760,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Android.ComposeboxQueryController.AddTabContextCachedDuration"
-    units="ms" expires_after="2026-12-06">
+    units="ms" expires_after="2027-04-11">
   <owner>ckitagawa@chromium.org</owner>
   <owner>clank-tab-dev@google.com</owner>
   <summary>
@@ -2238,7 +2229,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Android.DragDrop.Image.Size" units="KB"
-    expires_after="2026-11-29">
+    expires_after="2027-04-11">
   <owner>shuyng@google.com</owner>
   <owner>clank-large-form-factors@google.com</owner>
   <summary>
@@ -3426,7 +3417,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Android.Messages.Enqueued" enum="MessageIdentifier"
-    expires_after="2027-02-21">
+    expires_after="2027-04-25">
   <owner>aishwaryarj@google.com</owner>
   <owner>src/components/messages/OWNERS</owner>
   <summary>
@@ -3438,7 +3429,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Android.Messages.Enqueued.Hidden" enum="MessageIdentifier"
-    expires_after="2026-12-06">
+    expires_after="2027-02-21">
   <owner>aishwaryarj@google.com</owner>
   <owner>src/components/messages/OWNERS</owner>
   <summary>
@@ -3449,7 +3440,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Android.Messages.Enqueued.Visible" enum="MessageIdentifier"
-    expires_after="2027-02-21">
+    expires_after="2027-04-25">
   <owner>aishwaryarj@google.com</owner>
   <owner>src/components/messages/OWNERS</owner>
   <summary>
@@ -7084,6 +7075,35 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
+<histogram name="Android.WebView.AndroidX.Web.ApiCall"
+    enum="AndroidXWebApiCall" expires_after="never">
+<!-- expires-never: used in server pipeline to monitor WebView API usage -->
+
+  <owner>bewise@chromium.org</owner>
+  <owner>src/android_webview/OWNERS</owner>
+  <summary>
+    Records calls to WebView APIs backing the AndroidX androidx.web library
+    (e.g. WebContent). Logged each time a tracked method in
+    org.chromium.support_lib_boundary.web is called. Note that
+    androidx.web:web-compose also uses WebContent in addition to the WebSurface
+    APIs tracked by &quot;Android.WebView.AndroidX.WebCompose.ApiCall&quot;.
+  </summary>
+</histogram>
+
+<histogram name="Android.WebView.AndroidX.WebCompose.ApiCall"
+    enum="AndroidXWebComposeApiCall" expires_after="never">
+<!-- expires-never: used in server pipeline to monitor WebView API usage -->
+
+  <owner>bewise@chromium.org</owner>
+  <owner>src/android_webview/OWNERS</owner>
+  <summary>
+    Records calls to WebSurface WebView APIs backing the AndroidX
+    androidx.web:web-compose library. Logged each time a tracked
+    WebSurface-related method in org.chromium.support_lib_boundary.web is
+    called.
+  </summary>
+</histogram>
+
 <histogram name="Android.WebView.ApiCall" enum="WebViewApiCall"
     expires_after="never">
 <!-- expires-never: used in server pipeline to monitor WebView API usage -->
@@ -8683,7 +8703,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Android.WebView.NonEmbeddedMetrics.HistogramRecordAge"
-    units="minutes" expires_after="2027-02-21">
+    units="minutes" expires_after="2027-04-25">
   <owner>ntfschr@chromium.org</owner>
   <owner>src/android_webview/OWNERS</owner>
   <summary>
@@ -8696,7 +8716,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Android.WebView.NonEmbeddedMetrics.NumHistograms"
-    units="histograms" expires_after="2027-02-21">
+    units="histograms" expires_after="2027-04-25">
   <owner>ntfschr@chromium.org</owner>
   <owner>src/android_webview/OWNERS</owner>
   <summary>
@@ -8708,7 +8728,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram name="Android.WebView.NonEmbeddedMetrics.ParsingLogResult"
     enum="AndroidWebViewNonEmbeddedMetricsParsingLogResult"
-    expires_after="2027-02-21">
+    expires_after="2027-04-25">
   <owner>ntfschr@chromium.org</owner>
   <owner>src/android_webview/OWNERS</owner>
   <summary>
@@ -8720,7 +8740,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Android.WebView.NonEmbeddedMetrics.TransmissionResult"
-    enum="AndroidWebViewDevUiMetricsTransmission" expires_after="2027-02-21">
+    enum="AndroidWebViewDevUiMetricsTransmission" expires_after="2027-04-25">
   <owner>ntfschr@chromium.org</owner>
   <owner>src/android_webview/OWNERS</owner>
   <summary>
@@ -9045,6 +9065,17 @@ chromium-metrics-reviews@google.com.
 
     This histogram is recorded when the task completes, which can be on either
     success, failure, or timeout.
+  </summary>
+</histogram>
+
+<histogram name="Android.WebView.RunningDuringVariationsUpdate" enum="Boolean"
+    expires_after="2027-04-20">
+  <owner>alexmitra@chromium.org</owner>
+  <owner>src/android_webview/OWNERS</owner>
+  <summary>
+    Records true if a WebView is running while the synthetic variations file is
+    modified. This metric never records false. The value is recorded after the
+    variations file is successfully modified.
   </summary>
 </histogram>
 

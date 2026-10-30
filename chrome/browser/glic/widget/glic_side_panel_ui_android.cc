@@ -21,6 +21,7 @@
 #include "chrome/browser/glic/glic_pref_names.h"
 #include "chrome/browser/glic/host/guest_util.h"
 #include "chrome/browser/glic/public/features.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
 #include "chrome/browser/glic/public/glic_keyed_service.h"
 #include "chrome/browser/glic/public/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/public/widget/glic_side_panel_coordinator_android.h"
@@ -49,6 +50,7 @@
 #include "ui/android/accelerator_manager_android.h"
 #include "ui/android/window_android.h"
 #include "ui/base/base_window.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/content_accelerators/accelerator_util.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 
@@ -322,6 +324,11 @@ bool GlicSidePanelUi::CanDragEnter(
           features::kGlicDragAndDropFileUploadAndroid)) {
     return false;
   }
+  // File upload is unavailable until the user completes the FRE; mirror the
+  // disabled "+" upload menu by rejecting drags too.
+  if (!GlicEnabling::HasConsentedForProfile(profile_)) {
+    return false;
+  }
   return !data.filenames.empty() || !data.file_system_files.empty();
 }
 
@@ -536,7 +543,7 @@ void GlicSidePanelUi::RunFileChooser(
 bool GlicSidePanelUi::HandleWindowCreation(
     content::RenderFrameHost* opener,
     const GURL& target_url,
-    WindowOpenDisposition disposition,
+    ui::mojom::WindowOpenDisposition disposition,
     const blink::mojom::WindowFeatures& features) {
   return MaybeHandleGlicWindowCreation(opener, target_url, disposition,
                                        features);

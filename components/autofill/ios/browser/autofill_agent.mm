@@ -345,6 +345,12 @@ bool HasGuid(const Suggestion::Payload& payload) {
                             frame:frame
                          webState:webState
                 completionHandler:completion];
+    } else if (completion) {
+      // Run `completion` with `NO` when the lookup doesn't yield a single form
+      // so callers querying suggestion availability (e.g.
+      // `FormSuggestionController`'s provider loop on field focus) can advance
+      // to the next provider or clear stale suggestions without stalling.
+      completion(NO);
     }
   };
 
@@ -743,6 +749,7 @@ bool HasGuid(const Suggestion::Payload& payload) {
       case SuggestionType::kPasswordEntry:
       case SuggestionType::kPasswordFieldByFieldFilling:
       case SuggestionType::kPendingStateSignin:
+      case SuggestionType::kPendingStateTrustedVaultError:
       case SuggestionType::kPersonalContextNotice:
       case SuggestionType::kRemoveAutofillAi:
       case SuggestionType::kScanCreditCard:
@@ -809,6 +816,11 @@ bool HasGuid(const Suggestion::Payload& payload) {
                    kIPHAutofillAccountNameEmailSuggestionFeature) {
       suggestion.featureForIPH =
           SuggestionFeatureForIPH::kAccountNameEmailSuggestion;
+    } else if (popup_suggestion.iph_metadata.feature ==
+               &feature_engagement::
+                   kIPH_AutofillAmbientAutofillSpiiDisclaimer) {
+      suggestion.featureForIPH =
+          SuggestionFeatureForIPH::kAutofillAmbientAutofillSpiiDisclaimer;
     }
 
     // Put the Undo suggestion at the front of the suggestions.

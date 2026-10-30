@@ -90,12 +90,12 @@
 #include "third_party/blink/public/mojom/ai/ai_manager.mojom-forward.h"
 #include "third_party/blink/public/mojom/file_system_access/file_system_access_cloud_identifier.mojom-forward.h"
 #include "third_party/blink/public/mojom/file_system_access/file_system_access_error.mojom-forward.h"
-#include "third_party/blink/public/mojom/manifest/manifest.mojom-forward.h"
 #include "third_party/blink/public/mojom/navigation/navigation_params.mojom-forward.h"
 #include "third_party/blink/public/mojom/on_device_translation/translation_manager.mojom-forward.h"
 #include "third_party/blink/public/mojom/origin_trials/origin_trials_settings.mojom-forward.h"
 #include "third_party/blink/public/mojom/payments/secure_payment_confirmation_service.mojom-forward.h"
 #include "third_party/blink/public/mojom/worker/shared_worker_info.mojom.h"
+#include "third_party/blink/public/public_buildflags.h"
 #include "ui/base/clipboard/clipboard_metadata.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
@@ -128,6 +128,10 @@ class ScopedClosureRunner;
 class Uuid;
 }  // namespace base
 
+namespace base::i18n {
+class LanguageTag;
+}  // namespace base::i18n
+
 namespace blink {
 namespace mojom {
 class DeviceAPIService;
@@ -141,6 +145,7 @@ namespace web_pref {
 struct WebPreferences;
 }  // namespace web_pref
 class AssociatedInterfaceRegistry;
+class Manifest;
 struct NavigationDownloadPolicy;
 struct RendererPreferences;
 class StorageKey;
@@ -299,8 +304,11 @@ class AuthenticatorRequestClientDelegate;
 #endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_CHROMEOS)
-class SmartCardDelegate;
 class TtsControllerDelegate;
+#endif
+
+#if BUILDFLAG(ENABLE_SMART_CARD)
+class SmartCardDelegate;
 #endif
 
 // Embedder API (or SPI) for participating in browser logic, to be implemented
@@ -915,7 +923,7 @@ class CONTENT_EXPORT ContentBrowserClient {
 
   // Returns the locale used by the application.
   // This is called on the UI and IO threads.
-  virtual std::string GetApplicationLocale();
+  virtual base::i18n::LanguageTag GetApplicationLocale();
 
   // Returns a comma-separate list of language codes, in order of preference.
   // The legacy "accept-language" header is not affected by this setting (see
@@ -1329,9 +1337,12 @@ class CONTENT_EXPORT ContentBrowserClient {
 #endif
 
   // Applies policy-dictated changes to the manifest that was loaded from the
-  // provided render_frame_host.
-  virtual void MaybeOverrideManifest(RenderFrameHost* render_frame_host,
-                                     blink::mojom::ManifestPtr& manifest) {}
+  // provided `render_frame_host`, or returns `std::nullopt` if no override
+  // applies. Any returned `blink::Manifest` must have the same `GetOrigin()` as
+  // `manifest`.
+  virtual std::optional<blink::Manifest> MaybeOverrideManifest(
+      RenderFrameHost* render_frame_host,
+      const blink::Manifest& manifest);
 
   // Allows the embedder to return a TTS platform implementation.
   virtual TtsPlatform* GetTtsPlatform();
@@ -2223,6 +2234,14 @@ class CONTENT_EXPORT ContentBrowserClient {
   // persistent storage location differs from the cache storage location.
   virtual std::vector<base::FilePath> GetNetworkContextsParentDirectory();
 
+  // Returns the directory containing persistent data for network contexts (e.g.
+  // user data directory), or std::nullopt if not applicable.
+  virtual std::optional<base::FilePath> GetNetworkContextsDataDirectory();
+
+  // Returns the cache directory for network contexts, or std::nullopt if not
+  // applicable.
+  virtual std::optional<base::FilePath> GetNetworkContextsCacheDirectory();
+
   // Called once during initialization of NetworkService to provide constants
   // to NetLog.  (Though it may be called multiples times if NetworkService
   // crashes and needs to be reinitialized).  The return value is merged with
@@ -2335,7 +2354,7 @@ class CONTENT_EXPORT ContentBrowserClient {
   // API.
   virtual FontAccessDelegate* GetFontAccessDelegate();
 
-#if BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(ENABLE_SMART_CARD)
   // Allows the embedder to provide an implementation of the Web Smart Card API.
   virtual SmartCardDelegate* GetSmartCardDelegate();
 #endif
@@ -2687,6 +2706,16 @@ class CONTENT_EXPORT ContentBrowserClient {
   virtual std::optional<GURL> MaybeOverrideSourceURLForClipboardAccess(
       RenderFrameHost* render_frame_host,
       const GURL& original_url);
+
+  // Returns the BrowserContext of the user that `render_frame_host` is shown
+  // for. Its policies and off-the-record state apply to user data in the frame,
+  // e.g. clipboard and drag-and-drop data. By default, this is the
+  // BrowserContext of `render_frame_host`. Chrome returns the user profile for
+  // a Top Chrome WebUI in TopChromeWebUIProfile, which is shared by the windows
+  // of all profiles. Storage and processes still use the BrowserContext of the
+  // frame.
+  virtual BrowserContext* GetUserBrowserContext(
+      RenderFrameHost& render_frame_host);
 
   // Check whether paste is allowed. To paste, an implementation may require
   // a `render_frame_host` to have user activation or various permissions.

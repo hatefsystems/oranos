@@ -597,18 +597,6 @@ targets.tests.gtest_test(
     name = "chrome_public_test_apk",
     mixins = [
         "skia_gold_test",
-        targets.mixin(
-            # TODO(crbug.com/574560342): Remove this precommit_args bypass once
-            # post-submit CI diffs are triaged.
-            # @chromium-luci's _apply_mixin overwrites precommit_args rather
-            # than appending, so retain skia_gold_test's precommit_args.
-            precommit_args = [
-                "--gerrit-issue=${patch_issue}",
-                "--gerrit-patchset=${patch_set}",
-                "--buildbucket-id=${buildbucket_build_id}",
-                "--bypass-skia-gold-functionality",
-            ],
-        ),
     ],
 )
 
@@ -616,18 +604,6 @@ targets.tests.gtest_test(
     name = "chrome_public_test_apk_tablet",
     mixins = [
         "skia_gold_test",
-        targets.mixin(
-            # TODO(crbug.com/574560342): Remove this precommit_args bypass once
-            # post-submit CI diffs are triaged.
-            # @chromium-luci's _apply_mixin overwrites precommit_args rather
-            # than appending, so retain skia_gold_test's precommit_args.
-            precommit_args = [
-                "--gerrit-issue=${patch_issue}",
-                "--gerrit-patchset=${patch_set}",
-                "--buildbucket-id=${buildbucket_build_id}",
-                "--bypass-skia-gold-functionality",
-            ],
-        ),
     ],
     args = [
         "--annotation=Restriction=Tablet,Restriction=TabletOrDesktop,ImportantFormFactors=Tablet,ImportantFormFactors=TabletOrDesktop",
@@ -639,18 +615,6 @@ targets.tests.gtest_test(
     name = "chrome_public_test_apk_desktop",
     mixins = [
         "skia_gold_test",
-        targets.mixin(
-            # TODO(crbug.com/574560342): Remove this precommit_args bypass once
-            # post-submit CI diffs are triaged.
-            # @chromium-luci's _apply_mixin overwrites precommit_args rather
-            # than appending, so retain skia_gold_test's precommit_args.
-            precommit_args = [
-                "--gerrit-issue=${patch_issue}",
-                "--gerrit-patchset=${patch_set}",
-                "--buildbucket-id=${buildbucket_build_id}",
-                "--bypass-skia-gold-functionality",
-            ],
-        ),
     ],
     args = [
         "--annotation=Restriction=Desktop,Restriction=TabletOrDesktop,ImportantFormFactors=Desktop,ImportantFormFactors=TabletOrDesktop",
@@ -662,18 +626,6 @@ targets.tests.gtest_test(
     name = "chrome_public_test_apk_automotive",
     mixins = [
         "skia_gold_test",
-        targets.mixin(
-            # TODO(crbug.com/574560342): Remove this precommit_args bypass once
-            # post-submit CI diffs are triaged.
-            # @chromium-luci's _apply_mixin overwrites precommit_args rather
-            # than appending, so retain skia_gold_test's precommit_args.
-            precommit_args = [
-                "--gerrit-issue=${patch_issue}",
-                "--gerrit-patchset=${patch_set}",
-                "--buildbucket-id=${buildbucket_build_id}",
-                "--bypass-skia-gold-functionality",
-            ],
-        ),
     ],
     args = [
         "--annotation=Restriction=Auto,ImportantFormFactors=Auto",
@@ -1083,12 +1035,33 @@ targets.tests.gtest_test(
     name = "device_realtarget_browsertests",
 )
 
+targets.tests.isolated_script_test(
+    name = "devtools_api_tests",
+    mixins = [
+        "has_native_resultdb_integration",
+    ],
+)
+
 targets.tests.gtest_test(
     name = "devtools_browser_tests",
     args = [
         "--gtest_filter=*DevTools*",
     ],
     binary = "browser_tests",
+)
+
+targets.tests.isolated_script_test(
+    name = "devtools_node_unit_tests",
+    mixins = [
+        "has_native_resultdb_integration",
+    ],
+)
+
+targets.tests.isolated_script_test(
+    name = "devtools_unit_tests",
+    mixins = [
+        "has_native_resultdb_integration",
+    ],
 )
 
 targets.tests.gtest_test(
@@ -2045,6 +2018,30 @@ targets.tests.isolated_script_test(
     binary = "chrome_ai_wpt_tests",
 )
 
+targets.tests.isolated_script_test(
+    name = "chrome_ai_wpt_tests_manifest_cpu_gemma4_conversation",
+    args = [
+        "--manifest-test-config=../../components/optimization_guide/internal/testing/configs/manifest_test_config_cpu_gemma4_conversation.json",
+    ],
+    binary = "chrome_ai_wpt_tests",
+)
+
+targets.tests.isolated_script_test(
+    name = "chrome_ai_wpt_tests_manifest_gpu_high_tier_gemma4_conversation",
+    args = [
+        "--manifest-test-config=../../components/optimization_guide/internal/testing/configs/manifest_test_config_gpu_high_tier_gemma4_conversation.json",
+    ],
+    binary = "chrome_ai_wpt_tests",
+)
+
+targets.tests.isolated_script_test(
+    name = "chrome_ai_wpt_tests_manifest_gpu_low_tier_gemma4_conversation",
+    args = [
+        "--manifest-test-config=../../components/optimization_guide/internal/testing/configs/manifest_test_config_gpu_low_tier_gemma4_conversation.json",
+    ],
+    binary = "chrome_ai_wpt_tests",
+)
+
 targets.tests.gtest_test(
     name = "oobe_only_browser_tests",
     args = [
@@ -2413,18 +2410,6 @@ targets.tests.gtest_test(
     name = "site_per_process_chrome_public_test_apk",
     mixins = [
         "skia_gold_test",
-        targets.mixin(
-            # TODO(crbug.com/574560342): Remove this precommit_args bypass once
-            # post-submit CI diffs are triaged.
-            # @chromium-luci's _apply_mixin overwrites precommit_args rather
-            # than appending, so retain skia_gold_test's precommit_args.
-            precommit_args = [
-                "--gerrit-issue=${patch_issue}",
-                "--gerrit-patchset=${patch_set}",
-                "--buildbucket-id=${buildbucket_build_id}",
-                "--bypass-skia-gold-functionality",
-            ],
-        ),
         "has_native_resultdb_integration",
     ],
     args = [

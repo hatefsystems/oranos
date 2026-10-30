@@ -131,6 +131,35 @@ void SafeBrowsingNavigationObserver::DidStartNavigation(
 
   std::unique_ptr<NavigationEvent> pending_nav_event =
       std::make_unique<NavigationEvent>(*nav_event);
+  if (navigation_handle->IsRendererInitiated() &&
+      pending_nav_event->source_url.is_empty() &&
+      navigation_handle->GetInitiatorFrameToken().has_value()) {
+    content::RenderFrameHost* initiator_frame_host =
+        content::RenderFrameHost::FromFrameToken(
+            content::GlobalRenderFrameHostToken(
+                navigation_handle->GetInitiatorProcessId(),
+                navigation_handle->GetInitiatorFrameToken().value()));
+    content::WebContents* initiator_web_contents =
+        content::WebContents::FromRenderFrameHost(initiator_frame_host);
+    // When a link is opened in a new tab via WebContentsImpl::OpenURL (e.g.
+    // Ctrl+click or middle-click on a link without target="_blank"),
+    // DidStartNavigation runs before DidOpenRequestedURL (RecordNewWebContents)
+    // creates the retargeting NavigationEvent. Populate the pending navigation
+    // event's source fields from the initiator frame so pending URT lookups can
+    // trace back to the source tab.
+    if (initiator_frame_host && initiator_web_contents &&
+        initiator_web_contents != navigation_handle->GetWebContents()) {
+      pending_nav_event->source_url =
+          SafeBrowsingNavigationObserverManager::ClearURLRef(
+              initiator_frame_host->GetLastCommittedURL());
+      pending_nav_event->source_main_frame_url =
+          SafeBrowsingNavigationObserverManager::ClearURLRef(
+              initiator_frame_host->GetOutermostMainFrame()
+                  ->GetLastCommittedURL());
+      pending_nav_event->source_tab_id =
+          sessions::SessionTabHelper::IdForTab(initiator_web_contents);
+    }
+  }
   navigation_handle_map_[navigation_handle] = std::move(nav_event);
   GetObserverManager()->RecordPendingNavigationEvent(
       navigation_handle, std::move(pending_nav_event));
@@ -214,7 +243,7 @@ void SafeBrowsingNavigationObserver::DidOpenRequestedURL(
     content::RenderFrameHost* source_render_frame_host,
     const GURL& url,
     const content::Referrer& referrer,
-    WindowOpenDisposition disposition,
+    ui::mojom::WindowOpenDisposition disposition,
     ui::PageTransition transition,
     bool started_from_context_menu,
     bool renderer_initiated) {
@@ -256,7 +285,12 @@ void SafeBrowsingNavigationObserver::
   if (!navigation_handle->IsRendererInitiated()) {
     nav_event->navigation_initiation = ReferrerChainEntry::BROWSER_INITIATED;
   } else if (GetObserverManager()->HasUnexpiredUserGesture(web_contents()) ||
-             navigation_handle->HasUserGesture()) {
+             navigation_handle->HasUserGesture() ||
+             // HasUserGesture() is filtered out for proxy navigations (e.g., a
+             // cross-origin subframe navigating the top frame via
+             // target="_top"). StartedWithTransientActivation() provides the
+             // unfiltered initiator state for renderer-initiated navigations.
+             navigation_handle->StartedWithTransientActivation()) {
     nav_event->navigation_initiation =
         ReferrerChainEntry::RENDERER_INITIATED_WITH_USER_GESTURE;
   } else {

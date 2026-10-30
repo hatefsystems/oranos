@@ -19,11 +19,12 @@ class BrowserContext;
 // consulted directly by feature code. It only answers "how is GEiC
 // configured?", not "should this profile run in GEiC mode?". The latter is
 // owned by GLiC's enablement utilities (see
-// GlicKeyedService::provider_spec() / GlicProviderSpec), which layer profile
-// eligibility on top of these helpers. The per-profile answer is resolved
-// once, when the profile's keyed services are created, and latched by
-// `GlicProviderLatch`. In particular, GEiC is unavailable whenever GLiC itself
-// is disabled or ineligible for the profile, and that is not reflected here.
+// GetGlicProviderSpec() / GlicKeyedService::provider_spec() /
+// GlicProviderSpec), which layer profile eligibility on top of these helpers.
+// The per-profile answer is resolved once, when the profile's keyed services
+// are created, and latched by `GlicProviderLatch`. In particular, GEiC is
+// unavailable whenever GLiC itself is disabled or ineligible for the profile,
+// and that is not reflected here.
 //
 // Including this header is restricted to an allowlist in
 // chrome/browser/glic/DEPS so that callers go through GLiC's enablement
@@ -46,10 +47,17 @@ bool IsGeicEnabledByFeature();
 //
 // Precedence:
 // 1. Command-line switch `--geic-guest-url`.
-// 2. Enterprise policy (`glic.gemini_enterprise_settings.url`).
+// 2. Enterprise policy (`GeminiEnterpriseUrl`, stored in
+//    `prefs::kGlicGeminiEnterpriseUrl`).
 // 3. Finch parameter `features::kGeicGuestURL` (when `features::kGeic` is
 //    controlled by a `google_groups`-filtered Finch study, the Finch URL
 //    parameter only applies to profiles in those groups).
+//
+// `--geic-guest-url` intentionally takes precedence over the enterprise policy
+// to simplify development and local testing on managed profiles. This poses no
+// risk of abuse because `IsValidGuestUrl()` only accepts valid Gemini
+// Enterprise origins (unless `--glic-dev` is also set), and accessing GEiC
+// still requires the user to sign in to Gemini Enterprise.
 GURL ResolveGeicGuestUrl(content::BrowserContext* browser_context);
 
 }  // namespace geic

@@ -12,7 +12,6 @@
 #include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
-#include "ui/base/window_open_disposition.h"
 
 // For desktop, only certain operations are considered user initiated. This
 // method will try to match those operations with Android specific actions.
@@ -25,6 +24,8 @@ TabCreationType ToTypeCreationType(TabModel::TabLaunchType type) {
     // Similar to ctrl + T on desktop
     case TabModel::TabLaunchType::FROM_RECENT_TABS_FOREGROUND:
     case TabModel::TabLaunchType::FROM_RECENT_TABS:
+    // Similar to reopening a recently closed tab on desktop.
+    case TabModel::TabLaunchType::FROM_UNDO_CLOSURE:
     // Programmatic tab creations via TabListInterface map to kUserInitiated
     // to align behavior with Desktop.
     case TabModel::TabLaunchType::FROM_TAB_LIST_INTERFACE:

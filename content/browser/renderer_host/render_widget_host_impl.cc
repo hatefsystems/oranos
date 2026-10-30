@@ -133,6 +133,7 @@
 #include "skia/ext/skia_utils_base.h"
 #include "storage/browser/file_system/isolated_context.h"
 #include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/input/synthetic_web_input_event_builders.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/common/widget/constants.h"
@@ -380,6 +381,16 @@ bool ShouldProcessKeyEventForListeners(
 #endif
 
   return false;
+}
+
+void DismissUnboundedSurfaceOnKeyDown(
+    base::WeakPtr<RenderWidgetHostImpl> host,
+    const input::NativeWebKeyboardEvent& key_event) {
+  if (host && host->GetView() &&
+      (key_event.GetType() == WebInputEvent::Type::kRawKeyDown ||
+       key_event.GetType() == WebInputEvent::Type::kKeyDown)) {
+    host->GetView()->DismissUnboundedSurface();
+  }
 }
 
 gfx::Rect ClampPopupBoundsToDisplay(const gfx::Rect& bounds,
@@ -941,6 +952,12 @@ void RenderWidgetHostImpl::WasHidden() {
 
   // Tell the RenderProcessHost we were hidden.
   GetProcess()->UpdateClientPriority(this);
+
+  if (view_) {
+    // Synchronously tear down the floating window since a hidden widget will
+    // not present a post-dismissal frame.
+    view_->DestroyUnboundedSurfaceForThisView();
+  }
 
   NotifyVizOfPageVisibilityUpdates();
 
@@ -1669,6 +1686,8 @@ void RenderWidgetHostImpl::DidNavigate() {
     // script, which already reports the access over the renderer's own IPC.
     CancelNonEmptyCompositorFrameNotification();
   }
+
+  ClearExpectedUserActivationNotifications();
 }
 
 void RenderWidgetHostImpl::InitializePaintHolding(bool active) {
@@ -1756,6 +1775,8 @@ void RenderWidgetHostImpl::ForwardMouseEventWithLatencyInfo(
       touch_emulator->HandleMouseEvent(mouse_event, GetView())) {
     return;
   }
+
+  AddExpectedUserActivationNotification(mouse_event);
 
   input::MouseEventWithLatencyInfo mouse_with_latency(mouse_event, latency);
   GetRenderInputRouter()->DispatchInputEventWithLatencyInfo(
@@ -1924,13 +1945,16 @@ void RenderWidgetHostImpl::ForwardKeyboardEventWithCommands(
       suppress_events_until_keydown_ = true;
     }
 
+    const auto weak_this = weak_factory_.GetWeakPtr();
     // Tab switching/closing accelerators aren't sent to the renderer to avoid
     // a hung/malicious renderer from interfering.
     switch (delegate_->PreHandleKeyboardEvent(key_event)) {
       case KeyboardEventProcessingResult::HANDLED:
+        DismissUnboundedSurfaceOnKeyDown(weak_this, key_event);
         return;
 #if defined(USE_AURA)
       case KeyboardEventProcessingResult::HANDLED_DONT_UPDATE_EVENT:
+        DismissUnboundedSurfaceOnKeyDown(weak_this, key_event);
         if (update_event) {
           *update_event = false;
         }
@@ -1952,6 +1976,9 @@ void RenderWidgetHostImpl::ForwardKeyboardEventWithCommands(
   if (touch_emulator && touch_emulator->HandleKeyboardEvent(key_event)) {
     return;
   }
+
+  AddExpectedUserActivationNotification(key_event);
+
   input::NativeWebKeyboardEventWithLatencyInfo key_event_with_latency(key_event,
                                                                       latency);
   key_event_with_latency.event.is_browser_shortcut = is_shortcut;
@@ -2832,7 +2859,12 @@ void RenderWidgetHostImpl::OnKeyboardEventAck(
   // of this key event.
   if (delegate_ && !processed && !IsHidden() &&
       !event.event.skip_if_unhandled) {
-    delegate_->HandleKeyboardEvent(event.event);
+    const auto weak_this = weak_factory_.GetWeakPtr();
+    if (delegate_->HandleKeyboardEvent(event.event)) {
+      if (event.event.is_browser_shortcut) {
+        DismissUnboundedSurfaceOnKeyDown(weak_this, event.event);
+      }
+    }
   }
   // WARNING: This RenderWidgetHostImpl can be deallocated at this point
   // (i.e.  in the case of Ctrl+W, where the call to
@@ -4711,6 +4743,42 @@ void RenderWidgetHostImpl::CompositorMetricRecorder::TryToRecordMetrics() {
         create_frame_sink_timestamp_ - swap_rfh_timestamp_,
         base::Milliseconds(1), base::Minutes(10), 50);
   }
+}
+
+// TODO(https://crbug.com/40091540): WebContentsImpl has a "parallel" user
+// activation tracker through HandleUserInteractionForInputEvent which is
+// primarily used for OS clipboard messages. We need to consolidate that tracker
+// into RenderWidgetHostImpl. Not sure why gesture scroll begin events are
+// included there, this is incompatible with the web exposed user activation
+// state here.
+void RenderWidgetHostImpl::AddExpectedUserActivationNotification(
+    const blink::WebInputEvent& event) {
+  if (base::FeatureList::IsEnabled(
+          blink::features::kTrustedUserActivationTriggers) &&
+      (event.GetType() == blink::WebInputEvent::Type::kMouseDown ||
+       event.GetType() == blink::WebInputEvent::Type::kKeyDown ||
+       event.GetType() == blink::WebInputEvent::Type::kRawKeyDown)) {
+    expected_user_activation_notification_timer_.Start(
+        FROM_HERE, kUserActivationVerificationTimeout,
+        base::BindOnce(
+            &RenderWidgetHostImpl::ClearExpectedUserActivationNotifications,
+            base::Unretained(this)));
+    expected_user_activation_notifications_++;
+  }
+}
+
+void RenderWidgetHostImpl::ClearExpectedUserActivationNotifications() {
+  expected_user_activation_notifications_ = 0;
+  expected_user_activation_notification_timer_.Stop();
+}
+
+bool RenderWidgetHostImpl::
+    RemoveExpectedUserActivationNotificationIfAvailable() {
+  if (expected_user_activation_notifications_ > 0) {
+    expected_user_activation_notifications_--;
+    return true;
+  }
+  return false;
 }
 
 }  // namespace content

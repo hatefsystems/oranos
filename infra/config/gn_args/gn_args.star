@@ -1041,9 +1041,23 @@ gn_args.config(
 )
 
 gn_args.config(
+    name = "no_devtools_bundled_chromium_deps",
+    args = {
+        "devtools_build_with_bundled_chromium_deps": False,
+    },
+)
+
+gn_args.config(
     name = "no_dsyms",
     args = {
         "enable_dsyms": False,
+    },
+)
+
+gn_args.config(
+    name = "no_fuzztest_fuzz",
+    args = {
+        "enable_fuzztest_fuzz": False,
     },
 )
 
@@ -1211,6 +1225,15 @@ gn_args.config(
     configs = [
         "release",
         "static",
+    ],
+)
+
+gn_args.config(
+    name = "release_builder_with_dchecks",
+    configs = [
+        "release_builder",
+        # Must come after "release_builder", which turns DCHECKs off.
+        "dcheck_always_on",
     ],
 )
 

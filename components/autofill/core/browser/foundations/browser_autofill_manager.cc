@@ -42,7 +42,6 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/notreached.h"
-#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -133,6 +132,7 @@
 #include "components/autofill/core/browser/suggestions/payments/merchant_promo_code_suggestion_generator.h"
 #include "components/autofill/core/browser/suggestions/suggestion.h"
 #include "components/autofill/core/browser/suggestions/suggestion_generator.h"
+#include "components/autofill/core/browser/suggestions/trusted_vault/trusted_vault_error_suggestion_generator.h"
 #include "components/autofill/core/browser/suggestions/suggestion_hiding_reason.h"
 #include "components/autofill/core/browser/suggestions/suggestion_type.h"
 #include "components/autofill/core/browser/suggestions/suggestion_util.h"
@@ -201,7 +201,7 @@ JavaScriptDropdownType DetectJavaScriptDropdown(
 
     // Whether the field that triggered the JavaScript autofill operation had
     // the typed value extended by said operation.
-    bool trigger_field_prefix_completed = false;
+    bool trigger_field_completed = false;
 
     for (const JavaScriptFieldModification& mod : field_modifications) {
       const AutofillField* field = form.GetFieldById(mod.field_id);
@@ -221,18 +221,20 @@ JavaScriptDropdownType DetectJavaScriptDropdown(
         all_address_fields = false;
       }
       if (mod.field_id == trigger_field.global_id() &&
-          mod.modification_type ==
-              mojom::JavaScriptModificationType::kPrefixCompletion) {
-        trigger_field_prefix_completed = true;
+          (mod.modification_type ==
+               mojom::JavaScriptModificationType::kPrefixCompletion ||
+           mod.modification_type ==
+               mojom::JavaScriptModificationType::kSubstringCompletion)) {
+        trigger_field_completed = true;
       }
     }
 
     // Declare the operation as triggered by an address picker if at least 3
     // distinct address fields changed, or if all modified fields were address
-    // fields and the trigger field was prefix completed.
+    // fields and the trigger field was prefix or substring completed.
     constexpr size_t kMinFieldsChangedAddressPicker = 3;
     return modified_address_fields.size() >= kMinFieldsChangedAddressPicker ||
-           (all_address_fields && trigger_field_prefix_completed);
+           (all_address_fields && trigger_field_completed);
   };
 
   auto detect_email_picker = [&] {
@@ -403,6 +405,7 @@ FillDataType GetEventTypeFromSingleFieldSuggestionType(SuggestionType type) {
     case SuggestionType::kPasswordEntry:
     case SuggestionType::kPasswordFieldByFieldFilling:
     case SuggestionType::kPendingStateSignin:
+    case SuggestionType::kPendingStateTrustedVaultError:
     case SuggestionType::kPersonalContextNotice:
     case SuggestionType::kRemoveAutofillAi:
     case SuggestionType::kSaveAndFillCreditCardEntry:
@@ -1343,9 +1346,12 @@ void BrowserAutofillManager::OnIndividualSuggestionsGenerated(
     prioritized_suggestions.clear();
   }
 
-  // Handle passkeys separately, since they merge with any suggestions.
+  // Handle passkeys and trusted vault errors separately, since they merge with
+  // any suggestions.
   auto passkey_suggestions =
       prioritized_suggestions.extract(FillingProduct::kPasskey);
+  auto trusted_vault_suggestions =
+      prioritized_suggestions.extract(FillingProduct::kPassword);
 
   // TODO(crbug.com/409962888): Consider moving the TTF logic to
   // `OnGenerateSuggestionsComplete()` when the old suggestion generation logic
@@ -1361,8 +1367,11 @@ void BrowserAutofillManager::OnIndividualSuggestionsGenerated(
           return;
         }
         if (!passkey_suggestions.empty()) {
-          MergePasskeysAndExistingSuggestions(
-              suggestions, std::move(passkey_suggestions.mapped()));
+          base::Extend(suggestions, std::move(passkey_suggestions.mapped()));
+        }
+        if (!trusted_vault_suggestions.empty()) {
+          base::Extend(suggestions,
+                       std::move(trusted_vault_suggestions.mapped()));
         }
         OnGenerateSuggestionsComplete(form.global_id(), field, trigger_source,
                                       suggestion_generation_start_time,
@@ -1487,10 +1496,23 @@ BrowserAutofillManager::CreatePasskeySuggestionsForMerge(
   return suggestions;
 }
 
-void BrowserAutofillManager::MergePasskeysAndExistingSuggestions(
-    std::vector<Suggestion>& suggestions,
-    std::vector<Suggestion> passkey_suggestions) {
-  base::Extend(suggestions, std::move(passkey_suggestions));
+std::vector<Suggestion>
+BrowserAutofillManager::CreateTrustedVaultUnlockSuggestionsForMerge(
+    const FormFieldData& field) {
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+  return {};
+#else
+  PasswordManagerDelegate* password_delegate =
+      client().GetPasswordManagerDelegate(field.global_id());
+  if (!password_delegate) {
+    return {};
+  }
+  if (std::optional<Suggestion> unlock_suggestion =
+          password_delegate->GetTrustedVaultUnlockSuggestion()) {
+    return {*std::move(unlock_suggestion)};
+  }
+  return {};
+#endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 }
 
 std::vector<Suggestion> BrowserAutofillManager::MergeWithAddressSuggestions(
@@ -1758,8 +1780,12 @@ void BrowserAutofillManager::GenerateFooter(
   std::vector<Suggestion> passkey_suggestions =
       CreatePasskeySuggestionsForMerge(field);
   if (!passkey_suggestions.empty()) {
-    MergePasskeysAndExistingSuggestions(suggestions,
-                                        std::move(passkey_suggestions));
+    base::Extend(suggestions, std::move(passkey_suggestions));
+  }
+  std::vector<Suggestion> trusted_vault_suggestions =
+      CreateTrustedVaultUnlockSuggestionsForMerge(field);
+  if (!trusted_vault_suggestions.empty()) {
+    base::Extend(suggestions, std::move(trusted_vault_suggestions));
   }
 
   OnGenerateSuggestionsComplete(
@@ -2242,16 +2268,13 @@ void BrowserAutofillManager::OnFocusOnFormFieldImpl(
   }
   autofill_field->set_was_focused(true);
 
+  const bool same_origin = autofill_field->origin() == form.main_frame_origin();
   for (const FieldType type : autofill_field->Type().GetTypes()) {
-    static constexpr std::string_view kMetricName =
-        "Autofill.FocusedField.FieldType";
-    const bool same_origin =
-        autofill_field->origin() == form.main_frame_origin();
-    base::UmaHistogramExactLinear(base::StrCat({kMetricName}), type,
+    base::UmaHistogramExactLinear("Autofill.FocusedField.FieldType", type,
                                   MAX_VALID_FIELD_TYPE);
     base::UmaHistogramExactLinear(
-        base::StrCat(
-            {kMetricName, ".", same_origin ? "Same" : "Cross", "Origin"}),
+        same_origin ? "Autofill.FocusedField.FieldType.SameOrigin"
+                    : "Autofill.FocusedField.FieldType.CrossOrigin",
         type, MAX_VALID_FIELD_TYPE);
   }
 }
@@ -3052,12 +3075,17 @@ std::unique_ptr<FormStructure> BrowserAutofillManager::ValidateSubmittedForm(
       FormStructure::Clone(*cached_submitted_form, /*pass_key=*/{});
   submitted_form->UpdateFormData(form, base::PassKey<BrowserAutofillManager>());
 
-  // The form signature should match between query and upload requests to the
-  // server. On many websites, form elements are dynamically added, removed, or
-  // rearranged via JavaScript between page load and form submission, so we
-  // copy over the |form_signature_field_names_| corresponding to the query
-  // request.
+  // The form signatures should match between query and upload requests to the
+  // server, because the server stores votes and serves predictions keyed by
+  // these signatures. On many websites, form elements are dynamically added,
+  // removed, or rearranged via JavaScript between page load and form
+  // submission, and `UpdateFormData()` recomputes all signatures from the
+  // submitted form. Therefore, copy over the signatures that were used in the
+  // query request: the `form_signature()` and the
+  // `structural_form_signature()`.
   submitted_form->set_form_signature(cached_submitted_form->form_signature());
+  submitted_form->set_structural_form_signature(
+      cached_submitted_form->structural_form_signature());
 
   return submitted_form;
 }
@@ -3559,6 +3587,10 @@ void BrowserAutofillManager::InitializeSuggestionGenerators(
   if (relevant_filling_products.contains(FillingProduct::kPasskey)) {
     suggestion_generators_.push_back(
         std::make_unique<PasskeySuggestionGenerator>());
+  }
+  if (relevant_filling_products.contains(FillingProduct::kPassword)) {
+    suggestion_generators_.push_back(
+        std::make_unique<TrustedVaultErrorSuggestionGenerator>());
   }
   if (relevant_filling_products.contains(FillingProduct::kOneTimePassword) &&
       otp_manager_) {

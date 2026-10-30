@@ -34,8 +34,6 @@ import org.chromium.chrome.R;
 import org.chromium.chrome.browser.feed.FeedSurfaceProvider.RestoringState;
 import org.chromium.chrome.browser.feed.Stream.ContentChangedListener;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
-import org.chromium.chrome.browser.gesturenav.GestureNavigationUtils;
-import org.chromium.chrome.browser.new_tab_url.DseNewTabUrlManager;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.preferences.PrefServiceUtil;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -51,6 +49,7 @@ import org.chromium.components.search_engines.TemplateUrlService;
 import org.chromium.components.search_engines.TemplateUrlService.TemplateUrlServiceObserver;
 import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.components.signin.identitymanager.PrimaryAccountChangeEvent;
+import org.chromium.content_public.browser.BackForwardTransitionAnimationManager;
 import org.chromium.ui.base.DeviceFormFactor;
 
 import java.util.ArrayList;
@@ -130,7 +129,6 @@ public class FeedSurfaceMediator
     // Whether we're currently adding the streams. If this is true, streams should not be bound yet.
     // This avoids automatically binding the first stream when it's added.
     private boolean mSettingUpStreams;
-    private final boolean mIsNewTabSearchEngineUrlAndroidEnabled;
     private final boolean mUseResponsiveLayoutForFoldables;
     private boolean mIsPropertiesInitializedForStream;
     private @ClosedReason int mClosedReason = ClosedReason.SUSPEND_APP;
@@ -156,18 +154,15 @@ public class FeedSurfaceMediator
         mSigninManager = signinManager;
         mTemplateUrlService = TemplateUrlServiceFactory.getForProfile(mProfile);
         mActionDelegate = actionDelegate;
-        mIsNewTabSearchEngineUrlAndroidEnabled =
-                DseNewTabUrlManager.isNewTabSearchEngineUrlAndroidEnabled();
         mUseResponsiveLayoutForFoldables =
                 DeviceInfo.isFoldable()
                         && ChromeFeatureList.isEnabled(
                                 ChromeFeatureList.WIDE_SCREEN_FEED_FOR_FOLDABLES);
 
         /*
-         * When feature flag isNewTabSearchEngineUrlAndroidEnabled is enabled, the Feeds may be
-         * hidden without showing its header. Therefore, FeedSurfaceMediator needs to observe
-         * whether the DSE is changed and update Pref.ENABLE_SNIPPETS_BY_DSE even when Feeds isn't
-         * visible.
+         * The Feeds may be hidden without showing its header when the DSE isn't Google. Therefore,
+         * FeedSurfaceMediator needs to observe whether the DSE is changed and update
+         * Pref.ENABLE_SNIPPETS_BY_DSE even when Feeds isn't visible.
          */
         mTemplateUrlService.addObserver(this);
         // It is possible that the default search engine has been changed before any NTP or
@@ -177,8 +172,7 @@ public class FeedSurfaceMediator
         getPrefService()
                 .setBoolean(
                         Pref.ENABLE_SNIPPETS_BY_DSE,
-                        !mIsNewTabSearchEngineUrlAndroidEnabled
-                                || mTemplateUrlService.isDefaultSearchEngineGoogle());
+                        mTemplateUrlService.isDefaultSearchEngineGoogle());
 
         if (sTestPrefChangeRegistar != null) {
             mPrefChangeRegistrar = sTestPrefChangeRegistar;
@@ -348,12 +342,16 @@ public class FeedSurfaceMediator
     /** Restores a previously saved state. */
     void restoreSavedInstanceState(@Nullable String json) {
         FeedScrollState state = FeedScrollState.fromJson(json);
-        if (state == null) {
+        if (state == null
+                || state.position == RecyclerView.NO_POSITION
+                || (state.position == 0 && state.offset == 0)) {
             mPositionToRestore = RecyclerView.NO_POSITION;
+            mRestoreScrollState = null;
             mGetRestoringStateSupplier.set(RestoringState.NO_STATE_TO_RESTORE);
             return;
         }
         mPositionToRestore = state.position;
+        mGetRestoringStateSupplier.set(RestoringState.WAITING_TO_RESTORE);
         if (mCurrentStream == null) {
             mRestoreScrollState = state;
         } else {
@@ -428,7 +426,11 @@ public class FeedSurfaceMediator
         assumeNonNull(mStreamContentChangedListener);
         mCurrentStream.addOnContentChangedListener(mStreamContentChangedListener);
 
-        mGetRestoringStateSupplier.set(RestoringState.WAITING_TO_RESTORE);
+        if (mRestoreScrollState != null || mPositionToRestore != RecyclerView.NO_POSITION) {
+            mGetRestoringStateSupplier.set(RestoringState.WAITING_TO_RESTORE);
+        } else {
+            mGetRestoringStateSupplier.set(RestoringState.NO_STATE_TO_RESTORE);
+        }
         FeedReliabilityLogger reliabilityLogger = mCoordinator.getReliabilityLogger();
         mCurrentStream.bind(
                 mCoordinator.getRecyclerView(),
@@ -725,14 +727,10 @@ public class FeedSurfaceMediator
 
     @Override
     public void onTemplateURLServiceChanged() {
-        if (mIsNewTabSearchEngineUrlAndroidEnabled) {
-            getPrefService()
-                    .setBoolean(
-                            Pref.ENABLE_SNIPPETS_BY_DSE,
-                            mTemplateUrlService.isDefaultSearchEngineGoogle());
-            return;
-        }
-        showOrHideFeed();
+        getPrefService()
+                .setBoolean(
+                        Pref.ENABLE_SNIPPETS_BY_DSE,
+                        mTemplateUrlService.isDefaultSearchEngineGoogle());
     }
 
     // IdentityManager.Observer interface.
@@ -902,7 +900,8 @@ public class FeedSurfaceMediator
                                 listener.onScrolled(dx, dy);
                             }
                             // Null if the stream has not been binded yet.
-                            if (GestureNavigationUtils.shouldAnimateBackForwardTransitions()
+                            if (BackForwardTransitionAnimationManager
+                                            .shouldAnimateBackForwardTransitions()
                                     && mCoordinator.getHybridListRenderer() != null
                                     && mCoordinator.getHybridListRenderer().getListLayoutHelper()
                                             != null

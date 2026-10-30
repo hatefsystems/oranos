@@ -10,7 +10,8 @@
 #import "base/task/single_thread_task_runner.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_timeouts.h"
-#import "content/app_shim_remote_cocoa/web_contents_occlusion_checker_mac.h"
+#import "components/remote_cocoa/app_shim/window_occlusion_checker_mac.h"
+#import "content/app_shim_remote_cocoa/web_contents_view_cocoa.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/features.h"
 #include "content/public/test/browser_test.h"
@@ -131,7 +132,7 @@ struct Version {
 
 // A class that waits for invocations of the private
 // -performOcclusionStateUpdates method in
-// WebContentsOcclusionCheckerMac to complete.
+// WindowOcclusionCheckerMac to complete.
 @interface WebContentVisibilityUpdateWatcher : NSObject
 @end
 
@@ -143,7 +144,7 @@ struct Version {
   // instance variable) because we want to call the original
   // -performOcclusionStateUpdates from the swapped-in version
   // defined below. At the point where the swapped-in version is
-  // called, the callee is an instance of WebContentsOcclusionCheckerMac,
+  // called, the callee is an instance of WindowOcclusionCheckerMac,
   // not WebContentVisibilityUpdateWatcher, so it has no access to any
   // instance variables we define for WebContentVisibilityUpdateWatcher.
   // Storing the swizzler in a static makes it available to any caller.
@@ -173,17 +174,15 @@ struct Version {
 - (instancetype)init {
   self = [super init];
 
-  // The tests should access WebContentsOcclusionCheckerMac directly, rather
-  // than through NSClassFromString(). See crbug.com/1450724 .
   [WebContentVisibilityUpdateWatcher performOcclusionStateUpdatesSwizzler] =
       std::make_unique<base::apple::ScopedObjCClassSwizzler>(
-          NSClassFromString(@"WebContentsOcclusionCheckerMac"),
+          [WindowOcclusionCheckerMac class],
           [WebContentVisibilityUpdateWatcher class],
           @selector(performOcclusionStateUpdates));
 
   [WebContentVisibilityUpdateWatcher setWebContentsOccludedSwizzler] =
       std::make_unique<base::apple::ScopedObjCClassSwizzler>(
-          NSClassFromString(@"WebContentsViewCocoa"),
+          [WebContentsViewCocoa class],
           [WebContentVisibilityUpdateWatcher class],
           @selector(performDelayedSetWebContentsOccluded));
 
@@ -234,7 +233,7 @@ struct Version {
 @end
 
 // A class that counts invocations of the public
-// -scheduleOcclusionStateUpdates method in WebContentsOcclusionCheckerMac.
+// -scheduleOcclusionStateUpdates method in WindowOcclusionCheckerMac.
 @interface WebContentVisibilityUpdateCounter : NSObject
 @end
 
@@ -265,7 +264,7 @@ struct Version {
   // Set up the swizzling.
   [WebContentVisibilityUpdateCounter swizzler] =
       std::make_unique<base::apple::ScopedObjCClassSwizzler>(
-          NSClassFromString(@"WebContentsOcclusionCheckerMac"),
+          [WindowOcclusionCheckerMac class],
           [WebContentVisibilityUpdateCounter class],
           @selector(scheduleOcclusionStateUpdates));
 
@@ -290,6 +289,32 @@ struct Version {
   [WebContentVisibilityUpdateCounter methodInvocationCount] = count + 1;
 }
 
+@end
+
+@interface TestOrderedWindowsSwizzler : NSObject
++ (NSArray<NSWindow*>* __strong*)testOrderedWindows;
++ (std::unique_ptr<base::apple::ScopedObjCClassSwizzler>&)swizzler;
+@end
+
+@implementation TestOrderedWindowsSwizzler
++ (NSArray<NSWindow*>* __strong*)testOrderedWindows {
+  static NSArray<NSWindow*>* windows = nil;
+  return &windows;
+}
+- (NSArray<NSWindow*>*)orderedWindows {
+  if (NSArray<NSWindow*>* windows =
+          *[TestOrderedWindowsSwizzler testOrderedWindows]) {
+    return windows;
+  }
+  return [TestOrderedWindowsSwizzler swizzler]
+      ->InvokeOriginal<NSArray<NSWindow*>*>(self, _cmd);
+}
++ (std::unique_ptr<base::apple::ScopedObjCClassSwizzler>&)swizzler {
+  static base::NoDestructor<
+      std::unique_ptr<base::apple::ScopedObjCClassSwizzler>>
+      swizzler;
+  return *swizzler;
+}
 @end
 
 namespace content {
@@ -366,7 +391,7 @@ class WindowOcclusionBrowserTestMac : public ContentBrowserTest {
       GTEST_SKIP()
           << "Flaky on MacOS 13 builders; see https://crbug.com/537434839";
     }
-    if (![NSClassFromString(@"WebContentsOcclusionCheckerMac")
+    if (![WindowOcclusionCheckerMac
             manualOcclusionDetectionSupportedForCurrentMacOSVersion]) {
       GTEST_SKIP()
           << "Manual window occlusion detection is broken on macOS 13.0-13.2.";
@@ -375,8 +400,7 @@ class WindowOcclusionBrowserTestMac : public ContentBrowserTest {
   }
 
   ~WindowOcclusionBrowserTestMac() override {
-    [NSClassFromString(@"WebContentsOcclusionCheckerMac")
-        resetSharedInstanceForTesting];
+    [WindowOcclusionCheckerMac resetSharedInstanceForTesting];
   }
 
   bool WebContentsAwaitingUpdates() {
@@ -414,8 +438,8 @@ class WindowOcclusionBrowserTestMac : public ContentBrowserTest {
   }
 
   void WaitForOcclusionUpdate() {
-    while ([[NSClassFromString(@"WebContentsOcclusionCheckerMac")
-               sharedInstance] occlusionStateUpdatesAreScheduledForTesting] ||
+    while ([[WindowOcclusionCheckerMac sharedInstance]
+               occlusionStateUpdatesAreScheduledForTesting] ||
            WebContentsAwaitingUpdates()) {
       WebContentVisibilityUpdateWatcher* watcher =
           [[WebContentVisibilityUpdateWatcher alloc] init];
@@ -582,7 +606,19 @@ class WindowOcclusionBrowserTestMac : public ContentBrowserTest {
     host_b_.OnWindowVisibilityChanged(visibility);
   }
 
+  void OverrideOrderedWindows(NSArray<NSWindow*>* windows) {
+    if (![TestOrderedWindowsSwizzler swizzler]) {
+      [TestOrderedWindowsSwizzler swizzler] =
+          std::make_unique<base::apple::ScopedObjCClassSwizzler>(
+              [NSApplication class], [TestOrderedWindowsSwizzler class],
+              @selector(orderedWindows));
+    }
+    *[TestOrderedWindowsSwizzler testOrderedWindows] = windows;
+  }
+
   void TearDownInProcessBrowserTestFixture() override {
+    *[TestOrderedWindowsSwizzler testOrderedWindows] = nil;
+    [TestOrderedWindowsSwizzler swizzler].reset();
     [window_a_web_contents_view_cocoa_ setHost:nullptr];
     [window_b_web_contents_view_cocoa_ setHost:nullptr];
   }
@@ -600,14 +636,12 @@ class WindowOcclusionBrowserTestMac : public ContentBrowserTest {
 
 // Tests that we correctly disallow unsupported macOS versions.
 IN_PROC_BROWSER_TEST_F(WindowOcclusionBrowserTestMac, MacOSVersionChecking) {
-  Class WebContentsOcclusionCheckerMac =
-      NSClassFromString(@"WebContentsOcclusionCheckerMac");
   std::vector<Version> versions = {
       {11'00'00, true},  {12'00'00, true},  {12'09'00, true}, {13'00'00, false},
       {13'01'00, false}, {13'02'00, false}, {13'03'00, true}, {14'00'00, true}};
 
   for (const auto& version : versions) {
-    bool supported = [WebContentsOcclusionCheckerMac
+    bool supported = [WindowOcclusionCheckerMac
         manualOcclusionDetectionSupportedForPackedVersion:version
                                                               .packed_version];
     EXPECT_EQ(supported, version.supported);
@@ -1117,14 +1151,14 @@ IN_PROC_BROWSER_TEST_F(WindowOcclusionBrowserTestMac,
   [window_a_ addChildWindow:window_and_web_contents.window
                     ordered:NSWindowAbove];
 
-  EXPECT_FALSE([[NSClassFromString(@"WebContentsOcclusionCheckerMac")
-      sharedInstance] occlusionStateUpdatesAreScheduledForTesting]);
+  EXPECT_FALSE([[WindowOcclusionCheckerMac sharedInstance]
+      occlusionStateUpdatesAreScheduledForTesting]);
 
   // Modify the child window list by removing a child window.
   [window_a_ removeChildWindow:window_and_web_contents.window];
 
-  EXPECT_FALSE([[NSClassFromString(@"WebContentsOcclusionCheckerMac")
-      sharedInstance] occlusionStateUpdatesAreScheduledForTesting]);
+  EXPECT_FALSE([[WindowOcclusionCheckerMac sharedInstance]
+      occlusionStateUpdatesAreScheduledForTesting]);
 }
 
 // Tests that when a window becomes a child, if the occlusion system
@@ -1201,6 +1235,77 @@ IN_PROC_BROWSER_TEST_F(WindowOcclusionBrowserTestMac,
   AddSubviewOfView(window_a_web_contents_view_cocoa_, window_a_.contentView);
   EXPECT_EQ(WindowAWebContentsVisibility(),
             remote_cocoa::mojom::Visibility::kVisible);
+}
+
+// Verifies that a child window is not occluded by its parent window, even if
+// the parent is active and would otherwise occlude an inactive window, in
+// either order in -[NSApplication orderedWindows].
+IN_PROC_BROWSER_TEST_F(
+    WindowOcclusionBrowserTestMac,
+    ManualOcclusionDetectionActiveParentDoesNotOccludeChildWindow) {
+  InitWindowA();
+  [window_a_ setCanBecomeKeyOrMainForTesting:YES];
+
+  InitWindowB(NSInsetRect(window_a_.frame, 10, 10));
+  [window_b_ setCanBecomeKeyOrMainForTesting:YES];
+
+  [window_a_ addChildWindow:window_b_ ordered:NSWindowAbove];
+  WaitForOcclusionUpdate();
+
+  OverrideOrderedWindows(@[ window_b_, window_a_ ]);
+
+  [window_a_ setKeyWindowForTesting:YES];
+  [window_a_ setMainWindowForTesting:YES];
+
+  PostNotification(NSWindowDidBecomeMainNotification, window_a_);
+
+  EXPECT_EQ(WindowBWebContentsVisibility(),
+            remote_cocoa::mojom::Visibility::kVisible);
+  EXPECT_FALSE([window_b_ isOccluded]);
+  EXPECT_EQ(WindowAWebContentsVisibility(),
+            remote_cocoa::mojom::Visibility::kVisible);
+
+  // A stale list can put the parent ahead of its child. It still can't cover
+  // the child.
+  OverrideOrderedWindows(@[ window_a_, window_b_ ]);
+  PostNotification(NSWindowDidBecomeMainNotification, window_a_);
+
+  EXPECT_EQ(WindowBWebContentsVisibility(),
+            remote_cocoa::mojom::Visibility::kVisible);
+  EXPECT_FALSE([window_b_ isOccluded]);
+
+  [window_a_ removeChildWindow:window_b_];
+}
+
+// Verifies that a child window is still occluded by an unrelated active window
+// that covers it, ensuring the parent exemption doesn't bypass all occlusion.
+IN_PROC_BROWSER_TEST_F(
+    WindowOcclusionBrowserTestMac,
+    ManualOcclusionDetectionActiveNonParentOccludesChildWindow) {
+  InitWindowA();
+  [window_a_ setCanBecomeKeyOrMainForTesting:YES];
+
+  InitWindowB(NSInsetRect(window_a_.frame, 10, 10));
+  [window_b_ setCanBecomeKeyOrMainForTesting:YES];
+
+  [window_a_ addChildWindow:window_b_ ordered:NSWindowAbove];
+  WaitForOcclusionUpdate();
+
+  WindowAndWebContents third = MakeWindowAndWebContents(window_a_.frame);
+  [third.window setCanBecomeKeyOrMainForTesting:YES];
+  OrderWindowFront(third.window);
+  [third.window setKeyWindowForTesting:YES];
+  [third.window setMainWindowForTesting:YES];
+
+  OverrideOrderedWindows(@[ window_b_, third.window, window_a_ ]);
+
+  PostNotification(NSWindowDidBecomeMainNotification, third.window);
+
+  EXPECT_EQ(WindowBWebContentsVisibility(),
+            remote_cocoa::mojom::Visibility::kOccluded);
+
+  [window_a_ removeChildWindow:window_b_];
+  [third.window close];
 }
 
 }  // namespace content

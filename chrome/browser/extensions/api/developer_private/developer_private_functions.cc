@@ -54,7 +54,6 @@
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/public/base/signin_switches.h"
-#include "components/sync/base/features.h"
 #include "content/public/common/drop_data.h"
 #include "extensions/browser/crx_installer.h"
 #include "extensions/browser/disable_reason.h"
@@ -84,7 +83,7 @@
 #include "third_party/re2/src/re2/re2.h"
 #include "ui/base/clipboard/file_info.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/window_open_disposition.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/ui/android/extensions/extension_site_settings_android.h"
@@ -649,8 +648,9 @@ DeveloperPrivateOpenReviewPageFunction::Run() {
   GURL review_url = util::GetCWSWritingReviewUrl(
       params->extension_id, util::CWSReviewSource::kExtensionsPage);
 
-  ExtensionTabUtil::NavigateToURL(WindowOpenDisposition::kNewForegroundTab,
-                                  web_contents, review_url, base::DoNothing());
+  ExtensionTabUtil::NavigateToURL(
+      ui::mojom::WindowOpenDisposition::kNewForegroundTab, web_contents,
+      review_url, base::DoNothing());
 
   return RespondNow(NoArguments());
 }
@@ -1569,6 +1569,10 @@ DeveloperPrivateGetMatchingExtensionsForSiteFunction::Run() {
   PermissionsManager* permissions_manager =
       PermissionsManager::Get(browser_context());
   for (const auto& extension : enabled_extensions) {
+    if (!ui_util::ShouldDisplayInExtensionSettings(*extension)) {
+      continue;
+    }
+
     std::unique_ptr<const PermissionSet> granted_permissions =
         permissions_manager->GetExtensionGrantedPermissions(*extension);
     const URLPatternSet& extension_withheld_sites =
@@ -2276,12 +2280,7 @@ DeveloperPrivateUploadExtensionToAccountFunction::Run() {
   // - the extension is already associated with the signed in user's account.
   // - the extension is not syncable (for example, if it's unpacked).
   if (!AccountExtensionTracker::Get(profile_)->CanUploadAsAccountExtension(
-          *extension)
-#if BUILDFLAG(IS_CHROMEOS)
-      ||
-      !base::FeatureList::IsEnabled(syncer::kReplaceSyncPromosWithSignInPromos)
-#endif
-  ) {
+          *extension)) {
     return RespondNow(Error(ErrorUtils::FormatErrorMessage(
         kCannotUploadExtensionToAccount, extension_id_)));
   }

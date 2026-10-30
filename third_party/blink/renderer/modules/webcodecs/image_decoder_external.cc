@@ -28,9 +28,6 @@
 #include "third_party/blink/renderer/platform/heap/cross_thread_persistent.h"
 #include "third_party/blink/renderer/platform/image-decoders/segment_reader.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
-#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
-#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_skia.h"
-#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_std.h"
 #include "third_party/blink/renderer/platform/wtf/text/format.h"
 
 namespace blink {
@@ -219,17 +216,14 @@ ImageDecoderExternal::ImageDecoderExternal(ScriptState* script_state,
     return;
   }
 
-  base::span<const uint8_t> array_span =
-      AsSpan<SharedBufferPolicy::kAllow>(*init->data());
-
-  if (array_span.empty()) {
+  DOMArrayBufferView* data = CoerceToArrayBufferView(*init->data());
+  if (data->byteLength() == 0) {
     exception_state.ThrowTypeError("No image data provided");
     return;
   }
 
-  auto buffer_contents =
-      TransferArrayBufferForSpan(init->transfer(), array_span, exception_state,
-                                 script_state_->GetIsolate());
+  auto [buffer_contents, array_span] = TransferArrayBuffers(
+      script_state_->GetIsolate(), init->transfer(), data, exception_state);
   if (exception_state.HadException()) {
     return;
   }

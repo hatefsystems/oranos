@@ -5,6 +5,7 @@
 chromium::import! {
     "//base:file_path";
     "//content/browser:browser_id_types";
+    "//content/common:common_id_types";
     "//storage/common:storage_common_rust";
     "//url:url_rust";
 }
@@ -53,10 +54,24 @@ mod ffi {
         type GURL = super::url_rust::gurl::ffi::GURL;
 
         #[namespace = "content"]
+        type ChildProcessSecurityPolicyImpl;
+
+        // TODO(crbug.com/522872468): Call from `can_commit_url` and
+        // `can_request_url` once ported to Rust.
+        #[allow(dead_code)]
+        #[namespace = "content"]
+        #[Self = "ChildProcessSecurityPolicyImpl"]
+        #[cxx_name = "IsMalformedBlobUrl"]
+        fn is_malformed_blob_url(url: &GURL) -> bool;
+
+        #[namespace = "content"]
         type IsolatedOriginUtil;
 
         #[namespace = "content::ChildProcessSecurityPolicy"]
         type IsolatedOriginSource = super::IsolatedOriginSource;
+
+        #[namespace = "content"]
+        type ChildProcessId = super::common_id_types::ChildProcessId;
 
         #[namespace = "content"]
         #[Self = "IsolatedOriginUtil"]
@@ -93,6 +108,26 @@ mod ffi {
         #[namespace = "content::rust::child_process_security_policy"]
         #[cxx_name = "CreateOriginWithDefaultPortIfNecessary"]
         fn create_origin_with_default_port_if_necessary(origin: &Origin) -> UniquePtr<Origin>;
+
+        // TODO(crbug.com/522872468): Call from `can_commit_url` once ported to
+        // Rust.
+        #[allow(dead_code)]
+        #[namespace = "content::rust::child_process_security_policy"]
+        #[cxx_name = "CanCommitMaybeOpaqueNewOrigin"]
+        fn can_commit_maybe_opaque_new_origin(
+            child_id: ChildProcessId,
+            url: &GURL,
+            url_is_precursor_of_opaque_origin: bool,
+        ) -> bool;
+
+        // TODO(crbug.com/522872468): Call from `can_commit_url` once ported to
+        // Rust.
+        // TODO(crbug.com/575911997): Remove this shim once Rust crash key
+        // support is available.
+        #[allow(dead_code)]
+        #[namespace = "content::rust::child_process_security_policy"]
+        #[cxx_name = "LogCanCommitUrlFailureReason"]
+        fn log_can_commit_url_failure_reason(failure_reason: &str);
 
         #[namespace = "storage"]
         type FileSystemType = super::storage_common_rust::FileSystemType;

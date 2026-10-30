@@ -95,10 +95,18 @@ linux_memory_builder(
         ),
     ),
     gn_args = gn_args.config(
+        args = {
+            # ASan test binary links are too large to run many concurrently.
+            "concurrent_links": 2,
+        },
         configs = [
             "asan",
             "lsan",
             "fail_on_san_warnings",
+            # Sanitizer builds set enable_fuzztest_fuzz by default, which adds
+            # coverage instrumentation to all code. CI never uses --fuzz, so
+            # disable it to reduce test runtime.
+            "no_fuzztest_fuzz",
             "release_builder",
             "dcheck_always_on",
             "minimal_symbols",
@@ -160,18 +168,20 @@ linux_memory_builder(
                     "--gtest_filter=-AXPlatformNodeAuraLinuxTest.AtkComponentScrollTo:AtkUtilAuraLinuxTest.*",
                 ],
             ),
-            "blink_unittests": targets.mixin(
-                # These are very slow on the ASAN trybot for some reason.
-                # crbug.com/1257927
-                swarming = targets.swarming(
-                    shards = 5,
+            "blink_unittests": [
+                targets.mixin(
+                    # These are very slow on the ASAN trybot for some reason.
+                    # crbug.com/1257927
+                    swarming = targets.swarming(
+                        shards = 5,
+                    ),
                 ),
-            ),
+                # TODO(crbug.com/579036960): Remove once e4 failures are fixed.
+                "e2-standard-8",
+            ],
             "browser_tests": targets.mixin(
                 args = [
                     "--test-launcher-filter-file=../../testing/buildbot/filters/linux.asan.browser_tests.filter",
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
                 ],
                 ci_only = True,
                 # These are very slow on the ASAN trybot for some reason.
@@ -220,10 +230,6 @@ linux_memory_builder(
                 "linux_nvidia_gtx_1660_stable",
             ],
             "interactive_ui_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 # These are slow on the ASan trybot for some reason, crbug.com/1257927
                 swarming = targets.swarming(
                     # Move to faster machine types to reduce capacity impact.
@@ -245,10 +251,6 @@ linux_memory_builder(
                 ),
             ),
             "sync_integration_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 enable_rts_filtering = True,
                 swarming = targets.swarming(
                     shards = 8,
@@ -350,10 +352,6 @@ linux_memory_builder(
         ],
         per_test_modifications = {
             "browser_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 swarming = targets.swarming(
                     shards = 94,
                 ),
@@ -371,20 +369,12 @@ linux_memory_builder(
                 "linux_nvidia_gtx_1660_stable",
             ],
             "interactive_ui_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 # Slow on certain debug builders, see crbug.com/1513713.
                 swarming = targets.swarming(
                     shards = 26,
                 ),
             ),
             "sync_integration_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 swarming = targets.swarming(
                     shards = 6,
                 ),
@@ -629,14 +619,12 @@ linux_memory_builder(
             "browser_tests": targets.mixin(
                 args = [
                     "--test-launcher-filter-file=../../testing/buildbot/filters/chromeos.msan.browser_tests.oobe_negative.filter",
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
                 ],
                 # These are very slow on the Chrome OS MSAN trybot, most likely because browser_tests on cros has ~40% more tests. Also, these tests
                 # run on ash, which means every test starts and shuts down ash, which most likely explains why it takes longer than on other platforms.
                 # crbug.com/40585695 and crbug.com/326621525
                 swarming = targets.swarming(
-                    shards = 100,
+                    shards = 150,
                 ),
             ),
             "content_unittests": targets.mixin(
@@ -650,14 +638,10 @@ linux_memory_builder(
                 reason = "Can't run on MSAN because gl_unittests_ozone uses the hardware driver, which isn't instrumented.",
             ),
             "interactive_ui_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 # These are very slow on the Chrome OS MSAN trybot for some reason.
                 # crbug.com/865455
                 swarming = targets.swarming(
-                    shards = 8,
+                    shards = 14,
                 ),
             ),
             "net_unittests": targets.mixin(
@@ -768,10 +752,6 @@ linux_memory_builder(
         ],
         per_test_modifications = {
             "browser_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 swarming = targets.swarming(
                     shards = 119,
                 ),
@@ -789,22 +769,14 @@ linux_memory_builder(
                 reason = "Can't run on MSAN because gl_unittests uses the hardware driver, which isn't instrumented.",
             ),
             "interactive_ui_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 swarming = targets.swarming(
-                    shards = 43,
+                    shards = 51,
                 ),
             ),
             "services_unittests": targets.remove(
                 reason = "https://crbug.com/831676",
             ),
             "sync_integration_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 swarming = targets.swarming(
                     shards = 6,
                 ),
@@ -937,10 +909,6 @@ linux_memory_builder(
                 ),
             ],
             "interactive_ui_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 # https://crbug.com/1498240
                 ci_only = True,
                 # These are slow on the TSan bots for some reason, crbug.com/1257927
@@ -955,10 +923,6 @@ linux_memory_builder(
                 ),
             ),
             "sync_integration_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 # https://crbug.com/1498240
                 ci_only = True,
                 swarming = targets.swarming(
@@ -1001,9 +965,17 @@ linux_memory_builder(
         ),
     ),
     gn_args = gn_args.config(
+        args = {
+            # UBSan test binary links are too large to run many concurrently.
+            "concurrent_links": 4,
+        },
         configs = [
             "ubsan_no_recover",
             "fail_on_san_warnings",
+            # Sanitizer builds set enable_fuzztest_fuzz by default, which adds
+            # coverage instrumentation to all code. CI never uses --fuzz, so
+            # disable it to reduce test runtime.
+            "no_fuzztest_fuzz",
             "release_builder",
             "remoteexec",
             "linux",
@@ -1055,10 +1027,6 @@ linux_memory_builder(
                 ),
             ),
             "browser_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 swarming = targets.swarming(
                     shards = 34,
                 ),
@@ -1069,10 +1037,6 @@ linux_memory_builder(
                 ),
             ),
             "interactive_ui_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 swarming = targets.swarming(
                     shards = 12,
                 ),
@@ -1469,13 +1433,11 @@ ci.builder(
                 # Tests shows tests run faster with fewer retries by using fewer jobs crbug.com/1411912
                 args = [
                     "--test-launcher-jobs=3",
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
                 ],
                 # These are very slow on the ASAN trybot for some reason.
                 # crbug.com/1257927
                 swarming = targets.swarming(
-                    shards = 140,
+                    shards = 190,
                 ),
             ),
             "components_unittests": targets.mixin(
@@ -1504,11 +1466,9 @@ ci.builder(
                 # Tests shows tests run faster with fewer retries by using fewer jobs crbug.com/1411912
                 args = [
                     "--test-launcher-jobs=3",
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
                 ],
                 swarming = targets.swarming(
-                    shards = 24,
+                    shards = 35,
                 ),
             ),
             "net_unittests": targets.mixin(
@@ -1521,8 +1481,6 @@ ci.builder(
                 # Tests shows tests run faster with fewer retries by using fewer jobs crbug.com/1411912
                 args = [
                     "--test-launcher-jobs=3",
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
                 ],
                 swarming = targets.swarming(
                     shards = 6,

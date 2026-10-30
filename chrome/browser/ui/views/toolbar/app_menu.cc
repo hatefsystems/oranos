@@ -885,6 +885,13 @@ class AppMenu::ZoomView : public AppMenuView, public views::WidgetObserver {
       if (zoom_controller) {
         zoom = zoom_controller->GetZoomPercent();
       }
+    }
+    if (!on_construction && zoom_percent_ == zoom) {
+      return;
+    }
+    zoom_percent_ = zoom;
+
+    if (contents) {
       increment_button_->SetEnabled(zoom < contents->GetMaximumZoomPercent());
       decrement_button_->SetEnabled(zoom > contents->GetMinimumZoomPercent());
     }
@@ -959,6 +966,9 @@ class AppMenu::ZoomView : public AppMenuView, public views::WidgetObserver {
   // instead. This value is cached because is depends on multiple calls to
   // gfx::GetStringWidth(...) which are expensive.
   mutable std::optional<int> zoom_label_max_width_;
+
+  // Current zoom percent for the active tab.
+  std::optional<int> zoom_percent_;
 };
 
 BEGIN_METADATA(AppMenu, ZoomView)
@@ -1713,6 +1723,13 @@ void AppMenu::PopulateMenu(MenuItemView* parent, MenuModel* model) {
         CHECK(!recent_tabs_menu_model_delegate_.get(),
               base::NotFatalUntil::M162);
         recent_tabs_menu_model_delegate_ =
+            std::make_unique<RecentTabsMenuModelDelegate>(
+                this, model->GetSubmenuModelAt(i), item);
+        break;
+      case AppMenuModel::kOtherDeviceTabsMenuPlaceholder:
+        // Forwards async favicon updates and dynamic menu rebuilds to the view.
+        CHECK(!other_device_tabs_menu_model_delegate_);
+        other_device_tabs_menu_model_delegate_ =
             std::make_unique<RecentTabsMenuModelDelegate>(
                 this, model->GetSubmenuModelAt(i), item);
         break;

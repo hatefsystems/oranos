@@ -267,23 +267,16 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   void ClearIsolatedOriginsForTesting() override;
   void ClearIsolatedOriginsForTesting_Cpp();
 
-  // Centralized internal implementation of site isolation enforcements,
-  // including CanAccessDataForOrigin and HostsOrigin. It supports the following
-  // types of access checks, in order of increasing strictness:
+  // Centralized internal implementation of site isolation enforcements for
+  // already-committed origins, including CanAccessDataForOrigin and
+  // HostsOrigin. It supports the following types of access checks, in order of
+  // increasing strictness:
   enum class AccessType {
-    // Whether the process can commit a navigation to an origin, allowing a
-    // document with that origin to be hosted in this process. This is
-    // specifically about whether a particular new origin may be introduced
-    // into a given process.
-    //
-    // This access type can only be used on the UI thread, because it involves
-    // jail and citadel checks which require UI thread data structures.
-    kCanCommitNewOrigin,
     // Whether the process has previously committed a document or instantiated a
     // worker with the particular origin. This can be used to verify whether a
     // particular origin can be used as an initiator or source origin, e.g. in
     // postMessage or other IPCs sent from this process. Unlike
-    // kCanCommitNewOrigin, this check assumes that the origin must already
+    // CanCommitNewOrigin(), this check assumes that the origin must already
     // exist in the process. Because a document/worker destruction may race with
     // processing legitimate IPCs on behalf of `origin`, this check also allows
     // the case where an origin has been hosted by the process in the past, but
@@ -311,6 +304,20 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
                        const url::Origin& origin,
                        AccessType access_type);
 
+  // Whether the process can commit a navigation to `origin`, allowing a
+  // document with that origin to be hosted in this process. This is
+  // specifically about whether a particular new origin may be introduced into a
+  // given process.
+  //
+  // This can only be called on the UI thread, because it involves jail and
+  // citadel checks which require UI thread data structures.
+  bool CanCommitNewOrigin(ChildProcessId child_id, const url::Origin& origin);
+
+  // Helper for CanCommitNewOrigin() and CanCommitURL().
+  bool CanCommitMaybeOpaqueNewOrigin(ChildProcessId child_id,
+                                     const GURL& url,
+                                     bool url_is_precursor_of_opaque_origin);
+
   // Determines if the combination of origin, url and web_exposed_isolation_info
   // bundled in `url_info` are safe to commit to the process associated with
   // `child_id`.
@@ -332,6 +339,15 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   bool CanCommitURL(ChildProcessId child_id, const GURL& url);
   // TODO(crbug.com/379869738): Remove this method when usages are ported.
   bool CanCommitURL(int child_id, const GURL& url);
+
+  // Valid blob URLs should contain canonically serialized origins. See
+  // https://crbug.com/40085381.
+  static bool IsMalformedBlobUrl(const GURL& url);
+
+  // Sets the "cpspi_can_commit_url_failure_reason" crash key.
+  // TODO(crbug.com/575911997): Remove this once Rust crash key support is
+  // available and CanCommitURL_Cpp() is removed.
+  static void LogCanCommitUrlFailureReason(std::string_view failure_reason);
 
   // This function will check whether |origin| requires process isolation
   // within |isolation_context|, and if so, it will return true and put the
@@ -1215,7 +1231,7 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   static std::string GetCommittedOriginsForCrashKey(
       const ProcessState* process_state);
 
-  // Helper for CanAccessMaybeOpaqueOrigin, to perform two security checks:
+  // Helper for CanCommitMaybeOpaqueNewOrigin, to perform two security checks:
   //  - Jail check: a process locked to a particular site shouldn't access data
   //    belonging to other sites.
   //  - Citadel check: a process not locked to any site shouldn't access data
@@ -1239,7 +1255,7 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   // what the process lock was expected to be (e.g., to be used in crash keys).
   //
   // This function must be called on the UI thread while already holding
-  // `lock_`, and it is only valid to use for AccessType::kCanCommitNewOrigin.
+  // `lock_`.
   bool PerformJailAndCitadelChecks(ChildProcessId child_id,
                                    const ProcessState& process_state,
                                    BrowserContext& browser_context,

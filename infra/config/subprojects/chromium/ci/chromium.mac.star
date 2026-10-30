@@ -724,10 +724,6 @@ ci.thin_tester(
                 ),
             ),
             "browser_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 ci_only = True,
                 swarming = targets.swarming(
                     # crbug.com/1361887, crbug.com/509389281, crbug.com/563035821
@@ -740,19 +736,11 @@ ci.thin_tester(
                 ),
             ),
             "interactive_ui_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 swarming = targets.swarming(
-                    shards = 8,
+                    shards = 11,
                 ),
             ),
             "sync_integration_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 ci_only = True,
                 swarming = targets.swarming(
                     shards = 4,
@@ -1319,6 +1307,31 @@ ios_builder(
             "xcode_27_main",
             "xctest",
         ],
+        per_test_modifications = {
+            # TODO(crbug.com/579116520): Remove ci_only on these 20+ minute
+            # suites once high CQ pending times on ios-simulator are resolved.
+            "components_unittests iPad (A16) 27.0": targets.mixin(
+                ci_only = True,
+            ),
+            "components_unittests iPhone 16 26.5": targets.mixin(
+                ci_only = True,
+            ),
+            "components_unittests iPhone 16 27.0": targets.mixin(
+                ci_only = True,
+            ),
+            "ios_chrome_integration_eg2tests_module iPhone 16 27.0": targets.mixin(
+                ci_only = True,
+            ),
+            "ios_chrome_unittests iPad (A16) 27.0": targets.mixin(
+                ci_only = True,
+            ),
+            "ios_chrome_unittests iPhone 16 26.5": targets.mixin(
+                ci_only = True,
+            ),
+            "ios_chrome_unittests iPhone 16 27.0": targets.mixin(
+                ci_only = True,
+            ),
+        },
     ),
     cpu = cpu.ARM64,
     console_view_entry = [

@@ -21,6 +21,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
+#include "chrome/browser/actor/actor_proto_conversion.h"
 #include "chrome/browser/actor/actor_surface.h"
 #include "chrome/browser/actor/actor_surface_handle.h"
 #include "chrome/browser/actor/actor_task.h"
@@ -131,6 +132,7 @@ class LoadAndExtractContentTool::TabObservationDelayer
  public:
   TabObservationDelayer(
       content::WebContents* web_contents,
+      ActorSurfaceHandle actor_surface_handle,
       TaskId task_id,
       AggregatedJournal& journal,
       ObservationDelayController::PageStabilityConfig page_stability_config,
@@ -147,6 +149,7 @@ class LoadAndExtractContentTool::TabObservationDelayer
   void OnObservationDelayComplete(ObservationDelayController::Result result);
   void OnTimeout();
 
+  ActorSurfaceHandle actor_surface_handle_;
   TaskId task_id_;
   AggregatedJournal& journal_;
   ObservationDelayController::PageStabilityConfig page_stability_config_;
@@ -162,12 +165,14 @@ class LoadAndExtractContentTool::TabObservationDelayer
 
 LoadAndExtractContentTool::TabObservationDelayer::TabObservationDelayer(
     content::WebContents* web_contents,
+    ActorSurfaceHandle actor_surface_handle,
     TaskId task_id,
     AggregatedJournal& journal,
     ObservationDelayController::PageStabilityConfig page_stability_config,
     bool target_is_about_blank,
     base::OnceCallback<void(PerTabResultCode)> callback)
     : content::WebContentsObserver(web_contents),
+      actor_surface_handle_(actor_surface_handle),
       task_id_(task_id),
       journal_(journal),
       page_stability_config_(page_stability_config),
@@ -217,10 +222,8 @@ void LoadAndExtractContentTool::TabObservationDelayer::DidFinishNavigation(
     return;
   }
 
-  // TODO(b/565820285): ObservationDelayController::Wait() takes a tab; it needs
-  // to wait on the page itself to support headless pages.
-  tabs::TabInterface* tab = tabs::TabInterface::GetFromContents(web_contents());
-  if (!tab) {
+  ActorSurface* actor_surface = actor_surface_handle_.Get();
+  if (!actor_surface) {
     if (callback_) {
       std::move(callback_).Run(PerTabResultCode::kTabWentAway);
     }
@@ -228,8 +231,9 @@ void LoadAndExtractContentTool::TabObservationDelayer::DidFinishNavigation(
   }
 
   observation_delay_controller_->Wait(
-      *tab, base::BindOnce(&TabObservationDelayer::OnObservationDelayComplete,
-                           weak_ptr_factory_.GetWeakPtr()));
+      *actor_surface,
+      base::BindOnce(&TabObservationDelayer::OnObservationDelayComplete,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void LoadAndExtractContentTool::TabObservationDelayer::OnTimeout() {
@@ -247,19 +251,18 @@ void LoadAndExtractContentTool::TabObservationDelayer::
       }
       return;
     case ObservationDelayController::Result::kPageNavigated: {
-      if (tabs::TabInterface* tab =
-              tabs::TabInterface::GetFromContents(web_contents())) {
+      if (ActorSurface* actor_surface = actor_surface_handle_.Get()) {
         size_t last_navigation_count =
             observation_delay_controller_->NavigationCount();
         // The page navigated, restart the observation.
         observation_delay_controller_ =
             std::make_unique<ObservationDelayController>(
-                *tab->GetContents()->GetPrimaryMainFrame(), task_id_, journal_,
-                page_stability_config_);
+                *actor_surface->GetWebContents()->GetPrimaryMainFrame(),
+                task_id_, journal_, page_stability_config_);
         observation_delay_controller_->SetNavigationCount(
             last_navigation_count + 1);
         observation_delay_controller_->Wait(
-            *tab,
+            *actor_surface,
             base::BindOnce(&TabObservationDelayer::OnObservationDelayComplete,
                            weak_ptr_factory_.GetWeakPtr()));
       } else {
@@ -463,8 +466,8 @@ void LoadAndExtractContentTool::Invoke(ToolCallback callback) {
     const bool target_is_about_blank = url == about_blank;
     per_tab_state.tab_observation_delayer =
         std::make_unique<TabObservationDelayer>(
-            web_contents, task_id(), journal(), page_stability_config_.value(),
-            target_is_about_blank,
+            web_contents, per_tab_state.actor_surface_handle, task_id(),
+            journal(), page_stability_config_.value(), target_is_about_blank,
             base::BindOnce(
                 &LoadAndExtractContentTool::OnTabObservationDelayComplete,
                 weak_ptr_factory_.GetWeakPtr(), i));
@@ -546,7 +549,7 @@ void LoadAndExtractContentTool::OnGotAIPageContent(
                       .AddError(result_or_error.error().message)
                       .Build());
     tab_observation.set_annotated_page_content_result(
-        TabObservation::ANNOTATED_PAGE_CONTENT_ERROR);
+        ToAnnotatedPageContentResult(result_or_error.error().status));
     result_code = PerTabResultCode::kLoadAndExtractContentExtractionFailed;
   }
   PostFinishedTask(base::BindOnce(&LoadAndExtractContentTool::OnTabReadyToClose,
@@ -609,10 +612,11 @@ void LoadAndExtractContentTool::OnAllUrlsCompleted() {
     if (per_tab_state.tab_observation.has_value()) {
       TabObservation& tab_observation = per_tab_state.tab_observation.value();
 
-      bool has_apc = tab_observation.has_annotated_page_content();
-      tab_observation.set_annotated_page_content_result(
-          has_apc ? TabObservation::ANNOTATED_PAGE_CONTENT_OK
-                  : TabObservation::ANNOTATED_PAGE_CONTENT_ERROR);
+      if (!tab_observation.has_annotated_page_content_result()) {
+        // Fallback when the tab failed before `OnGotAIPageContent()` ran.
+        tab_observation.set_annotated_page_content_result(
+            TabObservation::ANNOTATED_PAGE_CONTENT_ERROR);
+      }
 
       tab_observation.set_result(
           ToTabObservationResult(per_tab_state.result_code.value()));

@@ -42,6 +42,10 @@ namespace gfx {
 class Point;
 }  // namespace gfx
 
+namespace views {
+class FocusManager;
+}  // namespace views
+
 // A LocationBar implementation using WebUI.
 class WebUILocationBar : public LocationBar,
                          public LocationBarTesting,
@@ -68,6 +72,7 @@ class WebUILocationBar : public LocationBar,
   base::expected<std::monostate, mojo_base::mojom::ErrorPtr> OnOmniboxAction(
       toolbar_ui_api::mojom::OmniboxActionPtr action);
   void SetFocusWithin(bool focused);
+  void OnToolbarFocused();
   void OnBlur();
 
   void HandleContextMenu(views::Widget* widget,
@@ -170,6 +175,7 @@ class WebUILocationBar : public LocationBar,
   OmniboxPopupAimPresenter* GetOmniboxPopupAimPresenter() const override;
   views::View* GetLocationBarFocusRestoreView() override;
   bool is_full_webui_omnibox() const override;
+  void SetRestoreFocusOnWindowReactivation(bool restore) override;
 
   void SetSuppressionThresholdForTesting(base::TimeDelta threshold);
 
@@ -225,7 +231,10 @@ class WebUILocationBar : public LocationBar,
                               bool reload_prompt);
 
   void HandleFocusRequestForFullPopup(
-      toolbar_ui_api::mojom::FocusRequestTarget target);
+      toolbar_ui_api::mojom::FocusRequestTarget target,
+      bool was_focused);
+
+  views::FocusManager* GetFocusManager();
 
   raw_ptr<BrowserWindowInterface> browser_ = nullptr;
   raw_ptr<LocationBarView::Delegate> delegate_ = nullptr;
@@ -263,6 +272,8 @@ class WebUILocationBar : public LocationBar,
   // Updated by SetFocusWithin, which is ultimately called via mojo from
   // the HTML side.
   bool focus_within_ = false;
+
+  bool restore_focus_on_window_reactivation_ = false;
 
   // Whether to paint AIM button as focused (with focus still on omnibox).
   bool force_aim_button_focus_ring_ = false;

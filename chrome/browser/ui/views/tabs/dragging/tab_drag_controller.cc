@@ -1267,10 +1267,22 @@ bool TabDragController::ShouldDragWindowUsingSystemDnD() {
 }
 
 void TabDragController::RequestTabThumbnail() {
-  WebContents* contents =
-      source_context_->GetTabStripModel()->GetActiveWebContents();
-  CHECK(contents);
-  CHECK(IsDraggingTab(contents));
+  WebContents* contents = nullptr;
+  if (drag_data_.group_header_drag_data_.has_value()) {
+    // When dragging a group header, the active tab in the strip may be outside
+    // the group (e.g. if the group is collapsed). Obtain the thumbnail from the
+    // active tab within the dragged group.
+    const int drag_data_index = 1 + drag_data_.group_header_drag_data_.value()
+                                        .active_tab_index_within_group;
+    if (drag_data_index < static_cast<int>(drag_data_.tab_drag_data_.size())) {
+      contents = drag_data_.tab_drag_data_[drag_data_index].contents;
+    }
+  } else {
+    contents = source_context_->GetTabStripModel()->GetActiveWebContents();
+  }
+  if (!contents || !IsDraggingTab(contents)) {
+    return;
+  }
 
   content::RenderWidgetHostView* rwhv = contents->GetRenderWidgetHostView();
   if (rwhv) {
@@ -1737,10 +1749,37 @@ TabDragController::Detach(ReleaseCapture release_capture) {
     }
   }
 
+  const bool detaching_ephemeral_group_header =
+      drag_data_.group_header_drag_data_.has_value() &&
+      attached_model->GetFocusedGroup() == drag_data_.group_header_id() &&
+      attached_model->IsEphemeralTabGroup(*drag_data_.group_header_id());
+
   std::vector<std::variant<std::unique_ptr<DetachedTab>,
                            std::unique_ptr<DetachedTabCollection>>>
       owned_tabs_and_collections =
           attached_model->DetachTabsAndCollectionsForInsertion(dragged_indices);
+
+  if (detaching_ephemeral_group_header) {
+    // DetachTabsAndCollectionsForInsertion() dissolves ephemeral focused groups
+    // into ungrouped tabs so they are not promoted to a permanent group in the
+    // target window. Update `drag_data_` to reflect that the group header no
+    // longer exists and the remaining drag is a normal multi-tab drag.
+    const tab_groups::TabGroupId dissolved_group =
+        *drag_data_.group_header_id();
+    std::erase_if(drag_data_.tab_drag_data_, [&](const TabDragData& datum) {
+      return datum.is_group_header && datum.tab_group_data.has_value() &&
+             datum.tab_group_data->group_id == dissolved_group;
+    });
+    for (TabDragData& datum : drag_data_.tab_drag_data_) {
+      if (datum.tab_group_data.has_value() &&
+          datum.tab_group_data->group_id == dissolved_group) {
+        datum.tab_group_data.reset();
+      }
+    }
+    drag_data_.dragging_groups.erase(dissolved_group);
+    drag_data_.group_header_drag_data_.reset();
+    drag_data_.source_view_index_ = 0;
+  }
 
   // If we've removed the last Tab from the TabDragContext, hide the
   // frame now.
@@ -2273,6 +2312,13 @@ void TabDragController::ResetSelection(TabStripModel* model) {
       drag_data_.group_header_id() == model->GetFocusedGroup()) {
     return;
   }
+  // Do not select tabs in the group if the group is collapsed, so that the
+  // active tab remains unchanged and hidden tabs in collapsed groups are not
+  // activated.
+  if (drag_data_.group_header_drag_data_.has_value() &&
+      model->IsGroupCollapsed(drag_data_.group_header_drag_data_->group)) {
+    return;
+  }
   ui::ListSelectionModel selection_model;
   bool has_one_valid_tab = false;
   for (size_t i = 0; i < drag_data_.tab_drag_data_.size(); ++i) {
@@ -2615,29 +2661,33 @@ void TabDragController::CompleteDrag() {
   }
 
   if (drag_data_.group_header_drag_data_.has_value()) {
-    // Manually reset the selection to just the active tab in the group.
-    // For multi tab select keep the selection model as the user used it as the
-    // original selection.
     TabStripModel* model = attached_context_
                                ? attached_context_->GetTabStripModel()
                                : source_context_->GetTabStripModel();
     if (model->GetFocusedGroup() == drag_data_.group_header_id()) {
       return;
     }
-    ui::ListSelectionModel selection;
-    // Offset by 1 to account for the group header.
-    const int drag_data_index = 1 + drag_data_.group_header_drag_data_.value()
-                                        .active_tab_index_within_group;
-    const int index = model->GetIndexOfWebContents(
-        drag_data_.tab_drag_data_[drag_data_index].contents);
+    const tab_groups::TabGroupId group =
+        drag_data_.group_header_drag_data_.value().group;
+    // Do not select a tab in the group if the group is collapsed, so that the
+    // active tab remains unchanged and hidden tabs in collapsed groups are not
+    // activated.
+    if (!model->IsGroupCollapsed(group)) {
+      ui::ListSelectionModel selection;
+      // Offset by 1 to account for the group header.
+      const int drag_data_index = 1 + drag_data_.group_header_drag_data_.value()
+                                          .active_tab_index_within_group;
+      const int index = model->GetIndexOfWebContents(
+          drag_data_.tab_drag_data_[drag_data_index].contents);
 
-    // The tabs in the group may have been closed during the drag.
-    if (index != TabStripModel::kNoTab) {
-      CHECK_GE(index, 0, base::NotFatalUntil::M162);
-      selection.AddIndexToSelection(static_cast<size_t>(index));
-      selection.set_active(static_cast<size_t>(index));
-      selection.set_anchor(static_cast<size_t>(index));
-      UpdateSelectionModel(model, selection);
+      // The tabs in the group may have been closed during the drag.
+      if (index != TabStripModel::kNoTab) {
+        CHECK_GE(index, 0, base::NotFatalUntil::M162);
+        selection.AddIndexToSelection(static_cast<size_t>(index));
+        selection.set_active(static_cast<size_t>(index));
+        selection.set_anchor(static_cast<size_t>(index));
+        UpdateSelectionModel(model, selection);
+      }
     }
   }
 }

@@ -81,6 +81,9 @@ FilenameElider::LineLengths FilenameElider::GetLineLengths(
   render_text_->SetWhitespaceElision(true);
   render_text_->SetDisplayRect(display_rect);
 
+  render_text_->SetElideBehavior(gfx::ElideBehavior::NO_ELIDE);
+  const std::u16string_view unelided_text = render_text_->GetDisplayText();
+
   // Set our temporary RenderText to the unelided text and elide the start of
   // the string to give us a guess at where the second line of the label
   // should start.
@@ -91,7 +94,7 @@ FilenameElider::LineLengths FilenameElider::GetLineLengths(
   // If there is no elision, then the text will fit on a single line and
   // there's nothing to do.
   const size_t length = render_text_->text().length();
-  if (tentative_second_line == render_text_->text()) {
+  if (tentative_second_line == unelided_text) {
     return LineLengths(length, length);
   }
 
@@ -105,8 +108,9 @@ FilenameElider::LineLengths FilenameElider::GetLineLengths(
 
   // Since we truncated, expect the string to start with ellipsis, then
   // calculate the length of the string sans ellipsis.
-  CHECK_EQ(gfx::kEllipsisUTF16[0], tentative_second_line[0],
-           base::NotFatalUntil::M162);
+  // TODO(crbug.com/577275387): CHECK-exclusion: Convert to a CHECK once we are
+  // confident it won't be triggered.
+  DCHECK_EQ(gfx::kEllipsisUTF16[0], tentative_second_line[0]);
 
   // TODO(crbug.com/1239317): Elision is still a little flaky, so we'll make
   // sure we didn't stop in the middle of a grapheme. The +1 is to move past

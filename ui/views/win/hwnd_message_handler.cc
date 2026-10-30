@@ -17,6 +17,7 @@
 #include "base/auto_reset.h"
 #include "base/containers/heap_array.h"
 #include "base/debug/gdi_debug_util_win.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
@@ -77,6 +78,7 @@
 #include "ui/latency/latency_info.h"
 #include "ui/native_theme/native_theme_win.h"
 #include "ui/views/views_delegate.h"
+#include "ui/views/views_features.h"
 #include "ui/views/widget/widget_hwnd_utils.h"
 #include "ui/views/win/fullscreen_handler.h"
 #include "ui/views/win/hwnd_message_handler_delegate.h"
@@ -305,6 +307,62 @@ constexpr int kSynthesizedMouseMessagesTimeDifference = 500;
 
 // True if any browser window is in a menu loop.
 bool g_is_in_native_menu_loop = false;
+
+// Returns true if `window` is owned, directly or transitively, by `owner`.
+// Returns false if `window` is not owned by `owner` or if the ownership chain
+// exceeds `kMaxOwnerDepth`.
+bool IsOwnedBy(HWND window, HWND owner) {
+  // SetWindowLongPtr(..., GWLP_HWNDPARENT, ...) allows external processes to
+  // create cyclic GW_OWNER chains, so bound the walk.
+  constexpr int kMaxOwnerDepth = 32;
+  HWND current = ::GetWindow(window, GW_OWNER);
+  for (int depth = 0; current && depth < kMaxOwnerDepth; ++depth) {
+    if (current == owner) {
+      return true;
+    }
+    current = ::GetWindow(current, GW_OWNER);
+  }
+  return false;
+}
+
+// Returns true if `hwnd` is in the topmost z-order band.
+bool IsTopmost(HWND hwnd) {
+  return (::GetWindowLong(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+}
+
+// Returns true if ::SetWindowPos(`hwnd`, HWND_TOP, ...) would not change the
+// visible z-order, i.e. no visible window other than `hwnd`'s owned windows
+// (which Windows keeps above it) is above `hwnd` within its z-order band.
+// Returns false if another visible window is above `hwnd` in its band, or if
+// the z-order walk exceeds `kMaxZOrderWalk`.
+bool IsAtTopOfZOrderBand(HWND hwnd) {
+  // Bound the walk because:
+  // 1. MSDN warns that GetWindow(..., GW_HWNDPREV) in a loop can spin if other
+  //    threads concurrently reorder windows.
+  // 2. CreateWindowEx places newly created hidden non-topmost top-level windows
+  //    at the top of the non-topmost band above `hwnd`; capping the walk bounds
+  //    per-click cost and lets an occasional SetWindowPos(HWND_TOP) raise
+  //    `hwnd` back above accumulated hidden windows.
+  constexpr int kMaxZOrderWalk = 64;
+  const bool is_topmost = IsTopmost(hwnd);
+  HWND above = ::GetWindow(hwnd, GW_HWNDPREV);
+  for (int count = 0; above; ++count) {
+    if (count >= kMaxZOrderWalk) {
+      return false;
+    }
+    if (!is_topmost && IsTopmost(above)) {
+      // Reached the topmost band, which HWND_TOP doesn't raise `hwnd` into.
+      return true;
+    }
+    // Hidden windows are ignored since raising `hwnd` above them has no visible
+    // effect. Owned windows stay above `hwnd` even after HWND_TOP.
+    if (::IsWindowVisible(above) && !IsOwnedBy(above, hwnd)) {
+      return false;
+    }
+    above = ::GetWindow(above, GW_HWNDPREV);
+  }
+  return true;
+}
 
 }  // namespace
 
@@ -658,6 +716,7 @@ void HWNDMessageHandler::GetWindowPlacement(
 
 void HWNDMessageHandler::SetBounds(const gfx::Rect& bounds_in_pixels,
                                    bool force_size_changed) {
+  StopIgnoringPosChanges();
   background_fullscreen_hack_ = false;
   SetBoundsInternal(bounds_in_pixels, force_size_changed);
 }
@@ -731,6 +790,7 @@ void HWNDMessageHandler::SetDwmFrameExtension(DwmFrameState state) {
 }
 
 void HWNDMessageHandler::SetSize(const gfx::Size& size) {
+  StopIgnoringPosChanges();
   ::SetWindowPos(hwnd(), nullptr, 0, 0, size.width(), size.height(),
                  SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOMOVE);
 }
@@ -740,6 +800,7 @@ void HWNDMessageHandler::CenterWindow(const gfx::Size& size) {
   if (!::IsWindow(parent)) {
     parent = ::GetWindow(hwnd(), GW_OWNER);
   }
+  StopIgnoringPosChanges();
   gfx::CenterAndSizeWindow(parent, hwnd(), size);
 }
 
@@ -865,10 +926,12 @@ void HWNDMessageHandler::Maximize() {
   if (IsFullscreen()) {
     SetFullscreen(false, display::kInvalidDisplayId);
   }
+  StopIgnoringPosChanges();
   ExecuteSystemMenuCommand(SC_MAXIMIZE);
 }
 
 void HWNDMessageHandler::Minimize() {
+  StopIgnoringPosChanges();
   ExecuteSystemMenuCommand(SC_MINIMIZE);
   delegate_->HandleNativeBlur(nullptr);
 }
@@ -877,6 +940,7 @@ void HWNDMessageHandler::Restore() {
   if (IsFullscreen()) {
     SetFullscreen(false, display::kInvalidDisplayId);
   } else {
+    StopIgnoringPosChanges();
     ExecuteSystemMenuCommand(SC_RESTORE);
   }
 }
@@ -889,6 +953,17 @@ void HWNDMessageHandler::Activate() {
       return;
     }
     notify_restore_on_activate_ = false;
+  } else if (base::FeatureList::IsEnabled(
+                 features::kSkipRedundantWindowActivation) &&
+             IsActive() && !::GetWindow(hwnd(), GW_OWNER) &&
+             ::GetForegroundWindow() == hwnd() && IsAtTopOfZOrderBand(hwnd())) {
+    // Activate() is called on every mouse press in web contents, usually on an
+    // already active window. Skip the costly calls below when they wouldn't
+    // change activation or the visible z-order. Owned windows are excluded
+    // because ::SetWindowPos(HWND_TOP) also raises their owner. IsActive()
+    // (user-mode TEB read) short-circuits before the ::GetForegroundWindow()
+    // syscall when inactive.
+    return;
   }
 
   ::SetWindowPos(hwnd(), HWND_TOP, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE);
@@ -1099,6 +1174,7 @@ void HWNDMessageHandler::SetFullscreen(bool fullscreen,
   RemoveCurrentWindowFromFullscreenMonitorMap();
 
   background_fullscreen_hack_ = false;
+  StopIgnoringPosChanges();
   fullscreen_handler()->SetFullscreen(fullscreen, target_display_id);
   if (IsDestroyed()) {
     return;
@@ -1132,12 +1208,14 @@ void HWNDMessageHandler::SetAspectRatio(float aspect_ratio,
     gfx::Rect rect(window_rect);
 
     SizeWindowToAspectRatio(WMSZ_BOTTOMRIGHT, &rect);
+    StopIgnoringPosChanges();
     SetBoundsInternal(rect, false);
   }
 }
 
 void HWNDMessageHandler::SizeConstraintsChanged() {
-  LONG style = ::GetWindowLong(hwnd(), GWL_STYLE);
+  const LONG old_style = ::GetWindowLong(hwnd(), GWL_STYLE);
+  LONG style = old_style;
 
   // Key style considerations:
   // - WS_THICKFRAME: Enables resizing. Cannot be used with translucent
@@ -1163,6 +1241,14 @@ void HWNDMessageHandler::SizeConstraintsChanged() {
                      !(style & static_cast<LONG>(WS_POPUP | WS_CHILD)));
   set_style_func(WS_MAXIMIZEBOX, can_maximize);
   set_style_func(WS_MINIMIZEBOX, delegate_->CanMinimize());
+
+  // SendFrameChanged() is only needed to apply a GWL_STYLE change to the frame
+  // (styles are cached until SWP_FRAMECHANGED), so skip both calls when the
+  // style is unchanged (e.g. a CanFullscreen() change doesn't affect it).
+  if (style == old_style &&
+      base::FeatureList::IsEnabled(features::kSkipRedundantSendFrameChanged)) {
+    return;
+  }
 
   ::SetWindowLong(hwnd(), GWL_STYLE, style);
   SendFrameChanged();
@@ -1593,6 +1679,36 @@ void HWNDMessageHandler::OnAppbarAutohideEdgesChanged() {
                  SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+void HWNDMessageHandler::UpdateAutohideTaskbarAdjustments() {
+  // Only maximized windows adjust on auto-hide taskbar updates; other
+  // OnNCCalcSize() insets don't depend on display or work area changes (DPI is
+  // handled by WM_DPICHANGED).
+  if (!IsMaximized()) {
+    if (!base::FeatureList::IsEnabled(
+            features::kSkipRedundantSendFrameChanged)) {
+      SendFrameChanged();
+    }
+    return;
+  }
+
+  if (base::FeatureList::IsEnabled(
+          features::kSkipRedundantMaximizedFrameChange)) {
+    // Skip if OnNCCalcSize() didn't apply auto-hide adjustments (e.g.
+    // system-drawn frame) or cached edges are already applied.
+    // GetAppbarAutohideEdges() refreshes the cache asynchronously and calls
+    // OnAppbarAutohideEdgesChanged() if they change.
+    if (!applied_autohide_edges_.has_value()) {
+      return;
+    }
+    HMONITOR monitor = ::MonitorFromWindow(hwnd(), MONITOR_DEFAULTTONULL);
+    if (monitor &&
+        GetAppbarAutohideEdges(monitor) == *applied_autohide_edges_) {
+      return;
+    }
+  }
+  SendFrameChanged();
+}
+
 void HWNDMessageHandler::SetInitialFocus() {
   if (!(::GetWindowLong(hwnd(), GWL_EXSTYLE) & WS_EX_TRANSPARENT) &&
       !(::GetWindowLong(hwnd(), GWL_EXSTYLE) & WS_EX_NOACTIVATE)) {
@@ -1746,13 +1862,35 @@ void HWNDMessageHandler::ClientAreaSizeChanged() {
       IsHeadless()) {
     return;
   }
-  delegate_->HandleClientSizeChanged(GetClientAreaBounds().size());
-  if (IsDestroyed()) {
-    return;
+  const gfx::Size client_size = GetClientAreaBounds().size();
+  // This runs on every SWP_FRAMECHANGED and every size change request (see
+  // DidClientAreaSizeChange()), even when the client size didn't change. Skip
+  // notifying the delegate when neither the client size nor the show state
+  // changed: it resizes the root window and widget, which is costly (e.g.
+  // Widget::SaveWindowPlacementIfNeeded() calls ::GetWindowPlacement()).
+  if (!base::FeatureList::IsEnabled(features::kSkipRedundantSendFrameChanged) ||
+      UpdateClientAreaState(client_size)) {
+    delegate_->HandleClientSizeChanged(client_size);
+    if (IsDestroyed()) {
+      return;
+    }
   }
 
   current_window_size_message_++;
   sent_window_size_changing_ = false;
+}
+
+bool HWNDMessageHandler::UpdateClientAreaState(const gfx::Size& client_size) {
+  CHECK(base::FeatureList::IsEnabled(features::kSkipRedundantSendFrameChanged));
+  const ClientAreaState state = {.size = client_size,
+                                 .is_maximized = IsMaximized(),
+                                 .is_minimized = IsMinimized(),
+                                 .is_fullscreen = IsFullscreen()};
+  if (last_client_area_state_ == state) {
+    return false;
+  }
+  last_client_area_state_ = state;
+  return true;
 }
 
 bool HWNDMessageHandler::GetClientAreaInsets(gfx::Insets* insets,
@@ -2045,9 +2183,7 @@ void HWNDMessageHandler::OnDisplayChange(UINT bits_per_pixel,
     return;
   }
 
-  // Force a WM_NCCALCSIZE to occur to ensure that we handle auto hide
-  // taskbars correctly.
-  SendFrameChanged();
+  UpdateAutohideTaskbarAdjustments();
 }
 
 LRESULT HWNDMessageHandler::OnDpiChanged(UINT msg,
@@ -2095,6 +2231,9 @@ LRESULT HWNDMessageHandler::OnDpiChanged(UINT msg,
   if (IsDestroyed()) {
     return 0;
   }
+  // The scale factor changes even if the size in pixels doesn't, so ensure that
+  // the delegate is notified of the new bounds.
+  last_client_area_state_.reset();
   SetBoundsInternal(gfx::Rect(*reinterpret_cast<RECT*>(l_param)), false);
   if (IsDestroyed()) {
     return 0;
@@ -2522,6 +2661,8 @@ LRESULT HWNDMessageHandler::OnNCActivate(UINT message,
 }
 
 LRESULT HWNDMessageHandler::OnNCCalcSize(BOOL mode, LPARAM l_param) {
+  applied_autohide_edges_.reset();
+
   // We only override the default handling if we need to specify a custom
   // non-client edge width. Note that in most cases "no insets" means no
   // custom width, but in fullscreen mode or when the FrameView
@@ -2578,11 +2719,11 @@ LRESULT HWNDMessageHandler::OnNCCalcSize(BOOL mode, LPARAM l_param) {
     // thickness of the auto-hide taskbar on each such edge, so the window isn't
     // treated as a "fullscreen app", which would cause the taskbars to
     // disappear.
-    const int autohide_edges = GetAppbarAutohideEdges(monitor);
-    if (autohide_edges & ViewsDelegate::EDGE_LEFT) {
+    applied_autohide_edges_ = GetAppbarAutohideEdges(monitor);
+    if (*applied_autohide_edges_ & ViewsDelegate::EDGE_LEFT) {
       client_rect->left += kAutoHideTaskbarThicknessPx;
     }
-    if (autohide_edges & ViewsDelegate::EDGE_TOP) {
+    if (*applied_autohide_edges_ & ViewsDelegate::EDGE_TOP) {
       if (IsFrameSystemDrawn()) {
         // Tricky bit.  Due to a bug in DwmDefWindowProc()'s handling of
         // WM_NCHITTEST, having any nonclient area atop the window causes the
@@ -2598,10 +2739,10 @@ LRESULT HWNDMessageHandler::OnNCCalcSize(BOOL mode, LPARAM l_param) {
         client_rect->top += kAutoHideTaskbarThicknessPx;
       }
     }
-    if (autohide_edges & ViewsDelegate::EDGE_RIGHT) {
+    if (*applied_autohide_edges_ & ViewsDelegate::EDGE_RIGHT) {
       client_rect->right -= kAutoHideTaskbarThicknessPx;
     }
-    if (autohide_edges & ViewsDelegate::EDGE_BOTTOM) {
+    if (*applied_autohide_edges_ & ViewsDelegate::EDGE_BOTTOM) {
       client_rect->bottom -= kAutoHideTaskbarThicknessPx;
     }
 
@@ -2958,10 +3099,9 @@ void HWNDMessageHandler::OnSettingChange(UINT flags, const wchar_t* section) {
 
   // If the work area is changing, then it could be as a result of the taskbar
   // broadcasting the WM_SETTINGCHANGE message due to changes in auto hide
-  // settings, etc. Force a WM_NCCALCSIZE to occur to ensure that we handle
-  // this correctly.
+  // settings, etc.
   if (flags == SPI_SETWORKAREA) {
-    SendFrameChanged();
+    UpdateAutohideTaskbarAdjustments();
   }
 }
 
@@ -3923,7 +4063,12 @@ void HWNDMessageHandler::SetBoundsInternal(const gfx::Rect& bounds_in_pixels,
   // changed.
   if (old_size == bounds_in_pixels.size() && force_size_changed &&
       !background_fullscreen_hack_) {
-    delegate_->HandleClientSizeChanged(GetClientAreaBounds().size());
+    const gfx::Size client_size = GetClientAreaBounds().size();
+    if (base::FeatureList::IsEnabled(
+            features::kSkipRedundantSendFrameChanged)) {
+      UpdateClientAreaState(client_size);
+    }
+    delegate_->HandleClientSizeChanged(client_size);
     if (IsDestroyed()) {
       return;
     }

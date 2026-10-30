@@ -53,6 +53,9 @@ class OrganizerTrayView : public views::FlexLayoutView,
   // Used to enable dragging.
   bool IsPositionInWindowCaption(const gfx::Point& point);
 
+  // views::View:
+  bool OnMousePressed(const ui::MouseEvent& event) override;
+
  protected:
   // OrganizerPanelHost:
   void SetOrganizerPanelView(std::unique_ptr<views::View> panel_view) override;
@@ -62,6 +65,7 @@ class OrganizerTrayView : public views::FlexLayoutView,
   // views::View:
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
   void AddedToWidget() override;
+  void RemovedFromWidget() override;
   void VisibilityChanged(views::View* from, bool visible) override;
   views::FocusTraversable* GetPaneFocusTraversable() override;
   void Layout(PassKey) override;

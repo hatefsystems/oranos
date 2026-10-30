@@ -32,7 +32,6 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &ui::kClipboardConfusedDeputyDefenseFiles,
     &ui::kClipboardOversizedPayloadProvider,
     &ui::kConnectedDisplayDensityDebugLogs,
-    &ui::kDeprecatedExternalPickerFunction,
     &ui::kDisablePhotoPickerForVideoCapture,
     &ui::kHasContentUri,
     &ui::kMaximumWindowForGestureNavDetection,
@@ -45,7 +44,6 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &ui::kSubmenuTypeOverride,
     &ui::kSupportKeyboard,
     &ui::kAndroidTouchpadOverscrollHistoryNavigation,
-    &ui::kUpdatePaddingForDisplayCalculation,
 };
 
 // static

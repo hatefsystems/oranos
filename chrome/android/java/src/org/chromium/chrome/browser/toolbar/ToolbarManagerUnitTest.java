@@ -44,7 +44,9 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 import org.robolectric.Robolectric;
+import org.robolectric.Shadows;
 import org.robolectric.android.controller.ActivityController;
+import org.robolectric.annotation.Config;
 
 import org.chromium.base.Callback;
 import org.chromium.base.DeviceInfo;
@@ -200,6 +202,7 @@ import org.chromium.content_public.browser.NavigationHandle;
 import org.chromium.net.NetError;
 import org.chromium.ui.KeyboardVisibilityDelegate;
 import org.chromium.ui.base.ActivityResultTracker;
+import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.TestActivity;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.display.DisplayAndroid;
@@ -212,8 +215,6 @@ import org.chromium.url.GURL;
 import org.chromium.url.JUnitTestGURLs;
 
 import java.lang.ref.WeakReference;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.util.List;
 import java.util.function.Supplier;
 
@@ -310,7 +311,6 @@ public class ToolbarManagerUnitTest {
     @Mock private PropertyModel mActionPropertyModel;
     @Mock private ActorKeyedService mActorKeyedService;
     @Mock private GlicKeyedService mGlicKeyedService;
-    @Mock private TopToolbarCoordinator mMockToolbar;
     @Mock private TabBottomSheetManager mTabBottomSheetManager;
     @Mock private PrefChangeRegistrar.Natives mPrefChangeRegistrarJni;
     @Mock private PrefService mPrefService;
@@ -473,7 +473,11 @@ public class ToolbarManagerUnitTest {
         ViewStub controlStub = activity.findViewById(R.id.control_container_stub);
         controlStub.setLayoutResource(R.layout.control_container);
         mControlContainer = (ToolbarControlContainer) controlStub.inflate();
-        mControlContainer.initWithToolbar(R.layout.toolbar_phone, R.dimen.toolbar_height_no_shadow);
+        int toolbarLayoutId =
+                DeviceFormFactor.isNonMultiDisplayContextOnTablet(activity)
+                        ? R.layout.toolbar_tablet
+                        : R.layout.toolbar_phone;
+        mControlContainer.initWithToolbar(toolbarLayoutId, R.dimen.toolbar_height_no_shadow);
 
         when(mWindowAndroid.getActivity()).thenReturn(new WeakReference<>(activity));
         when(mWindowAndroid.getContext()).thenReturn(new WeakReference<>(activity));
@@ -590,7 +594,7 @@ public class ToolbarManagerUnitTest {
                 mLayoutManager,
                 /* stripLayoutHelperManager= */ null,
                 mOpenGridTabSwitcherHandler,
-                /* bookmarkClickHandler= */ null,
+                /* bookmarkClickHandler= */ _ -> {},
                 /* customTabsBackClickHandler= */ null,
                 /* archivedTabCountSupplier= */ null,
                 dotSupplier,
@@ -629,18 +633,10 @@ public class ToolbarManagerUnitTest {
 
     private void setMockConstraintsHelper(
             Tab tab, BrowserControlsVisibilityDelegate visibilityDelegate) {
-        try {
-            TabBrowserControlsConstraintsHelper helper =
-                    mock(TabBrowserControlsConstraintsHelper.class);
-            Field field =
-                    TabBrowserControlsConstraintsHelper.class.getDeclaredField(
-                            "mVisibilityDelegate");
-            field.setAccessible(true);
-            field.set(helper, visibilityDelegate);
-            TabBrowserControlsConstraintsHelper.setForTesting(tab, helper);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        TabBrowserControlsConstraintsHelper helper =
+                mock(TabBrowserControlsConstraintsHelper.class);
+        when(helper.getObservableConstraints()).thenReturn(visibilityDelegate);
+        TabBrowserControlsConstraintsHelper.setForTesting(tab, helper);
     }
 
     @Test
@@ -817,10 +813,10 @@ public class ToolbarManagerUnitTest {
 
     @Test
     public void testMaybeShowBottomBarPromo_delegatesToBottomBarHostManager() {
-        when(mBottomBarHostManager.maybeShowPromoDialog(mProfile)).thenReturn(true);
+        when(mBottomBarHostManager.maybeClaimPromoSlotForEducation(mProfile)).thenReturn(true);
         assertTrue(mToolbarManager.maybeShowBottomBarPromo(mProfile));
 
-        when(mBottomBarHostManager.maybeShowPromoDialog(mProfile)).thenReturn(false);
+        when(mBottomBarHostManager.maybeClaimPromoSlotForEducation(mProfile)).thenReturn(false);
         assertFalse(mToolbarManager.maybeShowBottomBarPromo(mProfile));
     }
 
@@ -1177,6 +1173,7 @@ public class ToolbarManagerUnitTest {
     public void testSetToolbarTabletMarginsForAutoHiddenVerticalTab() {
         MarginLayoutParams params =
                 setUpTabletLayoutForAutoHiddenVerticalTab(/* initialRightMargin= */ 20);
+        params.leftMargin = 30;
         View toolbarContainer = mControlContainer.findViewById(R.id.toolbar_container);
         MarginLayoutParams containerParams =
                 (MarginLayoutParams) toolbarContainer.getLayoutParams();
@@ -1201,12 +1198,12 @@ public class ToolbarManagerUnitTest {
         isAutoHiddenSupplier.set(false);
         assertEquals(0, containerParams.topMargin);
         assertEquals(20, params.rightMargin);
-        assertEquals(0, params.leftMargin);
+        assertEquals(30, params.leftMargin);
     }
 
     @Test
-    public void testSetToolbarTabletMarginsForAutoHiddenVerticalTab_UpdateRightMarginWhileHidden() {
-        // Simulate returning from fullscreen where right margin was 0.
+    public void testSetToolbarTabletMarginsForAutoHiddenVerticalTab_UpdateMarginsWhileHidden() {
+        // Simulate returning from fullscreen where margins were 0.
         MarginLayoutParams params =
                 setUpTabletLayoutForAutoHiddenVerticalTab(/* initialRightMargin= */ 0);
         View toolbarContainer = mControlContainer.findViewById(R.id.toolbar_container);
@@ -1225,40 +1222,44 @@ public class ToolbarManagerUnitTest {
         // Vertical Tabs is auto-hidden in narrow window.
         isAutoHiddenSupplier.set(true);
         assertEquals(tabStripHeight, containerParams.topMargin);
+        assertEquals(0, params.leftMargin);
         assertEquals(0, params.rightMargin);
 
-        // Insets update notifies a new right margin while Vertical Tabs is auto-hidden.
-        mToolbarManager.onToolbarRightMarginChanged(20);
-        // Active layout margin remains 0 while auto-hidden.
+        // Insets update notifies new left and right margins while Vertical Tabs is auto-hidden.
+        mToolbarManager.onToolbarHorizontalMarginsChanged(15, 20);
+        // Active layout margins remain 0 while auto-hidden.
+        assertEquals(0, params.leftMargin);
         assertEquals(0, params.rightMargin);
 
-        // When Vertical Tabs gets shown again on window widening, the updated margin is restored.
+        // When Vertical Tabs gets shown again on window widening, the updated margins are restored.
         isAutoHiddenSupplier.set(false);
         assertEquals(0, containerParams.topMargin);
+        assertEquals(15, params.leftMargin);
         assertEquals(20, params.rightMargin);
     }
 
     @Test
-    public void testMaybeShowGlicIph_nullGlicActionChipView() throws Exception {
+    @Config(qualifiers = "sw600dp")
+    public void testMaybeShowGlicIph_nullGlicActionChipView() {
         // Setup Glic eligibility conditions.
         when(mTab.isIncognitoBranded()).thenReturn(false);
         when(mTab.isOffTheRecord()).thenReturn(false);
         when(mTab.getUrl()).thenReturn(JUnitTestGURLs.SEARCH_URL);
 
-        when(mMockToolbar.shouldShowGlicToolbarButton()).thenReturn(true);
-        when(mMockToolbar.getGlicActionChipView()).thenReturn(null);
+        TopToolbarCoordinator toolbar = mToolbarManager.getTopToolbarCoordinator();
+        toolbar.observeGlicVerticalTabs(
+                ObservableSuppliers.createNonNull(true),
+                ObservableSuppliers.createNonNull(true),
+                mIncognitoStateProvider,
+                _ -> false);
+        assertTrue(toolbar.shouldShowGlicToolbarButton());
+        assertNull(toolbar.getGlicActionChipView());
 
-        // Inject the mock toolbar into ToolbarManager
-        Field toolbarField = ToolbarManager.class.getDeclaredField("mToolbar");
-        toolbarField.setAccessible(true);
-        toolbarField.set(mToolbarManager, mMockToolbar);
-
-        // Trigger the code path.
-        Method maybeShowGlicIphMethod =
-                ToolbarManager.class.getDeclaredMethod("maybeShowGlicIph", Tab.class);
-        maybeShowGlicIphMethod.setAccessible(true);
-
-        maybeShowGlicIphMethod.invoke(mToolbarManager, mTab);
+        // Trigger the code path through the registered tab observer.
+        mToolbarManager
+                .getActivityTabTabObserverForTesting()
+                .onPageLoadFinished(mTab, JUnitTestGURLs.SEARCH_URL);
+        verify(mTracker, never()).shouldTriggerHelpUi(any());
     }
 
     @Test
@@ -1305,15 +1306,20 @@ public class ToolbarManagerUnitTest {
     }
 
     @Test
-    @EnableFeatures(ChromeFeatureList.DISABLE_GRID_TAB_SWITCHER)
-    public void testCreateTabSwitcherLongClickListener_disabledOnDesktop() throws Exception {
+    @EnableFeatures({
+        ChromeFeatureList.DISABLE_GRID_TAB_SWITCHER,
+        ChromeFeatureList.ANDROID_TOOLBAR_CAPTURE_ON_DESKTOP
+    })
+    public void testCreateTabSwitcherLongClickListener_disabledOnDesktop() {
+        View initialButton = mActivityController.get().findViewById(R.id.tab_switcher_button);
+        assertNotNull(Shadows.shadowOf(initialButton).getOnLongClickListener());
+
+        mToolbarManager.destroy();
         DeviceInfo.setIsDesktopForTesting(true);
-        Method method =
-                ToolbarManager.class.getDeclaredMethod(
-                        "createTabSwitcherLongClickListener", Profile.class, Runnable.class);
-        method.setAccessible(true);
-        Object listener = method.invoke(mToolbarManager, mProfile, mOpenGridTabSwitcherHandler);
-        assertNull(listener);
+        mToolbarManager = createToolbarManager(LazyOneshotSupplier.fromValue(mFindToolbarManager));
+
+        View desktopButton = mActivityController.get().findViewById(R.id.tab_switcher_button);
+        assertNull(Shadows.shadowOf(desktopButton).getOnLongClickListener());
     }
 
     @Test

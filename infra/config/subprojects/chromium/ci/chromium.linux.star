@@ -709,10 +709,6 @@ ci.thin_tester(
                 enable_rts_filtering = True,
             ),
             "browser_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 enable_rts_filtering = True,
                 swarming = targets.swarming(
                     # Move to faster machine types to reduce capacity impact.
@@ -745,10 +741,6 @@ ci.thin_tester(
                 ),
             ),
             "interactive_ui_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 swarming = targets.swarming(
                     # Move to faster machine types to reduce capacity impact.
                     # TODO(crbug.com/541675870): Can remove this if/when
@@ -761,10 +753,6 @@ ci.thin_tester(
                 ),
             ),
             "sync_integration_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 enable_rts_filtering = True,
             ),
             "not_site_per_process_blink_web_tests": targets.mixin(
@@ -796,12 +784,16 @@ ci.thin_tester(
             "webdriver_wpt_tests": targets.mixin(
                 ci_only = True,
             ),
-            "webdriver_bidi_e2e_tests": targets.mixin(
-                experiment_percentage = 10,
-                swarming = targets.swarming(
-                    shards = 8,
+            "webdriver_bidi_e2e_tests": [
+                targets.mixin(
+                    experiment_percentage = 10,
+                    swarming = targets.swarming(
+                        shards = 8,
+                    ),
                 ),
-            ),
+                # TODO(crbug.com/579036421): Remove once e4 failures are fixed.
+                "e2-standard-8",
+            ],
             "webdriver_bidi_unittests": targets.mixin(
                 experiment_percentage = 10,
             ),
@@ -859,19 +851,18 @@ ci.thin_tester(
                     shards = 15,
                 ),
             ),
-            "browser_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
-                # crbug.com/1066161
-                # crbug.com/1459645
-                # crbug.com/1508286
-                # crbug.com/404871436
-                swarming = targets.swarming(
-                    shards = 152,
+            "browser_tests": [
+                targets.mixin(
+                    # crbug.com/1066161
+                    # crbug.com/1459645
+                    # crbug.com/1508286
+                    # crbug.com/404871436
+                    swarming = targets.swarming(
+                        shards = 152,
+                    ),
                 ),
-            ),
+                "no_ssd",
+            ],
             "content_browsertests": targets.mixin(
                 # crbug.com/1508286
                 # crbug.com/404871436
@@ -892,8 +883,6 @@ ci.thin_tester(
             "interactive_ui_tests": targets.mixin(
                 args = [
                     "--test-launcher-filter-file=../../testing/buildbot/filters/ozone-linux.interactive_ui_tests.filter",
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
                 ],
                 # Slow on certain debug builders, see crbug.com/1513713.
                 swarming = targets.swarming(
@@ -921,20 +910,19 @@ ci.thin_tester(
                 ),
             ),
             "sync_integration_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 swarming = targets.swarming(
                     shards = 16,
                 ),
             ),
-            "telemetry_perf_unittests": targets.mixin(
-                args = [
-                    "--xvfb",
-                    "--jobs=1",
-                ],
-            ),
+            "telemetry_perf_unittests": [
+                targets.mixin(
+                    args = [
+                        "--xvfb",
+                        "--jobs=1",
+                    ],
+                ),
+                "no_ssd",
+            ],
             "unit_tests": targets.mixin(
                 # The suite runs signficantly slower on linux dbg, so increase shards.
                 swarming = targets.swarming(
@@ -1539,11 +1527,15 @@ ci.builder(
             "linux-jammy",
         ],
         per_test_modifications = {
-            "webdriver_bidi_e2e_tests": targets.mixin(
-                swarming = targets.swarming(
-                    shards = 8,
+            "webdriver_bidi_e2e_tests": [
+                targets.mixin(
+                    swarming = targets.swarming(
+                        shards = 8,
+                    ),
                 ),
-            ),
+                # TODO(crbug.com/579036421): Remove once e4 failures are fixed.
+                "e2-standard-8",
+            ],
         },
     ),
     console_view_entry = consoles.console_view_entry(

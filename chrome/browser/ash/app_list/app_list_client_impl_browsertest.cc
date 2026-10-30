@@ -66,7 +66,6 @@
 #include "chrome/browser/ash/login/login_manager_test.h"
 #include "chrome/browser/ash/login/test/login_manager_mixin.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
@@ -108,8 +107,8 @@
 #include "extensions/common/constants.h"
 #include "google_apis/gaia/gaia_id.h"
 #include "ui/aura/window.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/page_transition_types.h"
-#include "ui/base/window_open_disposition.h"
 #include "ui/base/window_open_disposition_utils.h"
 #include "ui/display/display.h"
 #include "ui/display/manager/display_manager.h"
@@ -204,7 +203,7 @@ IN_PROC_BROWSER_TEST_F(AppListClientImplBrowserTest, IsExtensionAppOpen) {
     content::CreateAndLoadWebContentsObserver app_loaded_observer;
     apps::AppServiceProxyFactory::GetForProfile(profile())->Launch(
         extension_app->id(),
-        apps::GetEventFlags(WindowOpenDisposition::kNewWindow,
+        apps::GetEventFlags(ui::mojom::WindowOpenDisposition::kNewWindow,
                             false /* preferred_containner */),
         apps::LaunchSource::kFromTest,
         std::make_unique<apps::WindowInfo>(
@@ -748,9 +747,10 @@ IN_PROC_BROWSER_TEST_F(AppListClientImplBrowserTest, OpenSearchResult) {
 }
 
 // Verifies that opening a URL search result from the Launcher with Ctrl+Alt
-// (which maps to WindowOpenDisposition::kNewSplitView) works when a browser
-// has an unsplit active tab, and does not crash when the active tab is already
-// in a split view or when no regular browser window is open for the profile.
+// (which maps to ui::mojom::WindowOpenDisposition::kNewSplitView) works when a
+// browser has an unsplit active tab, and does not crash when the active tab is
+// already in a split view or when no regular browser window is open for the
+// profile.
 IN_PROC_BROWSER_TEST_F(AppListClientImplBrowserTest,
                        OpenSearchResultInSplitView) {
   AppListClientImpl* client = AppListClientImpl::GetInstance();

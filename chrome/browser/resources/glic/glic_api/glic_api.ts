@@ -36,6 +36,7 @@ export import AdditionalContext = generated.AdditionalContext;
 export import AnnotatedPageData = generated.AnnotatedPageData;
 export import AutofillSuggestion = generated.AutofillSuggestion;
 export import CaptureRegionParams = generated.CaptureRegionParams;
+export import CaptureRegionPayload = generated.CaptureRegionPayload;
 export import CaptureRegionResult = generated.CaptureRegionResult;
 export import CapturedRegion = generated.CapturedRegion;
 export import CloseAuthTabOptions = generated.CloseAuthTabOptions;
@@ -219,6 +220,7 @@ export declare interface InvocationPayload {
   universalCart?: UniversalCartPayload;
   skillsPayload?: SkillsPayload;
   experimentalTriggering?: ExperimentalTriggeringPayload;
+  captureRegion?: CaptureRegionPayload;
 }
 
 /**
@@ -1626,6 +1628,12 @@ export declare interface GlicBrowserSkills {
 export declare interface GlicBrowserHostMetrics {
   /** Called when the opt-in CTA is shown. */
   onOptinImpression?(): void;
+
+  /**
+   * Called when the web client's main prompt input field receives focus
+   * after opening or warm-reopening the panel.
+   */
+  onInputFocused?(): void;
 
   /** Called when the user has submitted input via the web client. */
   onUserInputSubmitted?(mode: WebClientMode, promptType?: PromptType): void;

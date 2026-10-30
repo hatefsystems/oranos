@@ -22,10 +22,113 @@
 #include "base/win/scoped_gdi_object.h"
 #include "base/win/scoped_hdc.h"
 #include "base/win/win_util.h"
+#include "chrome/updater/app/app_install_progress.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 
 namespace updater::ui {
+
+TEST(UiUtilTest, GetBundleCompletionCode) {
+  {
+    for (CompletionCodes completion_code :
+         {CompletionCodes::COMPLETION_CODE_ERROR,
+          CompletionCodes::COMPLETION_CODE_INSTALL_FINISHED_BEFORE_CANCEL}) {
+      ObserverCompletionInfo info;
+      info.completion_code = completion_code;
+      EXPECT_EQ(GetBundleCompletionCode(info), completion_code);
+    }
+  }
+  {
+    ObserverCompletionInfo info;
+    EXPECT_EQ(GetBundleCompletionCode(info),
+              CompletionCodes::COMPLETION_CODE_EXIT_SILENTLY);
+  }
+  {
+    for (CompletionCodes completion_code :
+         {CompletionCodes::COMPLETION_CODE_SUCCESS,
+          CompletionCodes::COMPLETION_CODE_EXIT_SILENTLY,
+          CompletionCodes::COMPLETION_CODE_RESTART_ALL_BROWSERS,
+          CompletionCodes::COMPLETION_CODE_REBOOT,
+          CompletionCodes::COMPLETION_CODE_RESTART_BROWSER,
+          CompletionCodes::COMPLETION_CODE_RESTART_ALL_BROWSERS_NOTICE_ONLY,
+          CompletionCodes::COMPLETION_CODE_REBOOT_NOTICE_ONLY,
+          CompletionCodes::COMPLETION_CODE_RESTART_BROWSER_NOTICE_ONLY,
+          CompletionCodes::COMPLETION_CODE_LAUNCH_COMMAND,
+          CompletionCodes::COMPLETION_CODE_INSTALL_FINISHED_BEFORE_CANCEL}) {
+      ObserverCompletionInfo info;
+      AppCompletionInfo app_info;
+      app_info.completion_code = completion_code;
+      info.apps_info.push_back(app_info);
+      EXPECT_EQ(GetBundleCompletionCode(info), completion_code);
+    }
+  }
+  {
+    ObserverCompletionInfo info;
+
+    for (CompletionCodes code : {CompletionCodes::COMPLETION_CODE_SUCCESS,
+                                 CompletionCodes::COMPLETION_CODE_EXIT_SILENTLY,
+                                 CompletionCodes::COMPLETION_CODE_REBOOT}) {
+      AppCompletionInfo app_info;
+      app_info.completion_code = code;
+      info.apps_info.push_back(app_info);
+    }
+    EXPECT_EQ(GetBundleCompletionCode(info),
+              CompletionCodes::COMPLETION_CODE_REBOOT);
+  }
+}
+
+TEST(UiUtilTest, BundleCompletionPreservesTopLevelOverrides) {
+  ObserverCompletionInfo info;
+  info.apps_info.emplace_back();
+  for (CompletionCodes code :
+       {CompletionCodes::COMPLETION_CODE_ERROR,
+        CompletionCodes::COMPLETION_CODE_INSTALL_FINISHED_BEFORE_CANCEL}) {
+    info.completion_code = code;
+    EXPECT_EQ(GetBundleCompletionCode(info), code);
+  }
+}
+
+TEST(UiUtilTest, BundleCompletionUsesApplicationError) {
+  ObserverCompletionInfo info;
+  info.apps_info.emplace_back();
+  info.apps_info.back().completion_code =
+      CompletionCodes::COMPLETION_CODE_SUCCESS;
+  info.apps_info.emplace_back();
+  info.apps_info.back().completion_code =
+      CompletionCodes::COMPLETION_CODE_ERROR;
+  EXPECT_EQ(GetBundleCompletionCode(info),
+            CompletionCodes::COMPLETION_CODE_ERROR);
+}
+
+TEST(UiUtilTest, GetBundleCompletionErrorMessages) {
+  ObserverCompletionInfo info;
+  EXPECT_TRUE(GetBundleCompletionErrorMessages(info).empty());
+  info.completion_text = u"Bundle failure";
+  EXPECT_EQ(GetBundleCompletionErrorMessages(info), L"Bundle failure");
+  info.apps_info.emplace_back();
+  EXPECT_EQ(GetBundleCompletionErrorMessages(info), L"Bundle failure");
+  info.apps_info.back().completion_message = u"First application failure";
+  EXPECT_EQ(GetBundleCompletionErrorMessages(info),
+            L"First application failure");
+  info.apps_info.emplace_back();
+  info.apps_info.emplace_back();
+  info.apps_info.back().completion_message = u"Second application failure";
+  EXPECT_EQ(GetBundleCompletionErrorMessages(info),
+            L"First application failure\nSecond application failure");
+}
+
+TEST(UiUtilTest, CompletionMessagesPreserveLineEndings) {
+  ObserverCompletionInfo info;
+  info.completion_text = u"Bundle failure\r\nMore detail\nLast line";
+  EXPECT_EQ(GetBundleCompletionErrorMessages(info),
+            L"Bundle failure\r\nMore detail\nLast line");
+  info.apps_info.emplace_back();
+  info.apps_info.back().completion_message = u"First failure\r\nMore detail";
+  info.apps_info.emplace_back();
+  info.apps_info.back().completion_message = u"Second failure\r\n";
+  EXPECT_EQ(GetBundleCompletionErrorMessages(info),
+            L"First failure\r\nMore detail\nSecond failure\r\n");
+}
 
 TEST(UiUtilTest, IsColorDark) {
   // Pure black and white.
@@ -471,9 +574,10 @@ TEST(UiUtilTest, CreateIconFromBitmap) {
   base::win::ScopedGDIObject<HBITMAP> dpi_mask(dpi_info.hbmMask);
   BITMAP dpi_bm = {};
   EXPECT_NE(::GetObject(dpi_color.get(), sizeof(dpi_bm), &dpi_bm), 0);
-  EXPECT_EQ(dpi_bm.bmWidth, ::GetSystemMetricsForDpi(SM_CXICON, kCustomDpi));
+  EXPECT_EQ(dpi_bm.bmWidth,
+            GetSystemMetricsForDpiCompat(SM_CXICON, kCustomDpi));
   EXPECT_EQ(std::abs(dpi_bm.bmHeight),
-            ::GetSystemMetricsForDpi(SM_CYICON, kCustomDpi));
+            GetSystemMetricsForDpiCompat(SM_CYICON, kCustomDpi));
 
   // Verify that a rectangular (non-square) source bitmap is fitted and centered
   // while preserving its aspect ratio, with transparent letterbox margins.
@@ -1283,6 +1387,27 @@ TEST(UiUtilTest, CreateIconFromBitmap_ColorKeying) {
   }
 }
 
+TEST(UiUtilTest, GetWindowDpi) {
+  EXPECT_GT(GetWindowDpi(nullptr), 0u);
+  EXPECT_GT(GetWindowDpi(::GetDesktopWindow()), 0u);
+}
+
+TEST(UiUtilTest, GetSystemMetricsForDpiCompat) {
+  EXPECT_EQ(GetSystemMetricsForDpiCompat(SM_CXICON, 0),
+            ::GetSystemMetrics(SM_CXICON));
+  const int base_cx =
+      GetSystemMetricsForDpiCompat(SM_CXICON, USER_DEFAULT_SCREEN_DPI);
+  const int double_cx =
+      GetSystemMetricsForDpiCompat(SM_CXICON, USER_DEFAULT_SCREEN_DPI * 2);
+  EXPECT_GT(base_cx, 0);
+  EXPECT_EQ(double_cx, 2 * base_cx);
+
+  EXPECT_EQ(ScaleSystemMetricForDpi(32, 96, 96), 32);
+  EXPECT_EQ(ScaleSystemMetricForDpi(32, 144, 96), 48);
+  EXPECT_EQ(ScaleSystemMetricForDpi(32, 192, 96), 64);
+  EXPECT_EQ(ScaleSystemMetricForDpi(32, 192, 0), 64);
+}
+
 TEST(UiUtilTest, IconHelpers) {
   // Test GetIconSizesForDpi.
   const IconSizes sizes_default = GetIconSizesForDpi(0);
@@ -1291,12 +1416,17 @@ TEST(UiUtilTest, IconHelpers) {
   EXPECT_EQ(sizes_default.cx_small, ::GetSystemMetrics(SM_CXSMICON));
   EXPECT_EQ(sizes_default.cy_small, ::GetSystemMetrics(SM_CYSMICON));
 
+  const UINT system_dpi = GetWindowDpi(nullptr);
   constexpr UINT kDpi = 192;
   const IconSizes sizes_192 = GetIconSizesForDpi(kDpi);
-  EXPECT_EQ(sizes_192.cx_big, ::GetSystemMetricsForDpi(SM_CXICON, kDpi));
-  EXPECT_EQ(sizes_192.cy_big, ::GetSystemMetricsForDpi(SM_CYICON, kDpi));
-  EXPECT_EQ(sizes_192.cx_small, ::GetSystemMetricsForDpi(SM_CXSMICON, kDpi));
-  EXPECT_EQ(sizes_192.cy_small, ::GetSystemMetricsForDpi(SM_CYSMICON, kDpi));
+  EXPECT_EQ(sizes_192.cx_big,
+            ::MulDiv(::GetSystemMetrics(SM_CXICON), kDpi, system_dpi));
+  EXPECT_EQ(sizes_192.cy_big,
+            ::MulDiv(::GetSystemMetrics(SM_CYICON), kDpi, system_dpi));
+  EXPECT_EQ(sizes_192.cx_small,
+            ::MulDiv(::GetSystemMetrics(SM_CXSMICON), kDpi, system_dpi));
+  EXPECT_EQ(sizes_192.cy_small,
+            ::MulDiv(::GetSystemMetrics(SM_CYSMICON), kDpi, system_dpi));
 
   // Invalid resource ID returns empty handles.
   WindowIcons invalid_icons = LoadResourceIcons(-1);

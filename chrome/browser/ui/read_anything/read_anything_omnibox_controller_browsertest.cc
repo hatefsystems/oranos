@@ -24,7 +24,6 @@
 #include "chrome/browser/ui/read_anything/read_anything_entry_point_controller.h"
 #include "chrome/browser/ui/read_anything/read_anything_enums.h"
 #include "chrome/browser/ui/read_anything/read_anything_prefs.h"
-#include "chrome/browser/ui/read_anything/read_anything_test_utils.h"
 #include "chrome/browser/ui/side_panel/side_panel_action_callback.h"
 #include "chrome/browser/ui/side_panel/side_panel_enums.h"
 #include "chrome/browser/ui/side_panel/side_panel_registry.h"
@@ -340,8 +339,9 @@ IN_PROC_BROWSER_TEST_F(ReadAnythingOmniboxControllerBrowserTest,
                        PrimaryPageChanged_DoesNotCheckIfRMOpened) {
   RegisterPageActionObserver();
   // It's easier to test this in SP mode so that page changes don't close RM.
-  read_anything::test::PreferSidePanel(browser()->GetProfile());
-  OpenRMWithOmnibox();
+  ReadAnythingEntryPointController::ShowUI(
+      browser(), ReadAnythingOpenTrigger::kOmniboxChip,
+      ReadAnythingEntryPointController::Presentation::kSidePanel);
   ReadAnythingEntryPointController::ResetCheckCountForTesting();
 
   NavigateToDistillablePage();
@@ -550,6 +550,42 @@ IN_PROC_BROWSER_TEST_F(
 }
 
 IN_PROC_BROWSER_TEST_F(ReadAnythingOmniboxControllerBrowserTest,
+                       TabDetached_DoesNotUpdateIgnoredCountIfOmniboxUsed) {
+  chrome::NewTab(browser(), NewTabTypes::kNoUserAction);
+  RegisterPageActionObserver();
+  NavigateToDistillablePage();
+  WaitForPageActionShowing(true);
+  MockLongDwellTime();
+  OpenRMWithOmnibox();
+  WaitForPageActionShowing(false);
+
+  browser()->GetTabStripModel()->GetActiveTab()->Close();
+
+  EXPECT_EQ(GetOmniboxIgnoredCount(), 0);
+}
+
+IN_PROC_BROWSER_TEST_F(
+    ReadAnythingOmniboxControllerBrowserTest,
+    PrimaryPageChanged_DoesNotUpdateIgnoredCountIfOmniboxUsed) {
+  RegisterPageActionObserver();
+  NavigateToDistillablePage();
+  WaitForPageActionShowing(true);
+  MockLongDwellTime();
+  OpenRMWithOmnibox();
+  VerifyUIState();
+  WaitForPageActionShowing(false);
+
+  // Closing RM re-shows the omnibox entry point.
+  ReadAnythingEntryPointController::ToggleUI(
+      browser(), ReadAnythingOpenTrigger::kOmniboxChip);
+  ExpectPageActionStateImmediate(true);
+
+  ASSERT_TRUE(NavigateToURL(browser(), GURL(url::kAboutBlankURL)));
+
+  EXPECT_EQ(GetOmniboxIgnoredCount(), 0);
+}
+
+IN_PROC_BROWSER_TEST_F(ReadAnythingOmniboxControllerBrowserTest,
                        TabDetached_LogsNotOpenedAfterIPH) {
   base::HistogramTester histogram_tester;
   chrome::NewTab(browser(), NewTabTypes::kNoUserAction);
@@ -674,8 +710,9 @@ IN_PROC_BROWSER_TEST_F(ReadAnythingOmniboxControllerBrowserTest,
 IN_PROC_BROWSER_TEST_F(ReadAnythingOmniboxControllerBrowserTest,
                        DeactivateSidePanelByUser_ShowsOmnibox) {
   RegisterPageActionObserver();
-  read_anything::test::PreferSidePanel(browser()->GetProfile());
-  OpenRMWithOmnibox();
+  ReadAnythingEntryPointController::ShowUI(
+      browser(), ReadAnythingOpenTrigger::kOmniboxChip,
+      ReadAnythingEntryPointController::Presentation::kSidePanel);
   auto* side_panel_ui = SidePanelUI::From(browser());
   ASSERT_TRUE(base::test::RunUntil([&]() {
     return side_panel_ui->IsSidePanelEntryShowing(

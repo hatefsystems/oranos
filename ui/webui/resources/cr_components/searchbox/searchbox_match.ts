@@ -142,6 +142,15 @@ export class SearchboxMatchElement extends CrLitElement {
       // Private properties
       //========================================================================
 
+      /**
+       * Whether the secondary text is a URL, e.g. a page title followed by its
+       * URL. The URL layout rules key on it.
+       */
+      secondaryTextIsUrl_: {
+        type: Boolean,
+        reflect: true,
+      },
+
       isTopChromeSearchbox_: {
         type: Boolean,
         reflect: true,
@@ -193,6 +202,7 @@ export class SearchboxMatchElement extends CrLitElement {
   accessor showEllipsis: boolean = false;
   accessor virtualFocusEnabled: boolean = false;
   accessor resultSequenceId: number = 0;
+  private accessor secondaryTextIsUrl_: boolean = false;
   private accessor isTopChromeSearchbox_: boolean =
       loadTimeData.getBoolean('isTopChromeSearchbox');
   private accessor isLensSearchbox_: boolean =
@@ -232,6 +242,7 @@ export class SearchboxMatchElement extends CrLitElement {
           this.match.showSecondaryTextOnlyOnSelection;
       this.isEntitySuggestion = this.computeIsEntitySuggestion_();
       this.secondaryTextPlacement = this.computeSecondaryTextPlacement_();
+      this.secondaryTextIsUrl_ = this.match.secondaryTextIsUrl;
       this.removeButtonAriaLabel_ = this.computeRemoveButtonAriaLabel_();
       this.separatorText_ = this.computeSeparatorText_();
       this.tailSuggestPrefix_ = this.computeTailSuggestPrefix_();
@@ -475,30 +486,26 @@ export class SearchboxMatchElement extends CrLitElement {
 
   /**
    * Maps the color and weight of a FormattedString fragment to CSS classes.
-   * Each suggest color gets a class named after the color token it maps to.
+   * Each suggest color gets a class named after its color type.
    * Other colors get no class and keep the default color.
    */
   private getFragmentCssClasses_(fragment: FormattedStringFragment): string[] {
     const classes = [];
     switch (fragment.color) {
       case ColorType.kSuggestQueryText:
-        classes.push('color-on-surface');
+        classes.push('suggest-query-text');
         break;
       case ColorType.kSuggestHintText:
-        classes.push('color-on-surface-subtle');
+        classes.push('suggest-hint-text');
         break;
       case ColorType.kSuggestActionHigh:
-        classes.push('color-primary');
-        // The URL layout rules key on `url`. Only URLs get ACTION_HIGH for now,
-        // so ACTION_HIGH text gets `url` too.
-        // TODO(crbug.com/574634127): Mark URLs without relying on the color.
-        classes.push('url');
+        classes.push('suggest-action-high');
         break;
       default:
         break;
     }
     if (fragment.isBolded) {
-      classes.push('match');
+      classes.push('bolded');
     }
     return classes;
   }

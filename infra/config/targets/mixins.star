@@ -80,7 +80,7 @@ android_emulator_mixin("15-tablet-x64-emulator", "android_35_google_apis_x64_tab
 android_emulator_mixin("15-tablet-landscape-x64-emulator", "android_35_google_apis_x64_tablet_landscape.textpb")
 android_emulator_mixin("15-x64-emulator", "android_35_google_apis_x64.textpb")
 android_emulator_mixin("16-x64-emulator", "android_36_google_apis_x64.textpb")
-android_emulator_mixin("17-beta-x64-emulator", "android_37_google_apis_ps16k_x64.textpb")
+android_emulator_mixin("17-x64-emulator", "android_37_google_apis_ps16k_x64.textpb")
 android_emulator_mixin("canary-x64-emulator", "android_canary_google_apis_x64.textpb")
 
 # The following emulator mixins are deprecated on the chromium side. But they
@@ -454,6 +454,17 @@ targets.mixin(
     swarming = targets.swarming(
         dimensions = {
             "inside_docker": "1",
+        },
+    ),
+)
+
+# Used to pin tests that exhibit timing sensitivities on faster machine types
+# (e.g. e4-standard-8) to e2-standard-8.
+targets.mixin(
+    name = "e2-standard-8",
+    swarming = targets.swarming(
+        dimensions = {
+            "machine_type": "e2-standard-8",
         },
     ),
 )
@@ -1131,24 +1142,24 @@ targets.mixin(
 )
 
 targets.mixin(
-    name = "ios_runtime_cache_27_1",
-    swarming = targets.swarming(
-        named_caches = [
-            swarming.cache(
-                name = "runtime_ios_27_1",
-                path = "Runtime-ios-27.1",
-            ),
-        ],
-    ),
-)
-
-targets.mixin(
     name = "ios_runtime_cache_27_2",
     swarming = targets.swarming(
         named_caches = [
             swarming.cache(
                 name = "runtime_ios_27_2",
                 path = "Runtime-ios-27.2",
+            ),
+        ],
+    ),
+)
+
+targets.mixin(
+    name = "ios_runtime_cache_27_2_iphone19_4",
+    swarming = targets.swarming(
+        named_caches = [
+            swarming.cache(
+                name = "runtime_ios_27_2_iphone19_4",
+                path = "Runtime-ios-27.2-iphone19-4",
             ),
         ],
     ),
@@ -1832,6 +1843,17 @@ targets.mixin(
     ),
 )
 
+# Used to pin tests with large CAS inputs to non-SSD GCE bots (which have
+# 300 GB disks) rather than SSD-backed e4 bots (which have 50 GB disks).
+targets.mixin(
+    name = "no_ssd",
+    swarming = targets.swarming(
+        dimensions = {
+            "ssd": "0",
+        },
+    ),
+)
+
 # Work around failure to clear tombstones on non-rooted devices. This mixin is
 # only valid for builders that only run GTest- and telemetry-based suites.
 targets.mixin(
@@ -2378,22 +2400,6 @@ targets.mixin(
         named_caches = [
             swarming.cache(
                 name = "xcode_ios_16c5032a",
-                path = "Xcode.app",
-            ),
-        ],
-    ),
-)
-
-targets.mixin(
-    name = "xcode_27_1",
-    args = [
-        "--xcode-build-version",
-        "27a9275",
-    ],
-    swarming = targets.swarming(
-        named_caches = [
-            swarming.cache(
-                name = "xcode_ios_27a9275",
                 path = "Xcode.app",
             ),
         ],

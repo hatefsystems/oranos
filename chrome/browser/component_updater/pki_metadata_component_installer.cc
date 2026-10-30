@@ -627,9 +627,9 @@ void PKIMetadataComponentInstallerService::ReconfigureAfterNetworkRestart() {
         FROM_HERE, {base::TaskPriority::BEST_EFFORT, base::MayBlock()},
         base::BindOnce(&LoadBinaryProtoFromDisk,
                        install_dir_.Append(kCTConfigProtoFileName)),
-        base::BindOnce(&PKIMetadataComponentInstallerService::
-                           UpdateNetworkServiceCTListOnUI,
-                       weak_factory_.GetWeakPtr()));
+        base::BindOnce(
+            &PKIMetadataComponentInstallerService::UpdateCTLogListOnUI,
+            weak_factory_.GetWeakPtr()));
   } else {
     NotifyCTLogListProcessed();
   }
@@ -639,7 +639,7 @@ void PKIMetadataComponentInstallerService::ReconfigureAfterNetworkRestart() {
       base::BindOnce(&LoadBinaryProtoFromDisk,
                      install_dir_.Append(kKPConfigProtoFileName)),
       base::BindOnce(
-          &PKIMetadataComponentInstallerService::UpdateNetworkServiceKPListOnUI,
+          &PKIMetadataComponentInstallerService::UpdateKeyPinsListOnUI,
           weak_factory_.GetWeakPtr()));
 #endif  // BUILDFLAG(CHROME_KEY_PINNING_SUPPORTED)
 }
@@ -683,7 +683,7 @@ void PKIMetadataComponentInstallerService::RemoveObserver(Observer* observer) {
   observers_.RemoveObserver(observer);
 }
 
-void PKIMetadataComponentInstallerService::UpdateNetworkServiceCTListOnUI(
+void PKIMetadataComponentInstallerService::UpdateCTLogListOnUI(
     const std::string& ct_config_bytes) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 #if BUILDFLAG(IS_CT_SUPPORTED)
@@ -839,7 +839,7 @@ void PKIMetadataComponentInstallerService::UpdateNetworkServiceCTListOnUI(
 }
 
 #if BUILDFLAG(CHROME_KEY_PINNING_SUPPORTED)
-void PKIMetadataComponentInstallerService::UpdateNetworkServiceKPListOnUI(
+void PKIMetadataComponentInstallerService::UpdateKeyPinsListOnUI(
     const std::string& kp_config_bytes) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   auto proto = std::make_unique<chrome_browser_key_pinning::PinList>();
@@ -888,11 +888,19 @@ void PKIMetadataComponentInstallerService::UpdateNetworkServiceKPListOnUI(
     pinlist_ptr->host_pins.push_back(std::move(pininfo_ptr));
   }
 
-  network_service->UpdateKeyPinsList(
-      std::move(pinlist_ptr), proto_timestamp,
+  base::RepeatingClosure done_callback = BarrierClosure(
+      /*num_closures=*/2,
       base::BindOnce(
           &PKIMetadataComponentInstallerService::NotifyKeyPinsListProcessed,
           weak_factory_.GetWeakPtr()));
+
+  // TODO(crbug.com/497882860): remove once pins are no longer needed in the
+  // network service.
+  network_service->UpdateKeyPinsList(pinlist_ptr->Clone(), proto_timestamp,
+                                     done_callback);
+
+  content::GetCertVerifierServiceFactory()->UpdateKeyPinsList(
+      std::move(pinlist_ptr), proto_timestamp, done_callback);
 }
 
 void PKIMetadataComponentInstallerService::NotifyKeyPinsListProcessed() {

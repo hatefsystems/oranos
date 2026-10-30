@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {ComposeboxProxyImpl, NtpComposeboxElement} from 'chrome://new-tab-page/lazy_load.js';
-import type {ComposeboxElement} from 'chrome://new-tab-page/lazy_load.js';
+import {ComposeboxProxyImpl} from 'chrome://new-tab-page/lazy_load.js';
+import type {ComposeboxElement, NtpComposeboxElement} from 'chrome://new-tab-page/lazy_load.js';
 import {$$} from 'chrome://new-tab-page/new_tab_page.js';
 import type {ComposeboxFile} from 'chrome://resources/cr_components/composebox/common.js';
 
@@ -21,9 +21,7 @@ import type {MetricsTracker} from 'chrome://webui-test/metrics_test_support.js';
 import type {TestMock} from 'chrome://webui-test/test_mock.js';
 import {microtasksFinished} from 'chrome://webui-test/test_util.js';
 
-import {createFuseboxAction, installMock} from '../test_support.js';
-
-export {createFuseboxAction, MockInputState};
+import {installMock} from '../test_support.js';
 
 export const FAKE_TOKEN_STRING = '00000000000000001234567890ABCDEF';
 export const FAKE_TOKEN_STRING_2 = '00000000000000001234567890ABCDEE';
@@ -150,7 +148,7 @@ setupComposeboxTest<T extends ComposeboxUnionElement = ComposeboxElement>():
 export function
 createComposeboxElement<T extends ComposeboxUnionElement = ComposeboxElement>(
     testProxy: ComposeboxTestElement<T>, properties: Partial<T> = {}) {
-  testProxy.element = new NtpComposeboxElement() as unknown as T;
+  testProxy.element = document.createElement('ntp-composebox') as unknown as T;
   Object.assign(testProxy.element, {
     usePecApi: loadTimeData.getBoolean('contextualMenuUsePecApi'),
     smartTabSharingVisible:

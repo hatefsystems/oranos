@@ -84,6 +84,12 @@ BASE_FEATURE(kAutofillPasswordSurvey, base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kAndroidKeepProfilePartitionDirsInCacheDir,
              base::FEATURE_ENABLED_BY_DEFAULT);
 
+// When enabled, Android profile startup supports more than one profile: only
+// the profile that StartupData was built for takes over its pre-created
+// objects, and other profiles load their own prefs.
+BASE_FEATURE(kAndroidMultiprofileStartupData,
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // Blocks navigations to content:// URIs served by Chrome's own
 // android:exported="false" content providers. Kill switch for
 // https://crbug.com/496190746.
@@ -120,8 +126,7 @@ BASE_FEATURE(kCryptographyComplianceCnsa, base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Delays BEST_EFFORT tasks during startup until tabs are loaded/idle and first
 // paint.
-BASE_FEATURE(kImprovedStartupBestEffortDelay,
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kImprovedStartupBestEffortDelay, base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Sets the timeout until startup is declared "finished" even if not all
 // StartupInProgressRefs have been dropped.
@@ -171,32 +176,6 @@ BASE_FEATURE(kPreinstalledWebAppInstallation,
 BASE_FEATURE(kPreinstalledWebAppAlwaysMigrateForTesting,
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
-
-#if !BUILDFLAG(IS_ANDROID)
-BASE_FEATURE(kRemoteActorCredentialSharing, base::FEATURE_DISABLED_BY_DEFAULT);
-// This parameter is for testing purposes only and must not be used in
-// production. It overrides the actor name displayed in the credential
-// selection dialog.
-const base::FeatureParam<std::string>
-    kRemoteActorCredentialSharingActorNameForTesting{
-        &kRemoteActorCredentialSharing, "actor_name_for_testing", "Gemini"};
-// This parameter is for testing purposes only and must not be used in
-// production. It overrides the whitelisted origins with the specified host.
-const base::FeatureParam<std::string>
-    kRemoteActorCredentialSharingAllowedHostForTesting{
-        &kRemoteActorCredentialSharing, "allowed_host_for_testing", ""};
-const base::FeatureParam<std::string> kRemoteActorOAuthClientId{
-    &kRemoteActorCredentialSharing, "oauth_client_id",
-    "320695880279-gnq6the97ga85scn208u5jctnk82qelk.apps.googleusercontent.com"};
-#endif
-
-bool RemoteActorCredentialSharingEnabled() {
-#if !BUILDFLAG(IS_ANDROID)
-  return base::FeatureList::IsEnabled(features::kRemoteActorCredentialSharing);
-#else
-  return false;
-#endif
-}
 
 // Controls the enablement of structured metrics on Windows, Linux, and Mac.
 BASE_FEATURE(kChromeStructuredMetrics, base::FEATURE_ENABLED_BY_DEFAULT);
@@ -748,6 +727,12 @@ BASE_FEATURE_PARAM(
     &kGlicLearnMoreURLConfig,
     "glic-default-tab-access-toggle-learn-more-url-data-protected",
     "https://support.google.com/a/answer/15706919");
+BASE_FEATURE_PARAM(
+    std::string,
+    kGeicDefaultTabAccessToggleLearnMoreURL,
+    &kGlicLearnMoreURLConfig,
+    "geic-default-tab-access-toggle-learn-more-url",
+    "https://docs.cloud.google.com/gemini/enterprise/docs/get-started");
 BASE_FEATURE_PARAM(std::string,
                    kGlicSettingsPageLearnMoreURL,
                    &kGlicLearnMoreURLConfig,
@@ -874,12 +859,18 @@ const base::FeatureParam<bool> kGlicScrollToPDF{&kGlicScrollTo,
 const base::FeatureParam<bool> kGlicScrollToEnforceURLForPDF{
     &kGlicScrollTo, "glic-scroll-to-enforce-url-for-pdf", true};
 
-BASE_FEATURE(kGlicWarming, base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kGlicWarming,
+#if BUILDFLAG(IS_MAC)
+             base::FEATURE_ENABLED_BY_DEFAULT
+#else
+             base::FEATURE_DISABLED_BY_DEFAULT
+#endif
+);
 
 // Controls the amount of time from the GlicButtonController scheduling
 // preload to the start of preloading (if preloading is possible).
 const base::FeatureParam<int> kGlicWarmingDelayMs{
-    &kGlicWarming, "glic-warming-delay-ms", 20 * 1000};
+    &kGlicWarming, "glic-warming-delay-ms", 300000};
 
 // Blocks prewarming if the device has less than this amount of physical memory.
 // If 0, memory is not checked.
@@ -1191,15 +1182,6 @@ BASE_FEATURE(kHappinessTrackingSurveysForDesktopNtpModules,
 BASE_FEATURE(kHappinessTrackingSurveysForDesktopNextPanel,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Enables or disables the Happiness Tracking System for History Embeddings.
-BASE_FEATURE(kHappinessTrackingSurveysForHistoryEmbeddings,
-             base::FEATURE_DISABLED_BY_DEFAULT);
-const base::FeatureParam<base::TimeDelta>
-    kHappinessTrackingSurveysForHistoryEmbeddingsDelayTime(
-        &kHappinessTrackingSurveysForHistoryEmbeddings,
-        "HappinessTrackingSurveysForHistoryEmbeddingsDelayTime",
-        base::Seconds(20));
-
 BASE_FEATURE(kHappinessTrackingSurveysForNtpPhotosOptOut,
              "HappinessTrackingSurveysForrNtpPhotosOptOut",
              base::FEATURE_DISABLED_BY_DEFAULT);
@@ -1300,7 +1282,7 @@ BASE_FEATURE(kIncomingCallNotifications,
 
 // Experimental image replacement feature. b/482792874
 BASE_FEATURE(kIndigo, base::FEATURE_DISABLED_BY_DEFAULT);
-BASE_FEATURE(kIndigoContextMenu, base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kIndigoContextMenu, base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kIndigoContextualCueingV2, base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kIndigoWatermark, base::FEATURE_ENABLED_BY_DEFAULT);
 

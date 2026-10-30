@@ -73,8 +73,8 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/page_transition_types.h"
-#include "ui/base/window_open_disposition.h"
 #include "ui/gfx/scoped_animation_duration_scale_mode.h"
 #include "ui/views/controls/webview/webview.h"
 #include "url/gurl.h"
@@ -420,7 +420,7 @@ IN_PROC_BROWSER_TEST_F(LiveSignInTest, MANUAL_CreateSignedInProfile) {
   // Open the profile picker.
   ProfilePicker::Show(ProfilePicker::Params::FromEntryPoint(
       ProfilePicker::EntryPoint::kProfileMenuAddNewProfile));
-  profiles::testing::WaitForPickerLoadStop(
+  profiles::testing::WaitForPickerUrl(
       GURL("chrome://profile-picker/new-profile"));
 
   // Simulate a click on the signin button.
@@ -436,15 +436,14 @@ IN_PROC_BROWSER_TEST_F(LiveSignInTest, MANUAL_CreateSignedInProfile) {
   EXPECT_EQ(profile_manager->GetNumberOfProfiles(), 2U);
   EXPECT_NE(browser()->GetProfile(), new_profile);
   sign_in_functions.SignInFromCurrentPage(picker_contents, *test_account,
-                                          /*previously_signed_in_accounts=*/0);
+                                          /*previously_signed_in_accounts=*/0,
+                                          PrimaryAccountWait::kWaitForAdded);
 
   // User is signed in, but Sync is off.
   signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(new_profile);
-  base::test::RunUntil([&identity_manager]() {
-    return GetPrimaryAccountConsentLevel(identity_manager) ==
-           signin::ConsentLevel::kSignin;
-  });
+  ASSERT_TRUE(
+      identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin));
 
   // Confirm History Sync Opt-in.
   ui_test_utils::BrowserCreatedObserver browser_created_observer;
@@ -452,7 +451,7 @@ IN_PROC_BROWSER_TEST_F(LiveSignInTest, MANUAL_CreateSignedInProfile) {
       HistorySyncOptinUI::AppendHistorySyncOptinQueryParams(
           GURL(chrome::kChromeUIHistorySyncOptinURL),
           HistorySyncOptinLaunchContext::kWindow);
-  profiles::testing::WaitForPickerLoadStop(history_sync_optin_url);
+  profiles::testing::WaitForPickerUrl(history_sync_optin_url);
 
   EXPECT_TRUE(base::test::RunUntil([picker_contents]() {
     return content::EvalJs(picker_contents,
@@ -503,7 +502,8 @@ IN_PROC_BROWSER_TEST_F(LiveSignInGaiaIntegrationTest,
   content::OpenURLParams params =
       content::OpenURLParams::CreateBrowserInitiated(
           GaiaUrls::GetInstance()->add_account_url(),
-          WindowOpenDisposition::kCurrentTab, ui::PAGE_TRANSITION_TYPED);
+          ui::mojom::WindowOpenDisposition::kCurrentTab,
+          ui::PAGE_TRANSITION_TYPED);
   content::WebContents* contents =
       signin_tab->OpenURL(params, /*navigation_handle_callback=*/{});
   ASSERT_EQ(current_tab_count, browser()->GetTabStripModel()->count());

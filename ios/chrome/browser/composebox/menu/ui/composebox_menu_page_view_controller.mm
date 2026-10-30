@@ -275,7 +275,7 @@ std::optional<ComposeboxAttachmentOption> AttachmentOptionForMenuItemType(
                                    absoluteDimension:itemWidth]
                heightDimension:
                    [NSCollectionLayoutDimension
-                       absoluteDimension:attachmentGroupEstimatedHeight]];
+                       estimatedDimension:attachmentGroupEstimatedHeight]];
 
     NSCollectionLayoutItem* item =
         [NSCollectionLayoutItem itemWithLayoutSize:itemSize];
@@ -285,7 +285,7 @@ std::optional<ComposeboxAttachmentOption> AttachmentOptionForMenuItemType(
                                    absoluteDimension:itemWidth]
                heightDimension:
                    [NSCollectionLayoutDimension
-                       absoluteDimension:attachmentGroupEstimatedHeight]];
+                       estimatedDimension:attachmentGroupEstimatedHeight]];
     NSCollectionLayoutGroup* group =
         [NSCollectionLayoutGroup horizontalGroupWithLayoutSize:groupSize
                                                       subitems:@[ item ]];
@@ -428,12 +428,20 @@ std::optional<ComposeboxAttachmentOption> AttachmentOptionForMenuItemType(
     return @[ galleryItem, cameraItem, tabsItem ];
   }
 
-  NSMutableArray* attachmentItems =
-      _menuPageType == ComposeboxMenuPageType::kSecondaryPage
-          ? [NSMutableArray arrayWithObjects:filesItem, nil]
-          : [NSMutableArray arrayWithObjects:currentTabItem, tabsItem,
-                                             galleryItem, cameraItem, filesItem,
-                                             nil];
+  BOOL useUpdatedAttachmentsOrder = IsPlusButtonMenuVerticalListView() ||
+                                    IsComposeboxPlusButtonLargeCarousel();
+  NSMutableArray* attachmentItems;
+  if (_menuPageType == ComposeboxMenuPageType::kSecondaryPage) {
+    attachmentItems = [NSMutableArray arrayWithObjects:filesItem, nil];
+  } else if (useUpdatedAttachmentsOrder) {
+    attachmentItems =
+        [NSMutableArray arrayWithObjects:currentTabItem, galleryItem,
+                                         cameraItem, tabsItem, filesItem, nil];
+  } else {
+    attachmentItems =
+        [NSMutableArray arrayWithObjects:currentTabItem, tabsItem, galleryItem,
+                                         cameraItem, filesItem, nil];
+  }
 
   if (IsComposeboxDriveOptionEnabled()) {
     UIImage* driveSymbol =
@@ -617,6 +625,7 @@ std::optional<ComposeboxAttachmentOption> AttachmentOptionForMenuItemType(
     configuration.secondaryTextProperties.color =
         [UIColor colorNamed:kTextSecondaryColor];
     configuration.secondaryTextProperties.numberOfLines = 0;
+    cell.accessibilityHint = item.subtitle;
   }
   configuration.image = item.image;
   cell.accessibilityLabel = item.title;
@@ -725,8 +734,9 @@ std::optional<ComposeboxAttachmentOption> AttachmentOptionForMenuItemType(
   BOOL showAsHorizontalCarousel =
       !IsPlusButtonMenuVerticalListView() && pageEligibleForCarouselView;
 
-  BOOL showSectionTitle = IsPlusButtonMenuStringUpdatesEnabled() &&
-                          _menuPageType == ComposeboxMenuPageType::kMainPage;
+  BOOL showSectionTitle =
+      IsPlusButtonMenuStringUpdatesEnabled() &&
+      _menuPageType != ComposeboxMenuPageType::kSecondaryPage;
   NSString* title =
       showSectionTitle ? _inputState.uiConfig.attachmentsSectionHeader : nil;
 
@@ -809,8 +819,13 @@ std::optional<ComposeboxAttachmentOption> AttachmentOptionForMenuItemType(
     return nil;
   }
 
+  BOOL showSectionTitle =
+      _menuPageType != ComposeboxMenuPageType::kSecondaryPage;
+  NSString* title =
+      showSectionTitle ? _inputState.uiConfig.toolsSectionHeader : nil;
+
   return [[ComposeboxMenuSection alloc]
-      initWithTitle:uiConfig.toolsSectionHeader
+      initWithTitle:title
               items:toolsItems
          identifier:ComposeboxMenuSectionIdentifier::kTools];
 }
@@ -834,8 +849,13 @@ std::optional<ComposeboxAttachmentOption> AttachmentOptionForMenuItemType(
     return nil;
   }
 
+  BOOL showSectionTitle =
+      _menuPageType != ComposeboxMenuPageType::kSecondaryPage;
+  NSString* title =
+      showSectionTitle ? _inputState.uiConfig.modelSectionHeader : nil;
+
   return [[ComposeboxMenuSection alloc]
-      initWithTitle:_inputState.uiConfig.modelSectionHeader
+      initWithTitle:title
               items:modelsItems
          identifier:ComposeboxMenuSectionIdentifier::kModels];
 }
@@ -891,7 +911,7 @@ std::optional<ComposeboxAttachmentOption> AttachmentOptionForMenuItemType(
   BOOL currentTabHidden =
       [_inputState isAttachmentHidden:ComposeboxAttachmentOption::kCurrentTab];
   if (!IsPlusButtonMenuVerticalListView() || currentTabHidden ||
-      _menuPageType != ComposeboxMenuPageType::kMainPage) {
+      _menuPageType == ComposeboxMenuPageType::kSecondaryPage) {
     return nil;
   }
 

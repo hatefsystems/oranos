@@ -82,6 +82,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/dom/dom_node_id.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/input/synthetic_web_input_event_builders.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "third_party/blink/public/common/page/page_zoom.h"
@@ -441,6 +442,19 @@ class MockRenderWidgetHostDelegate : public RenderWidgetHostDelegate {
     prehandle_keyboard_event_ = handle;
   }
 
+  void set_prehandle_keyboard_event_result(
+      std::optional<KeyboardEventProcessingResult> result) {
+    prehandle_keyboard_event_result_ = result;
+  }
+
+  void set_prehandle_keyboard_event_closure(base::OnceClosure closure) {
+    prehandle_keyboard_event_closure_ = std::move(closure);
+  }
+
+  void set_handle_keyboard_event_result(bool handle) {
+    handle_keyboard_event_result_ = handle;
+  }
+
   void set_handle_wheel_event(bool handle) {
     handle_wheel_event_ = handle;
   }
@@ -526,6 +540,12 @@ class MockRenderWidgetHostDelegate : public RenderWidgetHostDelegate {
       const input::NativeWebKeyboardEvent& event) override {
     prehandle_keyboard_event_type_ = event.GetType();
     prehandle_keyboard_event_called_ = true;
+    if (prehandle_keyboard_event_closure_) {
+      std::move(prehandle_keyboard_event_closure_).Run();
+    }
+    if (prehandle_keyboard_event_result_) {
+      return *prehandle_keyboard_event_result_;
+    }
     if (prehandle_keyboard_event_)
       return KeyboardEventProcessingResult::HANDLED;
     return prehandle_keyboard_event_is_shortcut_
@@ -537,7 +557,7 @@ class MockRenderWidgetHostDelegate : public RenderWidgetHostDelegate {
       const input::NativeWebKeyboardEvent& event) override {
     unhandled_keyboard_event_type_ = event.GetType();
     unhandled_keyboard_event_called_ = true;
-    return true;
+    return handle_keyboard_event_result_;
   }
 
   bool HandleWheelEvent(const blink::WebMouseWheelEvent& event) override {
@@ -581,9 +601,12 @@ class MockRenderWidgetHostDelegate : public RenderWidgetHostDelegate {
   bool prehandle_keyboard_event_is_shortcut_;
   bool prehandle_keyboard_event_called_;
   WebInputEvent::Type prehandle_keyboard_event_type_;
+  std::optional<KeyboardEventProcessingResult> prehandle_keyboard_event_result_;
+  base::OnceClosure prehandle_keyboard_event_closure_;
 
   bool unhandled_keyboard_event_called_;
   WebInputEvent::Type unhandled_keyboard_event_type_;
+  bool handle_keyboard_event_result_ = true;
 
   bool handle_wheel_event_;
   bool handle_wheel_event_called_;
@@ -751,7 +774,7 @@ class RenderWidgetHostTest : public testing::Test {
 
   virtual void ConfigureView(TestView* view) {}
 
-  void ReinitalizeHost() {
+  void ReinitializeHost() {
     host_->BindWidgetInterfaces(
         mojo::AssociatedRemote<blink::mojom::WidgetHost>()
             .BindNewEndpointAndPassDedicatedReceiver(),
@@ -1579,7 +1602,7 @@ TEST_F(RenderWidgetHostTest, ReceiveFrameTokenFromCrashedRenderer) {
   // RenderWidget is being created.
   blink::VisualProperties props = host_->GetInitialVisualProperties();
   // The RenderWidget is recreated with the initial VisualProperties.
-  ReinitalizeHost();
+  ReinitializeHost();
 
   // The new RenderWidget sends a frame token, which is lower than what the
   // previous RenderWidget sent. This should be okay, as the expected token has
@@ -1878,6 +1901,122 @@ TEST_F(RenderWidgetHostTest, PreHandleRawKeyDownEvent) {
   EXPECT_TRUE(delegate_->unhandled_keyboard_event_called());
   EXPECT_EQ(WebInputEvent::Type::kRawKeyDown,
             delegate_->unhandled_keyboard_event_type());
+}
+
+TEST_F(RenderWidgetHostTest,
+       DismissUnboundedSurfaceOnHandledKeyboardShortcuts) {
+  // Pre-handled kRawKeyDown and kKeyDown dismiss; kKeyUp does not.
+  delegate_->set_prehandle_keyboard_event(true);
+  SimulateKeyboardEvent(WebInputEvent::Type::kKeyUp);
+  EXPECT_FALSE(view_->TakeDismissUnboundedSurfaceCalledForTesting());
+
+  SimulateKeyboardEvent(WebInputEvent::Type::kRawKeyDown);
+  EXPECT_TRUE(view_->TakeDismissUnboundedSurfaceCalledForTesting());
+
+  SimulateKeyboardEvent(WebInputEvent::Type::kKeyDown);
+  EXPECT_TRUE(view_->TakeDismissUnboundedSurfaceCalledForTesting());
+
+#if defined(USE_AURA)
+  // Pre-handled HANDLED_DONT_UPDATE_EVENT also dismisses on key-down only.
+  delegate_->set_prehandle_keyboard_event_result(
+      KeyboardEventProcessingResult::HANDLED_DONT_UPDATE_EVENT);
+  SimulateKeyboardEvent(WebInputEvent::Type::kKeyUp);
+  EXPECT_FALSE(view_->TakeDismissUnboundedSurfaceCalledForTesting());
+
+  SimulateKeyboardEvent(WebInputEvent::Type::kRawKeyDown);
+  EXPECT_TRUE(view_->TakeDismissUnboundedSurfaceCalledForTesting());
+  delegate_->set_prehandle_keyboard_event_result(std::nullopt);
+#endif
+
+  // Post-ack: unconsumed keyboard events handled by the browser delegate
+  // must not dismiss the surface (dismissal is restricted to
+  // PreHandleKeyboardEvent).
+  delegate_->set_prehandle_keyboard_event(false);
+  delegate_->set_handle_keyboard_event_result(false);
+  SimulateKeyboardEvent(WebInputEvent::Type::kRawKeyDown);
+  MockWidgetInputHandler::MessageVector dispatched_events =
+      host_->mock_render_input_router()->GetAndResetDispatchedMessages();
+  ASSERT_EQ(1u, dispatched_events.size());
+  dispatched_events[0]->ToEvent()->CallCallback(
+      blink::mojom::InputEventResultState::kNotConsumed);
+  EXPECT_FALSE(view_->TakeDismissUnboundedSurfaceCalledForTesting());
+
+  delegate_->set_handle_keyboard_event_result(true);
+  SimulateKeyboardEvent(WebInputEvent::Type::kChar);
+  SimulateKeyboardEvent(WebInputEvent::Type::kKeyUp);
+  dispatched_events =
+      host_->mock_render_input_router()->GetAndResetDispatchedMessages();
+  ASSERT_EQ(2u, dispatched_events.size());
+  dispatched_events[0]->ToEvent()->CallCallback(
+      blink::mojom::InputEventResultState::kNotConsumed);
+  dispatched_events[1]->ToEvent()->CallCallback(
+      blink::mojom::InputEventResultState::kNotConsumed);
+  EXPECT_FALSE(view_->TakeDismissUnboundedSurfaceCalledForTesting());
+
+  SimulateKeyboardEvent(WebInputEvent::Type::kRawKeyDown);
+  dispatched_events =
+      host_->mock_render_input_router()->GetAndResetDispatchedMessages();
+  ASSERT_EQ(1u, dispatched_events.size());
+  dispatched_events[0]->ToEvent()->CallCallback(
+      blink::mojom::InputEventResultState::kNotConsumed);
+  EXPECT_FALSE(view_->TakeDismissUnboundedSurfaceCalledForTesting());
+
+  // Non-reserved browser shortcuts (e.g. Ctrl+S, Ctrl+P) marked
+  // NOT_HANDLED_IS_SHORTCUT in PreHandleKeyboardEvent set
+  // `is_browser_shortcut`. When not consumed by the renderer and handled by
+  // the browser delegate post-ack, key-down must dismiss the surface; key-up
+  // or consumed events must not.
+  delegate_->set_prehandle_keyboard_event_result(
+      KeyboardEventProcessingResult::NOT_HANDLED_IS_SHORTCUT);
+  delegate_->set_handle_keyboard_event_result(true);
+
+  // KeyUp with is_browser_shortcut must not dismiss.
+  SimulateKeyboardEvent(WebInputEvent::Type::kKeyUp);
+  dispatched_events =
+      host_->mock_render_input_router()->GetAndResetDispatchedMessages();
+  ASSERT_EQ(1u, dispatched_events.size());
+  dispatched_events[0]->ToEvent()->CallCallback(
+      blink::mojom::InputEventResultState::kNotConsumed);
+  EXPECT_FALSE(view_->TakeDismissUnboundedSurfaceCalledForTesting());
+
+  // Consumed kRawKeyDown must not dismiss.
+  SimulateKeyboardEvent(WebInputEvent::Type::kRawKeyDown);
+  dispatched_events =
+      host_->mock_render_input_router()->GetAndResetDispatchedMessages();
+  ASSERT_EQ(1u, dispatched_events.size());
+  dispatched_events[0]->ToEvent()->CallCallback(
+      blink::mojom::InputEventResultState::kConsumed);
+  EXPECT_FALSE(view_->TakeDismissUnboundedSurfaceCalledForTesting());
+
+  // Unconsumed kRawKeyDown handled by delegate must dismiss.
+  SimulateKeyboardEvent(WebInputEvent::Type::kRawKeyDown);
+  dispatched_events =
+      host_->mock_render_input_router()->GetAndResetDispatchedMessages();
+  ASSERT_EQ(1u, dispatched_events.size());
+  dispatched_events[0]->ToEvent()->CallCallback(
+      blink::mojom::InputEventResultState::kNotConsumed);
+  EXPECT_TRUE(view_->TakeDismissUnboundedSurfaceCalledForTesting());
+
+  // Unconsumed kKeyDown handled by delegate must dismiss.
+  SimulateKeyboardEvent(WebInputEvent::Type::kKeyDown);
+  dispatched_events =
+      host_->mock_render_input_router()->GetAndResetDispatchedMessages();
+  ASSERT_EQ(1u, dispatched_events.size());
+  dispatched_events[0]->ToEvent()->CallCallback(
+      blink::mojom::InputEventResultState::kNotConsumed);
+  EXPECT_TRUE(view_->TakeDismissUnboundedSurfaceCalledForTesting());
+
+  delegate_->set_prehandle_keyboard_event_result(std::nullopt);
+
+  // Synchronous destruction of the host/view during PreHandleKeyboardEvent
+  // (e.g. Ctrl+W) must be guarded by WeakPtr without UAF.
+  delegate_->set_prehandle_keyboard_event(true);
+  delegate_->set_prehandle_keyboard_event_closure(
+      base::BindLambdaForTesting([this]() {
+        view_.reset();
+        host_.reset();
+      }));
+  SimulateKeyboardEvent(WebInputEvent::Type::kRawKeyDown);
 }
 
 TEST_F(RenderWidgetHostTest, RawKeyDownShortcutEvent) {
@@ -2486,7 +2625,7 @@ TEST_F(RenderWidgetHostTest, RendererExitedResetsInputRouter) {
   // RenderWidget is being created.
   blink::VisualProperties props = host_->GetInitialVisualProperties();
   // The RenderWidget is recreated with the initial VisualProperties.
-  ReinitalizeHost();
+  ReinitializeHost();
 
   // Make sure the input router is in a fresh state.
   ASSERT_FALSE(host_->input_router()->HasPendingEvents());
@@ -2530,6 +2669,81 @@ TEST_F(RenderWidgetHostTest, DestroyingRenderWidgetResetsInputRouter) {
   EXPECT_EQ(0u, host_->GetRenderInputRouter()->in_flight_event_count());
 }
 
+TEST_F(RenderWidgetHostTest, RendererExitedResetsGestureScrollState) {
+  SimulateGestureEvent(WebInputEvent::Type::kGestureScrollBegin,
+                       blink::WebGestureDevice::kTouchscreen);
+  EXPECT_TRUE(host_->GetRenderInputRouter()->IsAnyScrollGestureInProgress());
+  EXPECT_TRUE(
+      host_->GetRenderInputRouter()->is_in_touchscreen_gesture_scroll());
+  host_->GetRenderInputRouter()->DidStartScrollingViewport();
+  EXPECT_TRUE(host_->GetRenderInputRouter()->is_currently_scrolling_viewport());
+
+  // RendererExited will delete the view.
+  host_->SetView(new TestView(host_.get()));
+  host_->RendererExited();
+
+  // The renderer is recreated.
+  host_->SetView(view_.get());
+  host_->GetInitialVisualProperties();
+  ReinitializeHost();
+  host_->input_router()->MakeActive();
+
+  EXPECT_FALSE(host_->GetRenderInputRouter()->IsAnyScrollGestureInProgress());
+  EXPECT_FALSE(
+      host_->GetRenderInputRouter()->is_in_touchscreen_gesture_scroll());
+  EXPECT_FALSE(
+      host_->GetRenderInputRouter()->is_currently_scrolling_viewport());
+
+  // A subsequent GestureScrollBegin on the recreated widget should not hit
+  // DCHECK(!is_in_gesture_scroll_).
+  SimulateGestureEvent(WebInputEvent::Type::kGestureScrollBegin,
+                       blink::WebGestureDevice::kTouchscreen);
+  EXPECT_TRUE(
+      host_->GetRenderInputRouter()->is_in_touchscreen_gesture_scroll());
+}
+
+TEST_F(RenderWidgetHostTest,
+       RendererExitedDuringFlingResetsGestureScrollState) {
+  view_->SetBounds(gfx::Rect(0, 0, 100, 100));
+
+  SimulateGestureEvent(WebInputEvent::Type::kGestureScrollBegin,
+                       blink::WebGestureDevice::kTouchscreen);
+  host_->GetRenderInputRouter()->DidStartScrollingViewport();
+  host_->ForwardGestureEvent(blink::SyntheticWebGestureEventBuilder::BuildFling(
+      0.f, -1000.f, blink::WebGestureDevice::kTouchscreen));
+  EXPECT_TRUE(host_->GetRenderInputRouter()->IsAnyScrollGestureInProgress());
+  EXPECT_TRUE(
+      host_->GetRenderInputRouter()->is_in_touchscreen_gesture_scroll());
+  EXPECT_TRUE(host_->GetRenderInputRouter()->is_currently_scrolling_viewport());
+  EXPECT_TRUE(static_cast<input::InputRouterImpl*>(host_->input_router())
+                  ->IsFlingActiveForTest());
+
+  // RendererExited will delete the view.
+  host_->SetView(new TestView(host_.get()));
+  host_->RendererExited();
+
+  // The renderer is recreated.
+  host_->SetView(view_.get());
+  host_->GetInitialVisualProperties();
+  ReinitializeHost();
+  host_->input_router()->MakeActive();
+
+  EXPECT_FALSE(host_->GetRenderInputRouter()->IsAnyScrollGestureInProgress());
+  EXPECT_FALSE(
+      host_->GetRenderInputRouter()->is_in_touchscreen_gesture_scroll());
+  EXPECT_FALSE(
+      host_->GetRenderInputRouter()->is_currently_scrolling_viewport());
+  EXPECT_FALSE(static_cast<input::InputRouterImpl*>(host_->input_router())
+                   ->IsFlingActiveForTest());
+
+  // A subsequent GestureScrollBegin on the recreated widget should not hit
+  // DCHECK(!is_in_gesture_scroll_).
+  SimulateGestureEvent(WebInputEvent::Type::kGestureScrollBegin,
+                       blink::WebGestureDevice::kTouchscreen);
+  EXPECT_TRUE(
+      host_->GetRenderInputRouter()->is_in_touchscreen_gesture_scroll());
+}
+
 TEST_F(RenderWidgetHostTest, RendererExitedResetsScreenRectsAck) {
   // Screen rects are sent during initialization, but we are waiting for an ack.
   base::RunLoop().RunUntilIdle();
@@ -2555,7 +2769,7 @@ TEST_F(RenderWidgetHostTest, RendererExitedResetsScreenRectsAck) {
   // RenderWidget is being created.
   blink::VisualProperties props = host_->GetInitialVisualProperties();
   // The RenderWidget is recreated with the initial VisualProperties.
-  ReinitalizeHost();
+  ReinitializeHost();
 
   // The RenderWidget is shown when navigation completes. This sends screen
   // rects again. The IPC is sent as it's not waiting for an ack.
@@ -3760,6 +3974,35 @@ TEST_F(RenderWidgetHostTest, RenderFrameMetadataOutOfRangeMessageDisconnects) {
   run_loop.Run();
 
   EXPECT_FALSE(client_remote.is_connected());
+}
+
+TEST_F(RenderWidgetHostTest, ExpectedUserActivationNotification) {
+  base::test::ScopedFeatureList scoped_feature_list(
+      blink::features::kTrustedUserActivationTriggers);
+
+  // One event allows one activation notification.
+  SimulateMouseEvent(blink::WebInputEvent::Type::kMouseDown);
+  EXPECT_TRUE(host_->RemoveExpectedUserActivationNotificationIfAvailable());
+  EXPECT_FALSE(host_->RemoveExpectedUserActivationNotificationIfAvailable());
+
+  // Mouse move and up does not increase expected user activation notifications.
+  SimulateMouseEvent(blink::WebInputEvent::Type::kMouseMove);
+  SimulateMouseEvent(blink::WebInputEvent::Type::kMouseUp);
+  EXPECT_FALSE(host_->RemoveExpectedUserActivationNotificationIfAvailable());
+
+  // Two events allow 2 activation notifications.
+  SimulateMouseEvent(blink::WebInputEvent::Type::kMouseDown);
+  SimulateKeyboardEvent(blink::WebInputEvent::Type::kKeyDown);
+  EXPECT_TRUE(host_->RemoveExpectedUserActivationNotificationIfAvailable());
+  EXPECT_TRUE(host_->RemoveExpectedUserActivationNotificationIfAvailable());
+  EXPECT_FALSE(host_->RemoveExpectedUserActivationNotificationIfAvailable());
+
+  // Timer resets the expected activation notifications.
+  SimulateMouseEvent(blink::WebInputEvent::Type::kMouseDown);
+  SimulateMouseEvent(blink::WebInputEvent::Type::kMouseDown);
+  task_environment_.FastForwardBy(
+      RenderWidgetHostImpl::kUserActivationVerificationTimeout);
+  EXPECT_FALSE(host_->RemoveExpectedUserActivationNotificationIfAvailable());
 }
 
 }  // namespace content

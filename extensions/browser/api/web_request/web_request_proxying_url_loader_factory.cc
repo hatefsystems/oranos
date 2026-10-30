@@ -133,6 +133,22 @@ net::RedirectInfo CreateRedirectInfo(
       /*is_signed_exchange_fallback_redirect=*/false);
 }
 
+// Returns `navigation_response_task_runner` when
+// `kWebRequestProxyNavigationResponseTaskRunner` is enabled so Mojo receivers
+// (`TrustedHeaderClient` and cloned `URLLoaderFactory` pipes) dispatch onto the
+// navigation network response task runner rather than falling back to
+// `SequencedTaskRunner::GetCurrentDefault()`.
+scoped_refptr<base::SequencedTaskRunner> MaybeGetNavigationResponseTaskRunner(
+    const scoped_refptr<base::SequencedTaskRunner>&
+        navigation_response_task_runner) {
+  if (navigation_response_task_runner &&
+      base::FeatureList::IsEnabled(
+          extensions_features::kWebRequestProxyNavigationResponseTaskRunner)) {
+    return navigation_response_task_runner;
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 WebRequestProxyingURLLoaderFactory::InProgressRequest::FollowRedirectParams::
@@ -465,6 +481,7 @@ void WebRequestProxyingURLLoaderFactory::InProgressRequest::OnReceiveResponse(
 
   // A response can only arrive once any forwarded redirect has been followed.
   CHECK(!deferred_redirect_url_);
+  CHECK(!has_forwarded_response_);
   current_body_ = std::move(body);
   current_cached_metadata_ = std::move(cached_metadata);
   if (current_request_uses_header_client_) {
@@ -646,7 +663,14 @@ void WebRequestProxyingURLLoaderFactory::InProgressRequest::OnLoaderCreated(
   // We need this explicit reset to avoid a DCHECK failure in mojo::Receiver.
   header_client_receiver_.reset();
 
-  header_client_receiver_.Bind(std::move(receiver));
+  // Bind `header_client_receiver_` to `navigation_response_task_runner_` so
+  // `TrustedHeaderClient::OnHeadersReceived` is not priority-inverted onto
+  // `QueueType::kDefault` while `net::URLRequestHttpJob` waits for its
+  // callback before `NotifyHeadersComplete()`
+  // (`ReceiveHeadersToReceiveResponse`).
+  header_client_receiver_.Bind(
+      std::move(receiver),
+      MaybeGetNavigationResponseTaskRunner(navigation_response_task_runner_));
   if (is_header_client_receiver_paused_) {
     header_client_receiver_.Pause();
   }
@@ -1305,10 +1329,19 @@ void WebRequestProxyingURLLoaderFactory::InProgressRequest::
   // debug crbug.com/463388771.
   CHECK(!has_forwarded_response_);
   has_forwarded_response_ = true;
-  auto response = current_response_.Clone();
-  response->cache_storage_side_data_writer =
-      std::move(current_response_->cache_storage_side_data_writer);
-  target_client_->OnReceiveResponse(std::move(response),
+  // Because `OnReceiveResponse()` is terminal for response headers (`info_` was
+  // already populated above), transfer ownership of `current_response_` instead
+  // of deep-cloning the entire `URLResponseHead` Mojo hierarchy.
+  network::mojom::URLResponseHeadPtr response_to_forward;
+  if (base::FeatureList::IsEnabled(
+          extensions_features::kWebRequestProxyMoveResponse)) {
+    response_to_forward = std::move(current_response_);
+  } else {
+    response_to_forward = current_response_.Clone();
+    response_to_forward->cache_storage_side_data_writer =
+        std::move(current_response_->cache_storage_side_data_writer);
+  }
+  target_client_->OnReceiveResponse(std::move(response_to_forward),
                                     std::move(current_body_),
                                     std::move(current_cached_metadata_));
 }
@@ -1696,7 +1729,9 @@ void WebRequestProxyingURLLoaderFactory::CreateLoaderAndStart(
 void WebRequestProxyingURLLoaderFactory::Clone(
     mojo::PendingReceiver<network::mojom::URLLoaderFactory> loader_receiver) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  proxy_receivers_.Add(this, std::move(loader_receiver));
+  proxy_receivers_.Add(
+      this, std::move(loader_receiver),
+      MaybeGetNavigationResponseTaskRunner(navigation_response_task_runner_));
 }
 
 void WebRequestProxyingURLLoaderFactory::OnLoaderCreated(

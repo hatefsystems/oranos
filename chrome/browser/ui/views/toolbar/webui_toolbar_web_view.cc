@@ -61,7 +61,9 @@
 #include "chrome/browser/ui/views/toolbar/webui_split_tabs_control.h"
 #include "chrome/browser/ui/views/toolbar/webui_toolbar_extensions_container_wrapper.h"
 #include "chrome/browser/ui/waap/initial_web_ui_manager.h"
+#include "chrome/browser/ui/waap/initial_webui_metrics_dispatcher.h"
 #include "chrome/browser/ui/waap/initial_webui_window_metrics_manager.h"
+#include "chrome/browser/ui/webui/top_chrome/top_chrome_webui_profile.h"
 #include "chrome/browser/ui/webui/webui_embedding_context.h"
 #include "chrome/browser/ui/webui/webui_toolbar/adapters/browser_controls_adapter_impl.h"
 #include "chrome/browser/ui/webui/webui_toolbar/adapters/toolbar_state_fetcher_impl.h"
@@ -217,6 +219,10 @@ class WebUIToolbarInternalWebView : public views::WebView {
             web_contents());
     drag_state->set_drag_originated_from_renderer(did_originate_from_renderer);
     drag_state->set_drag_has_javascript_url(has_javascript_url);
+    drag_state->set_drag_url(
+        drop_data.url_infos.empty()
+            ? std::nullopt
+            : std::make_optional(drop_data.url_infos.front().url));
   }
 
   void PreHandleDragExit() override { ClearCachedDraggedFile(); }
@@ -411,14 +417,10 @@ WebUIToolbarWebView::WebUIToolbarWebView(
   last_queued_state_.glic_button_state =
       toolbar_ui_api::mojom::GlicButtonState::New();
 
-  if (auto* manager = InitialWebUIWindowMetricsManager::From(browser_)) {
-    manager->OnReloadButtonCreated();
-  }
-
   SetLayoutManager(std::make_unique<views::FillLayout>());
 
   auto web_view = std::make_unique<WebUIToolbarInternalWebView>(
-      browser->GetProfile(), this);
+      &webui::GetProfileForTopChromeWebUIContents(browser->GetProfile()), this);
   std::unique_ptr<content::WebContents> pre_created_contents;
 
   if (auto* manager = InitialWebUIManager::From(browser)) {
@@ -468,6 +470,13 @@ WebUIToolbarWebView::WebUIToolbarWebView(
         content::BrowserAccessibilityState::GetInstance()
             ->CreateScopedModeForWebContents(
                 web_contents, ui::AXMode::kNativeAdaptedWebContents);
+    // The BrowserWindowInterface is already attached to `web_contents` here
+    // (either by `InitialWebUIManager` or `ConfigureToolbarWebContents()`), so
+    // the dispatcher can resolve this window's metrics manager.
+    // TODO(crbug.com/548363252): Align `IsWebUIToolbarEnabled()` and
+    // `IsWebUIReloadButtonEnabled()` metrics gating with `ToolbarView`.
+    InitialWebUIMetricsDispatcher::GetOrCreateForWebContents(web_contents)
+        ->OnCreated();
   }
 
   // We must save the pointer to the WebView so we can load the URL after the
@@ -621,6 +630,9 @@ void WebUIToolbarWebView::OnThemeChanged() {
   }
   extensions_container_.OnThemeChanged();
   icon_table_.OnThemeChanged();
+  if (icon_table_.HasPendingUpdates()) {
+    PostPushToolbarState();
+  }
 }
 
 gfx::Size WebUIToolbarWebView::GetMinimumSize() const {
@@ -651,6 +663,10 @@ void WebUIToolbarWebView::OnBlur() {
   // restored around widget activation, or around native focus changes on
   // Mac), so whether the request is stale is decided in `OnWillChangeFocus()`
   // and `MaybeFlushPendingFocusRequest()`.
+
+  // Clear C++-cached sub-control focus state synchronously when the hosting
+  // View loses focus rather than waiting for an async WebUI focusout IPC.
+  app_menu_control_.SetFocused(false);
   if (location_bar_) {
     location_bar_->OnBlur();
   }
@@ -686,6 +702,7 @@ void WebUIToolbarWebView::HandleContextMenu(
     const gfx::RectF& bounds_in_css_pixels,
     ui::mojom::MenuSourceType source,
     std::optional<uint32_t> show_menu_token) {
+  EnsureWidgetActive();
   gfx::Rect screen_rect =
       ConvertBoundsFromCssPixelsToScreenCoords(bounds_in_css_pixels);
 
@@ -783,6 +800,7 @@ void WebUIToolbarWebView::ShowOverflowMenu(
     ui::mojom::MenuSourceType source,
     toolbar_ui_api::mojom::ToolbarUIService::ShowOverflowMenuCallback
         callback) {
+  EnsureWidgetActive();
   overflow_button_.ShowOverflowMenu(
       controls, ConvertBoundsFromCssPixelsToScreenCoords(bounds_in_css_pixels),
       source, std::move(callback));
@@ -937,6 +955,9 @@ void WebUIToolbarWebView::SetAvatarButtonIPHPromoShowing(bool showing) {
 }
 
 void WebUIToolbarWebView::OnAppMenuFocusChanged(bool focused) {
+  if (focused && (!web_view_ || !web_view_->HasFocus())) {
+    return;
+  }
   app_menu_control_.SetFocused(focused);
 }
 
@@ -948,6 +969,7 @@ void WebUIToolbarWebView::ExecuteExtensionAction(
 void WebUIToolbarWebView::ShowExtensionContextMenu(
     const std::string& extension_id,
     ui::mojom::MenuSourceType source) {
+  EnsureWidgetActive();
   extensions_container_.ShowContextMenu(source, extension_id);
 }
 
@@ -1788,7 +1810,15 @@ void WebUIToolbarWebView::OnFocusRequested(
 }
 
 void WebUIToolbarWebView::OnInternalWebViewFocused() {
+  const bool had_pending_focus_request = pending_focus_request_.has_value();
   MaybeFlushPendingFocusRequest();
+  // Only notify `location_bar_` when `web_view_` gains focus outside of an
+  // explicit `OnFocusRequested()` flow or pre-menu widget activation (e.g. when
+  // `FocusManager` restores focus to `web_view_` on browser widget activation).
+  if (!had_pending_focus_request && !in_focus_request_ &&
+      !activating_for_menu_ && location_bar_) {
+    location_bar_->OnToolbarFocused();
+  }
 }
 
 void WebUIToolbarWebView::MaybeFlushPendingFocusRequest() {
@@ -1843,8 +1873,27 @@ void WebUIToolbarWebView::HandleOmniboxContextMenu(
     const gfx::Point& point,
     ui::mojom::MenuSourceType source_type,
     content::ContextMenuParams params) {
+  EnsureWidgetActive();
   if (location_bar_) {
     location_bar_->HandleContextMenu(GetWidget(), point, source_type, params);
+  }
+}
+
+void WebUIToolbarWebView::EnsureWidgetActive() {
+  // Opening a toolbar menu via a WebUI click occurs asynchronously after an IPC
+  // round-trip. If the Omnibox popup widget reclaimed activation in the
+  // meantime, ensure the browser widget is active before running the menu so
+  // subsequent focus changes within the browser widget (e.g. opening the Find
+  // bar from the menu) do not trigger a widget activation change that cancels
+  // the menu prematurely. Check `ShouldPaintAsActive()` so an inactive browser
+  // window in the background is not pulled to the front.
+  views::Widget* widget = GetWidget();
+  if (widget && !widget->IsActive() && widget->ShouldPaintAsActive()) {
+    // Suppress `location_bar_->OnToolbarFocused()` if `Activate()`
+    // synchronously restores focus to `web_view_`, so the omnibox popup does
+    // not reclaim activation before the menu opens.
+    base::AutoReset<bool> activating_for_menu(&activating_for_menu_, true);
+    widget->Activate();
   }
 }
 

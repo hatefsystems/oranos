@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/containers/to_vector.h"
@@ -2303,25 +2304,25 @@ TEST_P(GetUserVisibleTypesTest, GetUserVisibleTypes) {
 INSTANTIATE_TEST_SUITE_P(
     AutofillProfileTest,
     GetUserVisibleTypesTest,
-    testing::Values(GetUserVisibleTypesTestCase(
-                        FieldTypeSet({NAME_FULL, ADDRESS_HOME_STREET_ADDRESS,
-                                      ADDRESS_HOME_CITY, ADDRESS_HOME_STATE,
-                                      ADDRESS_HOME_ZIP, EMAIL_ADDRESS,
-                                      PHONE_HOME_WHOLE_NUMBER, COMPANY_NAME}),
-                        AddressCountryCode("US")),
-                    GetUserVisibleTypesTestCase(
-                        FieldTypeSet({NAME_FULL, ALTERNATIVE_FULL_NAME,
-                                      ADDRESS_HOME_STREET_ADDRESS,
-                                      ADDRESS_HOME_STATE, ADDRESS_HOME_ZIP,
-                                      EMAIL_ADDRESS, PHONE_HOME_WHOLE_NUMBER,
-                                      COMPANY_NAME}),
-                        AddressCountryCode("JP")),
-                    GetUserVisibleTypesTestCase(
-                        FieldTypeSet({NAME_FULL, ADDRESS_HOME_STREET_ADDRESS,
-                                      ADDRESS_HOME_CITY, ADDRESS_HOME_STATE,
-                                      ADDRESS_HOME_ZIP, EMAIL_ADDRESS,
-                                      PHONE_HOME_WHOLE_NUMBER, COMPANY_NAME}),
-                        AddressCountryCode("GB"))),
+    testing::Values(
+        GetUserVisibleTypesTestCase(
+            FieldTypeSet({NAME_FULL, ADDRESS_HOME_STREET_ADDRESS,
+                          ADDRESS_HOME_CITY, ADDRESS_HOME_STATE,
+                          ADDRESS_HOME_ZIP, ADDRESS_HOME_COUNTRY, EMAIL_ADDRESS,
+                          PHONE_HOME_WHOLE_NUMBER, COMPANY_NAME}),
+            AddressCountryCode("US")),
+        GetUserVisibleTypesTestCase(
+            FieldTypeSet({NAME_FULL, ALTERNATIVE_FULL_NAME,
+                          ADDRESS_HOME_STREET_ADDRESS, ADDRESS_HOME_STATE,
+                          ADDRESS_HOME_ZIP, ADDRESS_HOME_COUNTRY, EMAIL_ADDRESS,
+                          PHONE_HOME_WHOLE_NUMBER, COMPANY_NAME}),
+            AddressCountryCode("JP")),
+        GetUserVisibleTypesTestCase(
+            FieldTypeSet({NAME_FULL, ADDRESS_HOME_STREET_ADDRESS,
+                          ADDRESS_HOME_CITY, ADDRESS_HOME_STATE,
+                          ADDRESS_HOME_ZIP, ADDRESS_HOME_COUNTRY, EMAIL_ADDRESS,
+                          PHONE_HOME_WHOLE_NUMBER, COMPANY_NAME}),
+            AddressCountryCode("GB"))),
     [](const testing::TestParamInfo<GetUserVisibleTypesTestCase>& info) {
       return info.param.country_code.value();
     });
@@ -2465,14 +2466,14 @@ TEST_F(AutofillProfileTest,
   // Modify some fields in Java.
   Java_AutofillProfile_setInfo(
       env, jprofile, static_cast<int32_t>(ADDRESS_HOME_COUNTRY), u"US",
-      static_cast<int32_t>(VerificationStatus::kUserVerified));
+      std::to_underlying(VerificationStatus::kUserVerified));
   Java_AutofillProfile_setInfo(
       env, jprofile, static_cast<int32_t>(NAME_FULL), u"Something Else",
-      static_cast<int32_t>(VerificationStatus::kUserVerified));
+      std::to_underlying(VerificationStatus::kUserVerified));
   Java_AutofillProfile_setInfo(
       env, jprofile, static_cast<int32_t>(EMAIL_ADDRESS),
       profile.GetRawInfo(EMAIL_ADDRESS),
-      static_cast<int32_t>(VerificationStatus::kNoStatus));
+      std::to_underlying(VerificationStatus::kNoStatus));
 
   AutofillProfile modified_profile =
       AutofillProfile::CreateFromJavaObject(jprofile, &profile, "en-US");

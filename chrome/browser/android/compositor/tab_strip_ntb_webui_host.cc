@@ -24,6 +24,7 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_ui.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/common/input/web_keyboard_event.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
@@ -72,9 +73,8 @@ bool IsActivatingInputEvent(const blink::WebInputEvent& event) {
 
 }  // namespace
 
-// TODO(crbug.com/498763314): Enable the event bridge when it supports
-// lazily-restored Android tabs without WebContents. The NTB does not observe
-// tab strip events.
+// The NTB does not observe tab strip events, so it uses an injector without an
+// EventBridge.
 TabStripNtbWebUiHost::TabStripNtbWebUiHost(
     TabModel* tab_model,
     base::TimeTicks activity_creation_time,
@@ -83,10 +83,9 @@ TabStripNtbWebUiHost::TabStripNtbWebUiHost(
       activity_creation_time_(activity_creation_time),
       java_coordinator_(java_coordinator),
       service_(std::make_unique<tabs_api::TabStripServiceImpl>(
-          std::make_unique<tabs_api::AndroidTabStripApiInjector>(
+          tabs_api::AndroidTabStripApiInjector::CreateWithoutEventBridge(
               tab_model,
-              TabModel::TabLaunchType::FROM_CHROME_UI,
-              /*enable_event_bridge=*/false))) {
+              TabModel::TabLaunchType::FROM_CHROME_UI))) {
   TabModelList::AddObserver(this);
   const GURL url(chrome::kChromeUITabStripNtbURL);
   web_contents_ = CreateWebContents(tab_model->GetProfile(), url);
@@ -151,6 +150,23 @@ void TabStripNtbWebUiHost::Resize(int32_t width_px, int32_t height_px) {
   ui::ViewAndroid* view = web_contents_->GetNativeView();
   view->OnPhysicalBackingSizeChanged(gfx::Size(width_px, height_px));
   view->OnSizeChanged(width_px, height_px);
+}
+
+void TabStripNtbWebUiHost::SetButtonVisible(bool visible) {
+  if (!web_contents_) {
+    return;
+  }
+  content::WebUI* web_ui = web_contents_->GetWebUI();
+  if (!web_ui) {
+    return;
+  }
+  content::WebUIController* controller = web_ui->GetController();
+  if (!controller) {
+    return;
+  }
+  if (auto* ntb_ui = controller->GetAs<tabstrip_ntb::TabStripNtbUI>()) {
+    ntb_ui->SetButtonVisible(visible);
+  }
 }
 
 scoped_refptr<cc::slim::Layer> TabStripNtbWebUiHost::GetLayer() {
@@ -242,6 +258,12 @@ static void JNI_NtbWebUiCoordinator_Resize(JNIEnv* env,
                                            int32_t height_px) {
   reinterpret_cast<TabStripNtbWebUiHost*>(host_ptr)->Resize(width_px,
                                                             height_px);
+}
+
+static void JNI_NtbWebUiCoordinator_SetButtonVisible(JNIEnv* env,
+                                                     int64_t host_ptr,
+                                                     bool visible) {
+  reinterpret_cast<TabStripNtbWebUiHost*>(host_ptr)->SetButtonVisible(visible);
 }
 
 static void JNI_NtbWebUiCoordinator_Destroy(JNIEnv* env, int64_t host_ptr) {

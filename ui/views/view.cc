@@ -30,6 +30,7 @@
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/scoped_observation.h"
@@ -95,6 +96,7 @@
 #include "ui/views/layout/layout_provider.h"
 #include "ui/views/property_effects.h"
 #include "ui/views/view_class_properties.h"
+#include "ui/views/view_guard.h"
 #include "ui/views/view_observer.h"
 #include "ui/views/view_tracker.h"
 #include "ui/views/view_utils.h"
@@ -357,6 +359,10 @@ void View::ReorderChildView(View* view, size_t index) {
   DCHECK_EQ(view->parent_, this);
   const auto i = std::ranges::find(children_, view);
   DCHECK(i != children_.end());
+
+  // Should never destroy a view or its child when reordering child views.
+  ViewGuard this_guard(*this, base::NotFatalUntil::M165);
+  ViewGuard child_guard(*view, base::NotFatalUntil::M165);
 
   // If |view| is already at the desired position, there's nothing to do.
   const auto pos =
@@ -913,15 +919,6 @@ void View::OnLayerRecreated(ui::Layer* old_layer, ui::Layer* new_layer) {
       };
   swap_layer(layers_below_);
   swap_layer(layers_above_);
-}
-
-std::unique_ptr<ui::Layer> View::RecreateLayer() {
-  std::unique_ptr<ui::Layer> old_layer = LayerOwner::RecreateLayer();
-  Widget* widget = GetWidget();
-  if (widget) {
-    widget->LayerTreeChanged();
-  }
-  return old_layer;
 }
 
 bool View::GetClipLayerToVisibleBounds() const {
@@ -2635,11 +2632,6 @@ void View::DestroyLayerImpl(LayerChangeNotifyBehavior notify_parents) {
   if (notify_parents == LayerChangeNotifyBehavior::NOTIFY) {
     NotifyParentsOfLayerChange();
   }
-
-  Widget* widget = GetWidget();
-  if (widget) {
-    widget->LayerTreeChanged();
-  }
 }
 
 void View::NotifyParentsOfLayerChange() {
@@ -3301,6 +3293,10 @@ void View::AddChildViewAtImpl(View* view, size_t index) {
     return;
   }
 
+  // Should never destroy a view or its child when adding to the hierarchy.
+  ViewGuard this_guard(*this, base::NotFatalUntil::M165);
+  ViewGuard child_guard(*view, base::NotFatalUntil::M165);
+
   // Remove |view| from its parent, if any.
   Widget* old_widget = view->GetWidget();
   ui::NativeTheme* old_theme = old_widget ? view->GetNativeTheme() : nullptr;
@@ -3329,22 +3325,16 @@ void View::AddChildViewAtImpl(View* view, size_t index) {
   // Ensure the layer tree matches the view tree before calling to any client
   // code. This way if client code further modifies the view tree we are in a
   // sane state.
-  const bool did_reparent_any_layers = view->UpdateParentLayers();
-  if (did_reparent_any_layers && widget) {
-    widget->LayerTreeChanged();
-  }
+  view->UpdateParentLayers();
 
   // Layers and hosted native views are stacked according to the order of the
   // views that own them, so adding a subtree that owns no layer cannot change
-  // that order: with kNativeViewHostManagesLayers a view hosting a native view
-  // owns a layer too. Skip the reorder in that case, since it walks the whole
-  // subtree of the nearest layer-backed ancestor and, through
-  // Widget::ReorderNativeViews(), the whole widget, which is quadratic when
-  // many children are added in a row, e.g. when a large session is restored
-  // into the tab strip. The legacy reorderer associates windows with
-  // arbitrary views via kHostViewKey, so it keeps the unconditional reorder.
-  if (SubtreeHasLayer(view) ||
-      !base::FeatureList::IsEnabled(features::kNativeViewHostManagesLayers)) {
+  // that order: a view hosting a native view owns a layer too. Skip the reorder
+  // in that case, since it walks the whole subtree of the nearest layer-backed
+  // ancestor and, through Widget::ReorderNativeViews(), the whole widget,
+  // which is quadratic when many children are added in a row, e.g. when a
+  // large session is restored into the tab strip.
+  if (SubtreeHasLayer(view)) {
     ReorderLayers();
   }
 
@@ -3426,6 +3416,12 @@ void View::DoRemoveChildView(View* view,
   }
 
   std::unique_ptr<View> view_to_be_deleted;
+
+  // Should never destroy a view or its child when removing from the
+  // hierarchy, at least until `view_to_be_deleted` is released.
+  ViewGuard this_guard(*this, base::NotFatalUntil::M165);
+  ViewGuard child_guard(*view, base::NotFatalUntil::M165);
+
   view->RemoveFromFocusList();
 
   UnregisterChildrenForVisibleBoundsNotification(view);
@@ -3454,9 +3450,6 @@ void View::DoRemoveChildView(View* view,
   // Make sure the layers belonging to the subtree rooted at |view| get
   // removed. Only do this after all the removal notifications have gone out.
   view->OrphanLayers();
-  if (widget) {
-    widget->LayerTreeChanged();
-  }
 
   if (view->parent_) {
     view->parent_->GetViewAccessibility().FireLiveRegionChangedIfNeeded(
@@ -3809,11 +3802,6 @@ void View::CreateLayer(ui::LayerType layer_type) {
     parent()->ReorderLayers();
   }
 
-  Widget* widget = GetWidget();
-  if (widget) {
-    widget->LayerTreeChanged();
-  }
-
   // Before having its own Layer, this View may have painted in to a Layer owned
   // by an ancestor View. Scheduling a paint on the parent View will erase this
   // View's painting effects on the ancestor View's Layer.
@@ -3821,27 +3809,22 @@ void View::CreateLayer(ui::LayerType layer_type) {
   SchedulePaintOnParent();
 }
 
-bool View::UpdateParentLayers() {
+void View::UpdateParentLayers() {
   TRACE_EVENT1("views", "View::UpdateParentLayers", "class", GetClassName());
 
   // Attach all top-level un-parented layers.
   if (layer()) {
     if (!layer()->parent()) {
       UpdateParentLayer();
-      return true;
     }
     // The layers of any child views are already in place, so we can stop
     // iterating here.
-    return false;
+    return;
   }
-  bool result = false;
   internal::ScopedChildrenLock lock(this);
   for (views::View* child : children_) {
-    if (child->UpdateParentLayers()) {
-      result = true;
-    }
+    child->UpdateParentLayers();
   }
-  return result;
 }
 
 void View::OrphanLayers() {

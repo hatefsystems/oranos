@@ -32,20 +32,20 @@ const NON_FAVICON_MATCH_TYPES: Set<string> = new Set([
 // "chrome/browser/ui/webui/searchbox/searchbox_handler.cc".
 const THEMED_ICONS: Set<string> = new Set([
   '//resources/cr_components/searchbox/icons/calendar.svg',
-  '//resources/cr_components/searchbox/icons/drive_docs.svg',
-  '//resources/cr_components/searchbox/icons/drive_folder.svg',
-  '//resources/cr_components/searchbox/icons/drive_form.svg',
-  '//resources/cr_components/searchbox/icons/drive_image.svg',
+  '//resources/cr_components/searchbox/icons/drive_docs_custom.svg',
+  '//resources/cr_components/searchbox/icons/drive_folder_custom.svg',
+  '//resources/cr_components/searchbox/icons/drive_form_custom.svg',
+  '//resources/cr_components/searchbox/icons/drive_image_custom.svg',
   '//resources/cr_components/searchbox/icons/drive_logo.svg',
-  '//resources/cr_components/searchbox/icons/drive_pdf.svg',
-  '//resources/cr_components/searchbox/icons/drive_sheets.svg',
-  '//resources/cr_components/searchbox/icons/drive_slides.svg',
-  '//resources/cr_components/searchbox/icons/drive_video.svg',
+  '//resources/cr_components/searchbox/icons/drive_pdf_custom.svg',
+  '//resources/cr_components/searchbox/icons/drive_sheets_custom.svg',
+  '//resources/cr_components/searchbox/icons/drive_slides_custom.svg',
+  '//resources/cr_components/searchbox/icons/drive_video_custom.svg',
   '//resources/cr_components/searchbox/icons/google_agentspace_logo.svg',
   '//resources/cr_components/searchbox/icons/google_agentspace_logo_25.svg',
   '//resources/cr_components/searchbox/icons/google_g.svg',
   '//resources/cr_components/searchbox/icons/google_g_gradient.svg',
-  '//resources/cr_components/searchbox/icons/note.svg',
+  '//resources/cr_components/searchbox/icons/note_custom.svg',
   '//resources/cr_components/searchbox/icons/sites.svg',
 ]);
 
@@ -360,7 +360,8 @@ export class SearchboxIconElement extends CrLitElement {
     }
 
     if (this.match && !this.match.isSearchType) {
-      if (THEMED_ICONS.has(this.match.iconPath)) {
+      if (THEMED_ICONS.has(this.match.iconPath) ||
+          THEMED_ICONS.has(this.match.iconPath.replace('_old.svg', '.svg'))) {
         return this.match.iconPath;
       }
 
@@ -384,10 +385,10 @@ export class SearchboxIconElement extends CrLitElement {
     }
 
     if (THEMED_ICONS.has(this.defaultIcon) ||
-        (this.inSearchbox && this.isTopChromeSearchbox_ &&
-         isFaviconUrl(this.defaultIcon))) {
-      // These colored icons need to be displayed as a favicon image as mask
-      // images will mask the colors.
+        THEMED_ICONS.has(this.defaultIcon.replace('_old.svg', '.svg')) ||
+        (this.inSearchbox && isFaviconUrl(this.defaultIcon))) {
+      // Colored icons (Google G, DSE favicons) must render as an <img>; a CSS
+      // mask would strip their colors.
       return this.defaultIcon;
     }
 
@@ -426,15 +427,19 @@ export class SearchboxIconElement extends CrLitElement {
              SecondaryTextPlacement.kBelowPrimaryText ||
          this.match.isEnterpriseSearchAggregatorPeopleType ||
          this.isTopChromeSearchbox_ || !this.inSearchbox)) {
-      return `url(${this.match.iconPath})`;
+      if (this.match.iconPath) {
+        return `url(${this.match.iconPath})`;
+      }
     }
 
-    if (this.inSearchbox && this.isTopChromeSearchbox_) {
+    if (this.inSearchbox) {
       // When focused on an unedited webpage URL without an active match,
       // fall back to the generic globe icon (page_cr23.svg).
-      if (this.pageUrl && !this.match) {
+      if (this.isTopChromeSearchbox_ && this.pageUrl && !this.match) {
         return 'url(//resources/cr_components/searchbox/icons/page_cr23.svg)';
       }
+      // A non-Google DSE favicon can't be drawn as a mask, so fall back to the
+      // search loupe while it loads or if it fails to load.
       if (isFaviconUrl(this.defaultIcon)) {
         return 'url(//resources/cr_components/searchbox/icons/search_cr23.svg)';
       }

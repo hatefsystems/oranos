@@ -12,7 +12,6 @@
 #include <vector>
 
 #include "base/containers/flat_map.h"
-#include "base/containers/lru_cache.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/sequence_checker.h"
@@ -28,12 +27,17 @@ class TransportChannel;
 // TransportChannel.
 class TransportSessionRegistryImpl : public TransportSessionRegistry {
  public:
-  static constexpr size_t kMaxClosedSessionsHistory = 100;
-
+  // `on_downstream_message` is handed to every session this registry creates.
+  // See TransportSessionImpl::DownstreamMessageCallback.
   explicit TransportSessionRegistryImpl(
-      base::WeakPtr<TransportChannel> channel);
-  TransportSessionRegistryImpl(base::WeakPtr<TransportChannel> channel,
-                               size_t max_concurrent_sessions);
+      base::WeakPtr<TransportChannel> channel,
+      TransportSessionImpl::DownstreamMessageCallback on_downstream_message =
+          TransportSessionImpl::DownstreamMessageCallback());
+  TransportSessionRegistryImpl(
+      base::WeakPtr<TransportChannel> channel,
+      size_t max_concurrent_sessions,
+      TransportSessionImpl::DownstreamMessageCallback on_downstream_message =
+          TransportSessionImpl::DownstreamMessageCallback());
   ~TransportSessionRegistryImpl() override;
 
   TransportSessionRegistryImpl(const TransportSessionRegistryImpl&) = delete;
@@ -44,8 +48,7 @@ class TransportSessionRegistryImpl : public TransportSessionRegistry {
   TransportSession* GetSession(std::string_view session_id) override;
   void AddObserver(Observer* observer) override;
   void RemoveObserver(Observer* observer) override;
-  TransportSessionImpl* GetOrCreateSession(
-      std::string_view session_id) override;
+  TransportSessionImpl* CreateSession(std::string_view session_id) override;
   void DestroySession(std::string_view session_id) override;
 
   // Concrete methods for session lookup and management.
@@ -61,10 +64,10 @@ class TransportSessionRegistryImpl : public TransportSessionRegistry {
 
  private:
   SEQUENCE_CHECKER(sequence_checker_);
-  TransportSessionImpl* CreateSession(std::string_view session_id);
 
   base::WeakPtr<TransportChannel> channel_;
   const size_t max_concurrent_sessions_;
+  const TransportSessionImpl::DownstreamMessageCallback on_downstream_message_;
 
   base::ObserverList<Observer> observers_ GUARDED_BY_CONTEXT(sequence_checker_);
 
@@ -73,11 +76,6 @@ class TransportSessionRegistryImpl : public TransportSessionRegistry {
                      std::unique_ptr<TransportSessionImpl>,  // Session instance
                      std::less<>>;                           // comparator
   SessionMap sessions_ GUARDED_BY_CONTEXT(sequence_checker_);
-
-  // Tracks recently destroyed session IDs so late downstream messages do not
-  // resurrect already-closed sessions via GetOrCreateSession().
-  base::LRUCacheSet<std::string> closed_session_ids_
-      GUARDED_BY_CONTEXT(sequence_checker_){kMaxClosedSessionsHistory};
 
   base::WeakPtrFactory<TransportSessionRegistryImpl> weak_ptr_factory_{this};
 };

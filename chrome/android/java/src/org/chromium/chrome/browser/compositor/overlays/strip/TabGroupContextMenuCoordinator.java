@@ -13,6 +13,7 @@ import static org.chromium.chrome.browser.tabmodel.TabGroupTitleUtils.isTitleUns
 import static org.chromium.ui.listmenu.BasicListMenu.buildMenuDivider;
 import static org.chromium.ui.listmenu.ListItemType.SUBMENU_HEADER;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.content.res.Resources;
@@ -20,7 +21,9 @@ import android.database.DataSetObserver;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.Editable;
+import android.view.GestureDetector;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewStub;
@@ -32,6 +35,7 @@ import android.widget.ListView;
 
 import androidx.annotation.VisibleForTesting;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.Token;
 import org.chromium.base.TraceEvent;
 import org.chromium.build.annotations.Initializer;
@@ -92,6 +96,7 @@ import org.chromium.ui.modelutil.MVCListAdapter;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.text.EmptyTextWatcher;
+import org.chromium.ui.util.MotionEventUtils;
 import org.chromium.ui.widget.AnchoredPopupWindow.HorizontalOrientation;
 import org.chromium.ui.widget.RectProvider;
 
@@ -558,6 +563,15 @@ public class TabGroupContextMenuCoordinator extends TabStripReorderingHelper<Tok
 
         if (mTabStripLayout == TabStripLayoutType.HORIZONTAL) {
             setMenuSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);
+        } else if (mTabStripLayout == TabStripLayoutType.VERTICAL) {
+            // Allow the root ScrollView to take initial focus before its descendants so that
+            // TabOverflowMenuHolder#show() focuses the ScrollView at the top instead of focusing
+            // the bottom ListView (which would auto-scroll past the group title and color picker)
+            // or the group title EditText.
+            mContentView.setFocusable(/* focusable= */ true);
+            mContentView.setFocusableInTouchMode(/* focusableInTouchMode= */ true);
+            ((ViewGroup) mContentView)
+                    .setDescendantFocusability(ViewGroup.FOCUS_BEFORE_DESCENDANTS);
         }
 
         ListView listView = mContentView.findViewById(R.id.tab_group_action_menu_list);
@@ -831,6 +845,7 @@ public class TabGroupContextMenuCoordinator extends TabStripReorderingHelper<Tok
                 assumeNonNull(mContext), getTabModel().getTabCountForGroup(mTabGroupId));
     }
 
+    @SuppressLint("ClickableViewAccessibility")
     private void buildTitleEditor(View contentView, Context context, boolean isIncognito) {
         mGroupTitleEditText = contentView.findViewById(R.id.tab_group_title);
 
@@ -878,6 +893,34 @@ public class TabGroupContextMenuCoordinator extends TabStripReorderingHelper<Tok
 
         setExistingOrDefaultTitle(
                 TabGroupTitleUtils.getDisplayableTitle(context, getTabModel(), mTabGroupId));
+
+        final EditText titleEditText = mGroupTitleEditText;
+
+        // Re-select all title text on double-click or double-tap.
+        GestureDetector gestureDetector =
+                new GestureDetector(
+                        context,
+                        new GestureDetector.SimpleOnGestureListener() {
+                            @Override
+                            public boolean onDoubleTap(MotionEvent e) {
+                                titleEditText.selectAll();
+                                return true;
+                            }
+
+                            @Override
+                            public boolean onDoubleTapEvent(MotionEvent e) {
+                                return true;
+                            }
+                        },
+                        ThreadUtils.getUiThreadHandler());
+        titleEditText.setOnTouchListener(
+                (v, event) -> {
+                    // Bypass double-tap handling for non-primary button clicks (e.g. context menu).
+                    if (!MotionEventUtils.isTouchOrPrimaryButton(event.getButtonState())) {
+                        return false;
+                    }
+                    return gestureDetector.onTouchEvent(event);
+                });
 
         // Add listener to group title EditText to update group title when keyboard starts hiding.
         mWindowAndroid

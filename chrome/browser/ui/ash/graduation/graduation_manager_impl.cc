@@ -38,12 +38,6 @@
 
 namespace ash::graduation {
 
-namespace {
-base::Time GetNextDayLocalMidnight(base::Time date) {
-  return (date.LocalMidnight() + base::Days(1)).LocalMidnight();
-}
-}  // namespace
-
 GraduationManagerImpl::GraduationManagerImpl(
     ApplicationLocaleStorage* application_locale_storage)
     : application_locale_storage_(CHECK_DEREF(application_locale_storage)),
@@ -196,7 +190,7 @@ void GraduationManagerImpl::MaybeScheduleAppStatusUpdate() {
     return;
   }
 
-  const base::Time midnight = GetNextDayLocalMidnight(/*date=*/clock_->Now());
+  const base::Time midnight = clock_->Now().NextLocalMidnight();
   CHECK(midnight_timer_);
   midnight_timer_->Start(FROM_HERE, midnight,
                          base::BindOnce(&GraduationManagerImpl::OnMidnightTimer,

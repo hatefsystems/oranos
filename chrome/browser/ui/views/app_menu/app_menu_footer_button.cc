@@ -27,7 +27,6 @@
 #include "ui/color/color_id.h"
 #include "ui/events/event_constants.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/views/accessibility/accessibility_paint_checks.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/animation/ink_drop.h"
 #include "ui/views/animation/ink_drop_host.h"
@@ -47,6 +46,7 @@
 
 namespace {
 constexpr int kRowLineHeight = 16;
+constexpr int kSubmenuCaretAlignmentOffset = 4;
 }  // namespace
 
 AppMenuFooterButton::AppMenuFooterButton(views::MenuItemView* parent_menu_item,
@@ -88,7 +88,6 @@ AppMenuFooterButton::AppMenuFooterButton(views::MenuItemView* parent_menu_item,
   icon_view_ = AddChildView(std::make_unique<views::ImageView>());
   icon_view_->SetImageSize(gfx::Size(icon_size, icon_size));
   icon_view_->GetViewAccessibility().SetIsIgnored(true);
-  icon_view_->SetProperty(views::kSkipAccessibilityPaintChecks, true);
   icon_view_->SetCanProcessEventsWithinSubtree(false);
   icon_view_->SetVisible(false);
 
@@ -98,7 +97,6 @@ AppMenuFooterButton::AppMenuFooterButton(views::MenuItemView* parent_menu_item,
   label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   label_->SetElideBehavior(gfx::ELIDE_TAIL);
   label_->GetViewAccessibility().SetIsIgnored(true);
-  label_->SetProperty(views::kSkipAccessibilityPaintChecks, true);
   label_->SetCanProcessEventsWithinSubtree(false);
 
   if (submenu_item) {
@@ -108,8 +106,6 @@ AppMenuFooterButton::AppMenuFooterButton(views::MenuItemView* parent_menu_item,
     submenu_arrow_view_ = AddChildView(std::make_unique<views::ImageView>());
     submenu_arrow_view_->SetImageSize(gfx::Size(icon_size, icon_size));
     submenu_arrow_view_->GetViewAccessibility().SetIsIgnored(true);
-    submenu_arrow_view_->SetProperty(views::kSkipAccessibilityPaintChecks,
-                                     true);
     submenu_arrow_view_->SetCanProcessEventsWithinSubtree(false);
   }
 
@@ -193,7 +189,7 @@ void AppMenuFooterButton::AddedToWidget() {
 }
 
 void AppMenuFooterButton::SetImageModel(const ui::ImageModel& image_model) {
-  if (GetSubmenuItem() || image_model.IsEmpty()) {
+  if (image_model.IsEmpty()) {
     icon_view_->SetVisible(false);
   } else if (image_model.IsVectorIcon()) {
     const int icon_size = ChromeLayoutProvider::Get()->GetDistanceMetric(
@@ -241,8 +237,15 @@ void AppMenuFooterButton::SetUseRowStyle(bool use_row_style) {
     SetBackground(views::CreateRoundedRectBackground(ui::kColorMenuBackground,
                                                      corner_radius));
 
-    layout_->set_inside_border_insets(
-        provider->GetInsetsMetric(INSETS_ACTION_APP_MENU_FOOTER_BUTTON));
+    gfx::Insets button_insets =
+        provider->GetInsetsMetric(INSETS_ACTION_APP_MENU_FOOTER_BUTTON);
+    if (submenu_arrow_view_) {
+      // Pad the trailing edge so the caret shifts left without moving the
+      // highlight.
+      button_insets.set_right(button_insets.right() +
+                              kSubmenuCaretAlignmentOffset);
+    }
+    layout_->set_inside_border_insets(button_insets);
   }
   UpdateColors();
 }

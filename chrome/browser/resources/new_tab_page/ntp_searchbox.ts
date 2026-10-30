@@ -6,7 +6,6 @@ import '//resources/cr_components/composebox/composebox_file_inputs.js';
 import '//resources/cr_components/composebox/contextual_entrypoint_and_menu.js';
 import '//resources/cr_components/searchbox/searchbox_compose_button.js';
 import '//resources/cr_components/searchbox/searchbox_dropdown.js';
-import '//resources/cr_components/search/animated_glow.js';
 import '//resources/cr_components/searchbox/searchbox_input.js';
 
 import type {ComposeboxState, ContextualUpload, DriveUpload, TabUpload} from '//resources/cr_components/composebox/common.js';
@@ -25,6 +24,7 @@ import {waitForLazyRender} from '//resources/cr_components/searchbox/utils.js';
 import {I18nMixinLit} from '//resources/cr_elements/i18n_mixin_lit.js';
 import {WebUiListenerMixinLit} from '//resources/cr_elements/web_ui_listener_mixin_lit.js';
 import {assert} from '//resources/js/assert.js';
+import {FocusOutlineManager} from '//resources/js/focus_outline_manager.js';
 import {loadTimeData} from '//resources/js/load_time_data.js';
 import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
 import type {PropertyValues} from '//resources/lit/v3_0/lit.rollup.js';
@@ -627,7 +627,11 @@ export class NtpSearchboxElement extends NtpSearchboxElementBase implements
   protected onContextMenuClosed_() {
     this.contextMenuOpened_ = false;
     this.tabSuggestionsState_ = TabSuggestionsState.NOT_STARTED;
-    this.blur();
+    // Keep focus on "+" after keyboard use (b/564743397); blur after mouse
+    // use so #searchboxContainer drops its scrim (https://crrev.com/c/7540901).
+    if (!FocusOutlineManager.forDocument(document).visible) {
+      this.blur();
+    }
   }
 
   protected onRequestTabSuggestionsLoad() {

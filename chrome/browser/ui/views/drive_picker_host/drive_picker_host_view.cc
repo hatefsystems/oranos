@@ -9,6 +9,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/prefs/prefs_tab_helper.h"
 #include "chrome/browser/ui/views/drive_picker_host/drive_picker_result_handler.mojom.h"
 #include "chrome/browser/ui/webui/drive_picker_host/drive_picker_host_ui.h"
 #include "chrome/common/webui_url_constants.h"
@@ -55,6 +56,12 @@ DrivePickerHostView::DrivePickerHostView(
   // `GetWebContents()` is guaranteed to return a valid pointer. We use a
   // `CHECK` here to assert this state and remove redundant defensive checks.
   CHECK(web_view->GetWebContents());
+
+  // Apply Chrome's renderer preferences (focus ring color, fonts, etc.) to the
+  // hosted `WebContents`. Without this, Blink falls back to its built-in
+  // default focus ring color (orange), which shows up around the Drive Picker
+  // while it loads and takes focus.
+  PrefsTabHelper::CreateForWebContents(web_view->GetWebContents());
 
   web_view->GetWebContents()->SetDelegate(this);
   SetAcceleratorHandling(views::WebContentsAcceleratorHandling::kEnabled);
@@ -115,6 +122,19 @@ void DrivePickerHostView::OnTransitionToPicker() {
 void DrivePickerHostView::OnTransitionToError() {
   current_ui_type_ =
       drive_picker_host::DrivePickerHostRequest::RequestType::kErrorDialog;
+  PreferredSizeChanged();
+  if (GetWidget()) {
+    GetWidget()->CenterWindow(GetPreferredSize());
+  }
+}
+
+void DrivePickerHostView::OnTransitionToConsent() {
+  if (current_ui_type_ !=
+      drive_picker_host::DrivePickerHostRequest::RequestType::kErrorDialog) {
+    return;
+  }
+  current_ui_type_ =
+      drive_picker_host::DrivePickerHostRequest::RequestType::kConsentDialog;
   PreferredSizeChanged();
   if (GetWidget()) {
     GetWidget()->CenterWindow(GetPreferredSize());

@@ -376,11 +376,13 @@ class CORE_EXPORT WebFrameWidgetImpl
       base::TimeTicks) override;
   void OnFirstContentfulPaint() override;
   void MarkConditional(const AtomicString& name,
-                       base::TimeTicks start_time) override;
+                       base::TimeTicks start_time,
+                       LocalDOMWindow* window) override;
   void MeasureConditional(const AtomicString& name,
                           const AtomicString& start_mark,
                           const AtomicString& end_mark,
-                          base::TimeTicks end_time) override;
+                          base::TimeTicks end_time,
+                          LocalDOMWindow* window) override;
   // TODO(https://crbug.com/515098190): Below are not FrameWidget overrides.
 
   void SetVirtualKeyboardResizeHeightForTesting(int);
@@ -433,6 +435,9 @@ class CORE_EXPORT WebFrameWidgetImpl
   FrameWidgetTestHelper* GetFrameWidgetTestHelperForTesting() override;
   void PrepareForFinalLifecyclUpdateForTesting() override;
   void ApplyLocalSurfaceIdUpdate(const viz::LocalSurfaceId& id) override;
+  const display::ScreenInfo& GetScreenInfo() override;
+  const display::ScreenInfos& GetScreenInfos() override;
+  float GetOriginalDeviceScaleFactor() override;
 
   // Called when a drag-n-drop operation should begin.
   virtual void StartDragging(LocalFrame* source_frame,
@@ -496,10 +501,6 @@ class CORE_EXPORT WebFrameWidgetImpl
       const VisualProperties& visual_properties) override;
   bool PinchGestureActiveInMainFrame() override;
   float PageScaleInMainFrame() override;
-  const display::ScreenInfo& GetScreenInfo() override;
-  const display::ScreenInfos& GetScreenInfos() override;
-  const display::ScreenInfo& GetOriginalScreenInfo() override;
-  const display::ScreenInfos& GetOriginalScreenInfos() override;
   gfx::Rect WindowRect() override;
   gfx::Rect ViewRect() override;
   void SetScreenRects(const gfx::Rect& widget_screen_rect,
@@ -523,6 +524,7 @@ class CORE_EXPORT WebFrameWidgetImpl
   void BindInputTargetClient(
       mojo::PendingReceiver<viz::mojom::blink::InputTargetClient> receiver)
       override;
+  const display::ScreenInfos& GetOriginalScreenInfos() override;
 
   // mojom::blink::FrameWidget overrides:
   void SetViewportIntersection(
@@ -817,8 +819,6 @@ class CORE_EXPORT WebFrameWidgetImpl
   // compositor submits a frame.
   void PropagateHistorySequenceNumberToCompositor();
 
-  // Ask compositor to create the shared memory for dropped frames ukm region.
-  base::ReadOnlySharedMemoryRegion CreateSharedMemoryForDroppedFramesUkm();
 #if BUILDFLAG(IS_ANDROID)
   // Calculate and cache the most up to date line bounding boxes in the document
   // coordinate space.
@@ -1167,9 +1167,6 @@ class CORE_EXPORT WebFrameWidgetImpl
   bool DidChangeFullscreenState(
       const VisualProperties& visual_properties) const;
 
-  // Satisfy the render blocking condition for cross-document view transitions.
-  void NotifyViewTransitionRenderingHasBegun();
-
   // True when `this` should ignore input events.
   bool ShouldIgnoreInputEvents();
 
@@ -1472,6 +1469,17 @@ class CORE_EXPORT WebFrameWidgetImpl
     void OnDismissed() override {
       if (widget_ && widget_->unbounded_surface_state_.Get() == this) {
         widget_->OnDismissed();
+      }
+    }
+
+    // Called when the browser destroys the native surface window or refuses
+    // `RequestUnboundedSurface()` (e.g. while hidden). Unlike `OnDismissed()`,
+    // the surface is already gone on the browser side, so dismissal must not be
+    // cancelable by `beforetoggle`.
+    void OnClientDisconnected() {
+      if (widget_ && widget_->unbounded_surface_state_.Get() == this) {
+        widget_->DismissUnboundedSurfaceState(
+            UnboundedDismissReason::kProgrammatic);
       }
     }
 

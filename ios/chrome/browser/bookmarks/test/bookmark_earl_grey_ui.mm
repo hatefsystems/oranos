@@ -12,6 +12,7 @@
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_storage_type.h"
 #import "ios/chrome/browser/bookmarks/public/bookmarks_ui_constants.h"
+#import "ios/chrome/browser/bookmarks/test/bookmark_earl_grey_app_interface.h"
 #import "ios/chrome/browser/popup_menu/public/popup_menu_constants.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/public/snackbar/snackbar_constants.h"
@@ -356,10 +357,18 @@ id<GREYMatcher> SearchIconButton() {
 }
 
 - (void)dismissContextMenu {
-  // Since there are is no cancel action on the iOS 13 context menus, dismiss
-  // by tapping elsewhere (on the key window).
-  [[EarlGrey selectElementWithMatcher:grey_keyWindow()]
-      performAction:grey_tap()];
+  // When EarlGrey injects a long press to present a UITableView context menu,
+  // presenting `_UIContextMenuContainerView` can detach the cell before
+  // `GREYTouchInjector` delivers `UITouchPhaseEnded`, leaving UITableView's
+  // pending selection index path set to the long-pressed row. Clear any
+  // lingering pending selection before and after dismissing the context menu
+  // so neither the dismissal tap nor a subsequent tap selects the long-pressed
+  // row.
+  [BookmarkEarlGreyAppInterface cancelBookmarksTableViewTouches];
+  [ChromeEarlGreyUI dismissContextMenuIfPresent];
+  [ChromeEarlGrey waitForUIElementToDisappearWithMatcher:
+                      grey_kindOfClassName(@"_UIContextMenuContainerView")];
+  [BookmarkEarlGreyAppInterface cancelBookmarksTableViewTouches];
 }
 
 - (void)verifyActionSheetsForSingleURLWithEditEnabled:(BOOL)editEnabled {
@@ -394,47 +403,6 @@ id<GREYMatcher> SearchIconButton() {
                  chrome_test_util::ActionSheetItemWithAccessibilityLabelId(
                      IDS_IOS_CONTENT_CONTEXT_COPY)]
       assertWithMatcher:grey_sufficientlyVisible()];
-}
-
-- (void)verifyActionSheetsForSingleFolderWithEditEnabled:(BOOL)editEnabled {
-  // Verify it shows the action sheets.
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          kBookmarksHomeContextMenuIdentifier)]
-      assertWithMatcher:grey_sufficientlyVisible()];
-
-  // Verify options on the action sheets.
-  // Verify that the edit menu option is enabled/disabled according to
-  // `editEnabled`.
-  id<GREYMatcher> matcher =
-      editEnabled ? grey_sufficientlyVisible()
-                  : grey_accessibilityTrait(UIAccessibilityTraitNotEnabled);
-  [[EarlGrey
-      selectElementWithMatcher:ButtonWithAccessibilityLabelId(
-                                   IDS_IOS_BOOKMARK_CONTEXT_MENU_EDIT_FOLDER)]
-      assertWithMatcher:matcher];
-
-  [[EarlGrey selectElementWithMatcher:ButtonWithAccessibilityLabelId(
-                                          IDS_IOS_BOOKMARK_CONTEXT_MENU_MOVE)]
-      assertWithMatcher:matcher];
-}
-
-- (void)dismissActionSheets {
-  // Verify it shows the context menu.
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          kBookmarksHomeContextMenuIdentifier)]
-      assertWithMatcher:grey_sufficientlyVisible()];
-
-  // Dismiss the context menu. On non compact width tap the Bookmarks TableView
-  // to dismiss, since there might not be a cancel button.
-  if ([ChromeEarlGrey isCompactWidth]) {
-    [[EarlGrey
-        selectElementWithMatcher:ButtonWithAccessibilityLabelId(IDS_CANCEL)]
-        performAction:grey_tap()];
-  } else {
-    [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                            kBookmarksHomeTableViewIdentifier)]
-        performAction:grey_tap()];
-  }
 }
 
 - (void)verifyContextBarInDefaultStateWithSelectEnabled:(BOOL)selectEnabled

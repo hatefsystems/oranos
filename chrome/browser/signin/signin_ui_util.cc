@@ -54,8 +54,8 @@
 #include "components/signin/public/identity_manager/primary_account_mutator.h"
 #include "components/sync/service/sync_service.h"
 #include "third_party/re2/src/re2/re2.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/page_transition_types.h"
-#include "ui/base/window_open_disposition.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/text_elider.h"
 #include "url/gurl.h"
@@ -202,7 +202,7 @@ void ShowSigninErrorLearnMorePage(Profile* profile) {
       "https://support.google.com/chrome/answer/1181420?";
   NavigateParams params(profile, GURL(kSigninErrorLearnMoreUrl),
                         ui::PAGE_TRANSITION_LINK);
-  params.disposition = WindowOpenDisposition::kNewForegroundTab;
+  params.disposition = ui::mojom::WindowOpenDisposition::kNewForegroundTab;
   Navigate(&params);
 }
 
@@ -327,7 +327,9 @@ void EnableHistorySyncFromMultiAccountPromo(
   }
 
   CHECK(!account.account_id.empty(), base::NotFatalUntil::M162);
-  CHECK(!account.email.empty(), base::NotFatalUntil::M162);
+  // TODO(crbug.com/577861241): CHECK-exclusion: Convert to a CHECK once we are
+  // confident it won't be triggered.
+  DCHECK(!account.email.empty());
   CHECK(AccountConsistencyModeManager::IsDiceEnabledForProfile(profile) ||
             AccountConsistencyModeManager::IsMirrorEnabledForProfile(profile),
         base::NotFatalUntil::M162);

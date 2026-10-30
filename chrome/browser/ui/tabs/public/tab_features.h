@@ -84,6 +84,7 @@ class NavigationPredictorPreconnectClient;
 class NewTabPagePreloadPipelineManager;
 class OneTimePermissionsTrackerHelper;
 class PinnedTranslateActionListener;
+class PrewarmTabHelper;
 class Profile;
 class PwaInstallPageActionController;
 class QwacWebContentsObserver;
@@ -207,6 +208,10 @@ namespace customize_chrome {
 class SidePanelController;
 }  // namespace customize_chrome
 
+namespace dictation {
+class DictationIphController;
+}  // namespace dictation
+
 namespace download {
 class DownloadNavigationObserver;
 }  // namespace download
@@ -224,6 +229,7 @@ class NavigationExtensionEnabler;
 namespace glic {
 class ContextualCueingHelper;
 class GlicCueTabState;
+class GlicGeminiWebWarmingObserver;
 class GlicInstanceHelper;
 class GlicMarketingPageTabHelper;
 class GlicPromotionSourceNavigationObserver;
@@ -471,10 +477,6 @@ class TabFeatures {
     return manage_passwords_page_action_controller_.get();
   }
 
-  zoom::ZoomViewController* zoom_view_controller() {
-    return zoom_view_controller_.get();
-  }
-
   LensOverlayController* lens_overlay_controller();
   const LensOverlayController* lens_overlay_controller() const;
 
@@ -483,10 +485,6 @@ class TabFeatures {
     return record_replay_client_.get();
   }
 #endif
-
-  PwaInstallPageActionController* pwa_install_page_action_controller() {
-    return pwa_install_page_action_controller_.get();
-  }
 
   RecordReplayPageActionController* record_replay_page_action_controller() {
     return record_replay_page_action_controller_.get();
@@ -576,13 +574,6 @@ class TabFeatures {
   // Security-state-driven side effects (known-interception disclosure,
   // form-submission UKM).
   std::unique_ptr<SecurityStateEventObserver> security_state_event_observer_;
-
-  // Forwards tab-related events to sync.
-  std::unique_ptr<sync_sessions::SyncSessionsRouterTabHelper>
-      sync_sessions_router_;
-
-  // Provides this tab's session identity to sync.
-  std::unique_ptr<BrowserSyncedTabDelegate> browser_synced_tab_delegate_;
 
   // Responsible for keeping a tab within a tab group in sync with its remote
   // tab counterpart from sync.
@@ -698,6 +689,8 @@ class TabFeatures {
       glic_marketing_page_tab_helper_;
   std::unique_ptr<glic::GlicPromotionSourceNavigationObserver>
       glic_promotion_source_navigation_observer_;
+  std::unique_ptr<glic::GlicGeminiWebWarmingObserver>
+      glic_gemini_web_warming_observer_;
 
   // Observes page loads to decide when to offer glic contextual cueing.
   std::unique_ptr<glic::ContextualCueingHelper> contextual_cueing_helper_;
@@ -830,6 +823,8 @@ class TabFeatures {
   std::unique_ptr<back_to_opener::BackToOpenerController>
       back_to_opener_controller_;
 
+  std::unique_ptr<dictation::DictationIphController> dictation_iph_controller_;
+
   std::unique_ptr<skills::SkillsUiTabControllerInterface>
       skills_ui_tab_controller_;
 
@@ -927,6 +922,11 @@ class TabFeatures {
   std::unique_ptr<ZeroSuggestPrefetchTabHelper>
       zero_suggest_prefetch_tab_helper_;
 
+  // Observes page load completion, first paint, and visibility changes to
+  // trigger Default Search Engine prewarm when
+  // `kPrewarmPageLoadAndTabSwitchAfterPaintTrigger` is enabled.
+  std::unique_ptr<PrewarmTabHelper> prewarm_tab_helper_;
+
   // Controls the visibility of the intent picker page action.
   std::unique_ptr<IntentPickerTabHelper> intent_picker_tab_helper_;
 
@@ -1005,6 +1005,18 @@ class TabFeatures {
 
   std::unique_ptr<SupervisedUserNavigationObserver>
       supervised_user_navigation_observer_;
+
+  // Provides this tab's session identity to sync. Declared after
+  // `task_tab_helper_` and `supervised_user_navigation_observer_` so those
+  // dependencies outlive it.
+  std::unique_ptr<BrowserSyncedTabDelegate> browser_synced_tab_delegate_;
+
+  // Forwards tab-related events to sync. Declared after
+  // `browser_synced_tab_delegate_` and `sad_tab_helper_` so it is destroyed
+  // before teardown side effects (such as `~SadTabHelper` visibility changes)
+  // or `browser_synced_tab_delegate_` destruction.
+  std::unique_ptr<sync_sessions::SyncSessionsRouterTabHelper>
+      sync_sessions_router_;
 
 #if BUILDFLAG(ENABLE_OFFLINE_PAGES)
   std::unique_ptr<offline_pages::OfflinePageTabHelper> offline_page_tab_helper_;

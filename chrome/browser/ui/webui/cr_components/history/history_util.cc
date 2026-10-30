@@ -68,6 +68,9 @@ content::WebUIDataSource* HistoryUtil::PopulateCommonSourceForHistory(
       {"openAll", IDS_HISTORY_OTHER_SESSIONS_OPEN_ALL},
       {"openSelected", IDS_HISTORY_OPEN},
       {"openTabsMenuItem", IDS_HISTORY_OPEN_TABS_MENU_ITEM},
+      {"openWindowPlural", IDS_HISTORY_OTHER_SESSIONS_OPEN_WINDOW_PLURAL},
+      {"openWindowSingular", IDS_HISTORY_OTHER_SESSIONS_OPEN_WINDOW_SINGULAR},
+      {"noMatchingResults", IDS_HISTORY_NO_MATCHING_RESULTS},
       {"noResults", IDS_HISTORY_NO_RESULTS},
       {"noSearchResults", IDS_HISTORY_NO_SEARCH_RESULTS},
       {"removeBookmark", IDS_HISTORY_REMOVE_BOOKMARK},
@@ -88,6 +91,10 @@ content::WebUIDataSource* HistoryUtil::PopulateCommonSourceForHistory(
       {"sourceFilterChipsAriaLabel",
        IDS_HISTORY_SOURCE_FILTER_CHIPS_ARIA_LABEL},
       {"sourceFilterChipUser", IDS_HISTORY_SOURCE_FILTER_CHIP_USER},
+      {"syncedTabsWindowHeaderPlural",
+       IDS_HISTORY_OTHER_SESSIONS_WINDOW_HEADER_PLURAL},
+      {"syncedTabsWindowHeaderSingular",
+       IDS_HISTORY_OTHER_SESSIONS_WINDOW_HEADER_SINGULAR},
       {"title", IDS_HISTORY_TITLE},
   };
   source->AddLocalizedStrings(kStrings);

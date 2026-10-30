@@ -30,9 +30,7 @@ import java.lang.annotation.RetentionPolicy;
     FeatureConstants.AIM_ACTIVATION_HINT,
     FeatureConstants.ANDROID_BOTTOM_BAR_ADDRESS_BAR,
     FeatureConstants.ANDROID_BOTTOM_BAR_EDUCATION,
-    FeatureConstants.ANDROID_BOTTOM_BAR_GLIC,
-    FeatureConstants.ANDROID_BOTTOM_BAR_NEW_TAB,
-    FeatureConstants.ANDROID_BOTTOM_BAR_PROMO_DIALOG,
+    FeatureConstants.ANDROID_BOTTOM_BAR_EDUCATION_TOOLTIPS,
     FeatureConstants.ANDROID_TAB_DECLUTTER_FEATURE,
     FeatureConstants.ANDROID_TIPS_OPT_IN_PROMO_FEATURE,
     FeatureConstants.ANDROID_VERTICAL_TABS_NEW_LABEL,
@@ -191,14 +189,8 @@ public @interface FeatureConstants {
     /** Bottom bar education bubble and tooltips. */
     String ANDROID_BOTTOM_BAR_EDUCATION = "IPH_AndroidBottomBarEducation";
 
-    /** Describes the GLIC button on the new bottom bar. */
-    String ANDROID_BOTTOM_BAR_GLIC = "IPH_AndroidBottomBarGlic";
-
-    /** Describes the new tab button moved down in the bottom bar. */
-    String ANDROID_BOTTOM_BAR_NEW_TAB = "IPH_AndroidBottomBarNewTab";
-
-    /** Describes the promo dialog shown to introduce the bottom bar. */
-    String ANDROID_BOTTOM_BAR_PROMO_DIALOG = "IPH_AndroidBottomBarPromoDialog";
+    /** Bottom bar education tooltip tour shown after the user opts in. */
+    String ANDROID_BOTTOM_BAR_EDUCATION_TOOLTIPS = "IPH_AndroidBottomBarEducationTooltips";
 
     String ANDROID_TAB_DECLUTTER_FEATURE = "IPH_AndroidTabDeclutter";
     String ANDROID_TIPS_OPT_IN_PROMO_FEATURE = "IPH_AndroidTipsOptInPromo";

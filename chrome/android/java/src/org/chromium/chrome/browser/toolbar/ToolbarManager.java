@@ -279,6 +279,7 @@ import org.chromium.components.search_engines.TemplateUrl;
 import org.chromium.components.search_engines.TemplateUrlService;
 import org.chromium.components.search_engines.TemplateUrlService.TemplateUrlServiceObserver;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
+import org.chromium.content_public.browser.BackForwardTransitionAnimationManager;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.NavigationController;
 import org.chromium.content_public.browser.NavigationEntry;
@@ -502,6 +503,7 @@ public class ToolbarManager
     private @Nullable ViewMarginAdjusterForSideUi mProgressBarSideUiObserver;
     private boolean mIsVerticalTabsHiddenDueToNarrow;
     private boolean mIsXrFsm;
+    private int mRestoredLeftMargin;
     private int mRestoredRightMargin;
 
     private final MonotonicObservableSupplier<TabBookmarker> mTabBookmarkerSupplier;
@@ -612,7 +614,7 @@ public class ToolbarManager
 
             if (mHandler != null) {
                 assert mIsGestureMode : "Must be in gesture mode if transition handler is alive";
-                mHandler.onBackInvoked(mIsGestureMode);
+                mHandler.onBackInvoked();
             } else {
                 res = ToolbarManager.this.handleBackPress();
             }
@@ -637,7 +639,7 @@ public class ToolbarManager
                         mHandler != null, PredictiveGestureNavPhase.CANCELLED);
             }
             if (mHandler != null) {
-                mHandler.onBackCancelled(mIsGestureMode);
+                mHandler.onBackCancelled();
             }
             mBackGestureInProgress = false;
             mIsGestureMode = false;
@@ -669,8 +671,7 @@ public class ToolbarManager
                     backEvent.getSwipeEdge() == BackEventCompat.EDGE_LEFT
                             ? BackGestureEventSwipeEdge.LEFT
                             : BackGestureEventSwipeEdge.RIGHT,
-                    isForward(),
-                    mIsGestureMode)) {
+                    isForward())) {
                 // The gesture is ours again, so handleBackPress() must fall back to the
                 // regular back handling instead of waiting for a transition.
                 mHandler = null;
@@ -723,8 +724,7 @@ public class ToolbarManager
                         backEvent.getSwipeEdge() == BackEventCompat.EDGE_LEFT
                                 ? BackGestureEventSwipeEdge.LEFT
                                 : BackGestureEventSwipeEdge.RIGHT,
-                        isForward(),
-                        mIsGestureMode);
+                        isForward());
             }
             if (mIsGestureMode) {
                 BackPressMetrics.recordPredictiveGestureNav(
@@ -742,7 +742,7 @@ public class ToolbarManager
             final boolean navigateForward = isForward();
             final boolean navigable = navigateForward ? tab.canGoForward() : tab.canGoBack();
             return navigable
-                    && TabOnBackGestureHandler.shouldAnimateNavigationTransition(
+                    && BackForwardTransitionAnimationManager.shouldAnimateNavigationTransition(
                             navigateForward, backEvent.getSwipeEdge());
         }
     }
@@ -754,7 +754,7 @@ public class ToolbarManager
      * @param controlsSizer The {@link BrowserControlsSizer} for the activity.
      * @param fullscreenManager The {@link FullscreenManager} for the activity.
      * @param edgeToEdgeControllerSupplier Supplies an {@link EdgeToEdgeController} needed for
-     *     Bottom Controls Toolbar.
+     *     Bottom Controls Toolbar and top inset adjustments in {@link ToolbarPositionController}.
      * @param controlContainer The container of the toolbar.
      * @param compositorViewHolder Class that holds a {@link CompositorView}.
      * @param urlFocusChangedCallback The callback to be notified when the URL focus changes.
@@ -946,7 +946,8 @@ public class ToolbarManager
                         mToolbarPositionSupplier,
                         /* matchTrustedCdnUrl= */ mIsCustomTab);
         mControlContainer = controlContainer;
-        mControlContainer.setToolbarRightMarginCallback(this::onToolbarRightMarginChanged);
+        mControlContainer.setToolbarHorizontalMarginCallback(
+                this::onToolbarHorizontalMarginsChanged);
         mLocationBarEmbedderUiOverrides.setIsFullWidthExpansionAllowedSupplier(
                 () -> !mControlContainer.isToolbarInAppHeader());
         mToolbarHairline = mControlContainer.findViewById(R.id.toolbar_hairline);
@@ -1496,8 +1497,8 @@ public class ToolbarManager
                         if (mLocationBarModel.getTab() == null) return;
 
                         assert tab == mLocationBarModel.getTab();
+                        mLocationBarModel.notifyUrlChanged(/* isTabChanging= */ false);
                         mLocationBarModel.notifySecurityStateChanged();
-                        mLocationBarModel.notifyUrlChanged(false);
                     }
 
                     @Override
@@ -2141,6 +2142,7 @@ public class ToolbarManager
                         controlContainerTranslationSupplier,
                         controlContainerHeightSupplier,
                         mTopInsetProvider,
+                        mEdgeToEdgeControllerSupplier,
                         new Handler(Looper.getMainLooper()),
                         mActivity,
                         mToolbarPositionSupplier,
@@ -2566,8 +2568,7 @@ public class ToolbarManager
         BottomBarMetrics.maybeRecordEnabledState(mActivity);
         if (BottomBarConfigUtils.isBottomBarEnabled(mActivity)) {
             enableBottomBar();
-        } else if (BottomBarConfigUtils.isBottomBarEligible(mActivity)
-                && BottomBarConfigUtils.isEducationEnabled()) {
+        } else if (BottomBarConfigUtils.isEligibleForEducationDialog(mActivity)) {
             mBottomBarEducationDialogCoordinator =
                     new BottomBarEducationDialogCoordinator(
                             mActivity, mModalDialogManagerSupplier.get(), mActivityTabProvider);
@@ -2575,8 +2576,8 @@ public class ToolbarManager
     }
 
     /**
-     * Shows the bottom bar's startup promo, if any: the bottom bar's own promo when the bar is on,
-     * or the opt-in education dialog when it is off.
+     * Shows the bottom bar's startup promo, if any: the education bubble when the bar is on, or the
+     * opt-in education dialog when it is off.
      *
      * @param profile The profile to check the promo's eligibility against.
      * @return Whether a promo is showing or has claimed the startup promo slot.
@@ -2584,7 +2585,7 @@ public class ToolbarManager
     public boolean maybeShowBottomBarPromo(Profile profile) {
         // The host manager is only created when the bottom bar is on.
         if (mBottomBarHostManager != null) {
-            return mBottomBarHostManager.maybeShowPromoDialog(profile);
+            return mBottomBarHostManager.maybeClaimPromoSlotForEducation(profile);
         }
         return mBottomBarEducationDialogCoordinator != null
                 && mBottomBarEducationDialogCoordinator.maybeShow(profile);
@@ -2668,7 +2669,6 @@ public class ToolbarManager
                         mHomepageEnabledSupplier,
                         mProfileSupplier,
                         mOmniboxFocusStateSupplier,
-                        mModalDialogManagerSupplier,
                         mAppMenuCoordinatorSupplier,
                         mLayoutManager,
                         mToolbarPositionSupplier,
@@ -2767,12 +2767,6 @@ public class ToolbarManager
             newTabModel.set(
                     ActionProperties.ON_PRESS_CALLBACK,
                     v -> {
-                        Tab currentTab = mActivityTabProvider.get();
-                        if (currentTab != null
-                                && BottomBarConfigUtils.isBottomBarEnabled(mActivity)) {
-                            TrackerFactory.getTrackerForProfile(currentTab.getProfile())
-                                    .notifyEvent(EventConstants.ANDROID_BOTTOM_BAR_NEW_TAB_USED);
-                        }
                         TabCreatorUtil.launchNtp(
                                 mTabCreatorManager.getTabCreator(
                                         tabModelSelector.isIncognitoSelected()));
@@ -3867,12 +3861,12 @@ public class ToolbarManager
     private void updateTabLoadingState(boolean updateUrl) {
         if (mIsDestroyed) return;
 
-        mLocationBarModel.notifySecurityStateChanged();
         if (updateUrl) {
             mLocationBarModel.notifyUrlChanged(false);
             updateButtonStatus();
             checkIfNtpShowingWithNoPendingLoad();
         }
+        mLocationBarModel.notifySecurityStateChanged();
     }
 
     /**
@@ -3968,10 +3962,13 @@ public class ToolbarManager
 
     private void onBackForwardTransitionAnimationChange() {
         Tab tab = mActivityTabProvider.get();
+        var manager =
+                tab == null || tab.getWebContents() == null
+                        ? null
+                        : tab.getWebContents().getBackForwardTransitionAnimationManager();
         final boolean nativeDrawsProgressBar =
-                tab != null
-                        && tab.getWebContents() != null
-                        && tab.getWebContents().getCurrentBackForwardTransitionStage()
+                manager != null
+                        && manager.getCurrentAnimationStage()
                                 == AnimationStage.INVOKE_ANIMATION_WITH_PROGRESS_BAR;
         mToolbar.setShowingProgressBarForBackForwardTransition(nativeDrawsProgressBar);
     }
@@ -4048,11 +4045,14 @@ public class ToolbarManager
         boolean update = false;
         if (hidden && !mIsVerticalTabsHiddenDueToNarrow) {
             mIsVerticalTabsHiddenDueToNarrow = true;
+            mRestoredLeftMargin = lp.leftMargin;
             mRestoredRightMargin = lp.rightMargin;
+            lp.leftMargin = 0;
             lp.rightMargin = 0;
             update = true;
         } else if (!hidden && mIsVerticalTabsHiddenDueToNarrow) {
             mIsVerticalTabsHiddenDueToNarrow = false;
+            lp.leftMargin = mRestoredLeftMargin;
             lp.rightMargin = mRestoredRightMargin;
             update = true;
         }
@@ -4069,10 +4069,11 @@ public class ToolbarManager
     }
 
     @VisibleForTesting
-    void onToolbarRightMarginChanged(int rightMargin) {
-        // When Vertical Tabs is in auto-hidden mode, keep the right margin intact on the layout
-        // and update the margin to be restored when Vertical Tabs un-hides.
+    void onToolbarHorizontalMarginsChanged(int leftMargin, int rightMargin) {
+        // When Vertical Tabs is in auto-hidden mode, keep the margins intact on the layout
+        // and update the margins to be restored when Vertical Tabs un-hides.
         if (mIsVerticalTabsHiddenDueToNarrow) {
+            mRestoredLeftMargin = leftMargin;
             mRestoredRightMargin = rightMargin;
             return;
         }
@@ -4084,7 +4085,8 @@ public class ToolbarManager
         var lp = (ViewGroup.MarginLayoutParams) toolbarTabletLayout.getLayoutParams();
         if (lp == null) return;
 
-        if (lp.rightMargin != rightMargin) {
+        if (lp.leftMargin != leftMargin || lp.rightMargin != rightMargin) {
+            lp.leftMargin = leftMargin;
             lp.rightMargin = rightMargin;
             toolbarTabletLayout.setLayoutParams(lp);
             mToolbarLayout.onWidthConsumerVisibilityChanged();

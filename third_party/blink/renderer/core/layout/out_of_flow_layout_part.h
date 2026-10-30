@@ -43,6 +43,13 @@ class CORE_EXPORT OutOfFlowLayoutPart {
 
  public:
   static void Run(BoxFragmentBuilder* builder) {
+    if (builder->GetFragmentedOofContainer()) {
+      // No OOFs (apart from those which are being resumed from a previous
+      // break) are discovered during child walking, since we're managed by
+      // FragmentedOofContainer. Add all relevant unstarted OOFs now.
+      builder->AddPendingUnstartedOofs();
+    }
+
     // If there are no OOFs inside, we can skip OOF layout, except if this is
     // the root. There may be top-layer nodes still to be added. Additionally,
     // for pagination, we might not have hauled any OOFs inside the
@@ -170,9 +177,9 @@ class CORE_EXPORT OutOfFlowLayoutPart {
     // Used to determine the scroll direction for:
     // https://drafts.csswg.org/css-align-3/#auto-safety-position
     LogicalBoxSides scroll_direction = LogicalBoxSides(false);
-    // The relative positioned offset to be applied after fragmentation is
-    // completed.
-    LogicalOffset relative_offset;
+    // Offset to apply after layout. This is so that relative positioning
+    // doesn't affect fragmentation.
+    LogicalOffset post_layout_offset;
   };
 
   // This stores the information needed to update a multicol child inside an
@@ -240,7 +247,7 @@ class CORE_EXPORT OutOfFlowLayoutPart {
 
    public:
     // Absolutized inset property values. Not necessarily the insets of the box.
-    BoxStrut insets_for_get_computed_style;
+    PhysicalBoxStrut insets_for_get_computed_style;
     // Offset to container's border box.
     LogicalOffset offset;
     // Inset-modified containing block relative to containing block's border
@@ -299,15 +306,30 @@ class CORE_EXPORT OutOfFlowLayoutPart {
     DISALLOW_NEW();
 
    public:
+    NodeToLayout(const NodeInfo& node_info,
+                 const OffsetInfo& offset_info,
+                 const PhysicalFragment* containing_block_fragment = nullptr)
+        : node_info(node_info),
+          offset_info(offset_info),
+          containing_block_fragment(containing_block_fragment) {
+      DCHECK(!containing_block_fragment ||
+             !RuntimeEnabledFeatures::FragmentedOofInCbEnabled());
+    }
+
     NodeInfo node_info;
     OffsetInfo offset_info;
 
+    void Trace(Visitor* visitor) const;
+
+    const PhysicalFragment* ContainingBlockFragment() const {
+      return containing_block_fragment;
+    }
+
+   private:
     // The physical fragment of the containing block used when laying out a
     // fragmentainer descendant. This is the containing block as defined by the
     // spec: https://www.w3.org/TR/css-position-3/#absolute-cb.
     Member<const PhysicalFragment> containing_block_fragment;
-
-    void Trace(Visitor* visitor) const;
   };
 
   static std::optional<LogicalSize> InitialContainingBlockFixedSize(
@@ -343,6 +365,9 @@ class CORE_EXPORT OutOfFlowLayoutPart {
       bool adjust_for_fragmentation = false);
 
   void LayoutCandidates(const HeapVector<LogicalOofPositionedNode>&);
+
+  void EstablishFragmentedOofPath(const LogicalOofPositionedNode&,
+                                  const OffsetInfo&);
 
   void HandleMulticolsWithPendingOOFs(BoxFragmentBuilder* container_builder);
   void LayoutOOFsInMulticol(
@@ -436,6 +461,19 @@ class CORE_EXPORT OutOfFlowLayoutPart {
   // paint-layer.
   void SaveStaticPositionOnPaintLayer(LayoutBox* layout_box,
                                       LogicalStaticPosition position) const;
+
+  LogicalOffset PostLayoutOffsetForBreakToken(const NodeToLayout& node) const {
+    // Once a node breaks and is resumed, all inline-offset is treated as
+    // post-layout offset. It doesn't really matter for the result when it's
+    // applied, since the inline axis doesn't interact with fragmentation. We
+    // need to carry this additional inline-offset, since the inline start
+    // offset may be based on auto ("static") positioning, which cannot be
+    // recomputed in a subsequent fragmentainer.
+    LogicalOffset offset =
+        node.node_info.base_container_info.post_layout_offset;
+    offset.inline_offset += node.offset_info.offset.inline_offset;
+    return offset;
+  }
 
   const FragmentBuilder::ChildrenVector& FragmentationContextChildren() const {
     DCHECK(!RuntimeEnabledFeatures::FragmentedOofInCbEnabled());

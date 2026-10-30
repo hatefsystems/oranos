@@ -20,13 +20,11 @@
 #include "chrome/browser/ui/side_panel/side_panel_entry_id.h"
 #include "chrome/browser/ui/side_panel/side_panel_ui.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
-#include "chrome/browser/ui/user_education/browser_user_education_interface.h"
 #include "chrome/browser/ui/webui/side_panel/read_anything/read_anything_untrusted_ui.h"
 #include "chrome/browser/ui/webui/top_chrome/webui_contents_wrapper.h"
 #include "chrome/browser/ui/webui/webui_embedding_context.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/feature_engagement/public/feature_constants.h"
 #include "components/find_in_page/find_tab_helper.h"
 #include "components/input/native_web_keyboard_event.h"
 #include "components/prefs/pref_service.h"
@@ -39,8 +37,6 @@
 #include "content/public/browser/web_contents.h"
 #include "pdf/buildflags.h"
 #include "printing/buildflags/buildflags.h"
-#include "services/metrics/public/cpp/ukm_builders.h"
-#include "services/metrics/public/cpp/ukm_recorder.h"
 #include "ui/accessibility/accessibility_features.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/events/keycodes/keyboard_codes.h"
@@ -124,23 +120,13 @@ ReadAnythingControllerGlue::ReadAnythingControllerGlue(
       controller_(controller) {}
 
 // static
-bool ReadAnythingController::freeze_distillation_for_testing_ = false;
-
-// static
-base::TimeDelta ReadAnythingController::ai_playback_iph_delay_ =
-    ReadAnythingController::kAiPlaybackIphDefaultDelay;
+bool ReadAnythingController::freeze_empty_state_for_testing_ = false;
 
 // static
 void ReadAnythingController::
-    SetFreezeDistillationOnCreationForTesting(  // IN-TEST
+    SetFreezeEmptyStateOnCreationForTesting(  // IN-TEST
         bool locked) {
-  freeze_distillation_for_testing_ = locked;
-}
-
-// static
-void ReadAnythingController::SetAiPlaybackIphDelayForTesting(  // IN-TEST
-    base::TimeDelta delay) {
-  ai_playback_iph_delay_ = delay;
+  freeze_empty_state_for_testing_ = locked;
 }
 
 ReadAnythingController* ReadAnythingController::From(tabs::TabInterface* tab) {
@@ -238,7 +224,6 @@ void ReadAnythingController::RemoveImmersiveActivationObserver(
 }
 
 void ReadAnythingController::OnEntryShown(ReadAnythingOpenTrigger trigger) {
-  last_open_trigger_ = trigger;
   observers_.Notify(&Observer::Activate, /*active=*/true, trigger,
                     /*completed_session_duration=*/std::nullopt);
   // At the moment, services are created for normal, guest, and incognito
@@ -266,27 +251,6 @@ void ReadAnythingController::OnEntryShown(ReadAnythingOpenTrigger trigger) {
     entry_shown_timestamp_ = base::TimeTicks::Now();
   }
 
-  if (auto* user_ed = BrowserUserEducationInterface::From(
-          tab_->GetBrowserWindowInterface())) {
-    if (GetPresentationState() == PresentationState::kInImmersiveOverlay ||
-        GetPresentationState() == PresentationState::kInSidePanel) {
-      user_ed->MaybeShowFeaturePromo(
-          feature_engagement::kIPHReadingModeKeyboardShortcutFeature);
-    }
-    if (GetPresentationState() == PresentationState::kInImmersiveOverlay) {
-      user_ed->MaybeShowFeaturePromo(
-          feature_engagement::kIPHReadingModePresentationModeFeature);
-    }
-    if (features::IsReadAnythingReadAloudExperimentalPlaybackUiEnabled() &&
-        distillation_state_ == DistillationState::kDistillationWithContent &&
-        !ai_playback_iph_timer_.IsRunning()) {
-      ai_playback_iph_timer_.Start(
-          FROM_HERE, ai_playback_iph_delay_,
-          base::BindOnce(&ReadAnythingController::MaybeShowAiPlaybackIph,
-                         weak_factory_.GetWeakPtr()));
-    }
-  }
-
   MaybeUpdateFindBarController();
 
 #if BUILDFLAG(ENABLE_PDF)
@@ -304,10 +268,6 @@ void ReadAnythingController::OnEntryShown(ReadAnythingOpenTrigger trigger) {
 }
 
 void ReadAnythingController::OnEntryHidden() {
-  if (features::IsReadAnythingReadAloudExperimentalPlaybackUiEnabled() &&
-      !is_presentation_transitioning_) {
-    ai_playback_iph_timer_.Stop();
-  }
   std::optional<base::TimeDelta> completed_session_duration =
       RecordEntryHiddenMetrics();
 
@@ -493,9 +453,9 @@ void ReadAnythingController::MaybeUpdateFindBarController() {
 }
 
 void ReadAnythingController::ShowImmersiveUI(ReadAnythingOpenTrigger trigger) {
-  // Show Reading Mode in side panel mode if the distillation is empty and
-  // Reading Mode was inactive.
-  if (distillation_state_ == DistillationState::kDistillationEmpty &&
+  // If Reading Mode's content is empty, open it in the side panel instead so
+  // that the user can still see the page.
+  if (is_showing_empty_state_ &&
       GetPresentationState() == PresentationState::kInactive) {
     base::UmaHistogramEnumeration(
         "Accessibility.ReadAnything.SidePanelTriggeredByEmptyState", trigger);
@@ -582,6 +542,11 @@ void ReadAnythingController::CloseSidePanelUI(ReadAnythingCloseReason reason) {
     bool suppress_animations = reason != ReadAnythingCloseReason::kClosedByUser;
     side_panel_ui->Close(hide_reason, suppress_animations);
   }
+
+  // If the side panel closed, OnSidePanelWillHide() already reported the
+  // reason. If it didn't (e.g. it's still loading, or the tab is in the
+  // background), don't report the reason for a later, unrelated close.
+  pending_side_panel_close_reason_.reset();
 }
 
 void ReadAnythingController::OnSidePanelWillHide(
@@ -633,6 +598,22 @@ void ReadAnythingController::ShowInPreferredUI(
   }
 }
 
+void ReadAnythingController::ShowInSidePanel(
+    base::PassKey<read_anything::ReadAnythingEntryPointController>,
+    ReadAnythingOpenTrigger trigger) {
+  ShowSidePanelUI(read_anything::ReadAnythingToSidePanelOpenTrigger(trigger));
+}
+
+void ReadAnythingController::CloseUI(
+    base::PassKey<read_anything::ReadAnythingEntryPointController>,
+    ReadAnythingCloseReason reason) {
+  if (GetPresentationState() == PresentationState::kInImmersiveOverlay) {
+    CloseImmersiveUI(reason);
+  } else if (GetPresentationState() == PresentationState::kInSidePanel) {
+    CloseSidePanelUI(reason);
+  }
+}
+
 void ReadAnythingController::ToggleUI(
     base::PassKey<read_anything::ReadAnythingEntryPointController>,
     ReadAnythingOpenTrigger trigger) {
@@ -640,15 +621,6 @@ void ReadAnythingController::ToggleUI(
 }
 
 void ReadAnythingController::ToggleUI(ReadAnythingOpenTrigger trigger) {
-  if (trigger == ReadAnythingOpenTrigger::kKeyboardShortcut) {
-    if (auto* user_ed = BrowserUserEducationInterface::From(
-            tab_->GetBrowserWindowInterface())) {
-      user_ed->NotifyFeaturePromoFeatureUsed(
-          feature_engagement::kIPHReadingModeKeyboardShortcutFeature,
-          FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
-    }
-  }
-
   PresentationState state = GetPresentationState();
   if (state == PresentationState::kInImmersiveOverlay) {
     CloseImmersiveUI(ReadAnythingCloseReason::kClosedByUser);
@@ -833,106 +805,20 @@ bool ReadAnythingController::HandleEscapeKey(
   return false;
 }
 
-void ReadAnythingController::OnDistillationStateChanged(
-    DistillationState new_state) {
-  if (freeze_distillation_for_testing_) {
+void ReadAnythingController::OnEmptyStateChanged(bool is_empty) {
+  if (freeze_empty_state_for_testing_) {
     return;
   }
 
-  distillation_state_ = new_state;
-  auto* user_ed =
-      BrowserUserEducationInterface::From(tab_->GetBrowserWindowInterface());
+  is_showing_empty_state_ = is_empty;
 
-  if (new_state == DistillationState::kDistillationEmpty) {
-    if (user_ed) {
-      user_ed->AbortFeaturePromo(
-          feature_engagement::kIPHReadingModeLineFocusFeature);
-    }
-    if (features::IsReadAnythingReadAloudExperimentalPlaybackUiEnabled()) {
-      ai_playback_iph_timer_.Stop();
-      if (user_ed) {
-        user_ed->AbortFeaturePromo(
-            feature_engagement::kIPHReadingModeAiPlaybackFeature);
-        user_ed->AbortFeaturePromo(
-            feature_engagement::kIPHReadingModeAiPlaybackSettingsFeature);
-      }
-    }
+  if (is_empty &&
+      GetPresentationState() == PresentationState::kInImmersiveOverlay) {
+    base::UmaHistogramEnumeration(
+        "Accessibility.ReadAnything.SidePanelTriggeredByEmptyState",
+        ReadAnythingOpenTrigger::kReadAnythingTogglePresentationButton);
 
-    if (GetPresentationState() == PresentationState::kInImmersiveOverlay) {
-      base::UmaHistogramEnumeration(
-          "Accessibility.ReadAnything.SidePanelTriggeredByEmptyState",
-          ReadAnythingOpenTrigger::kReadAnythingTogglePresentationButton);
-
-      TogglePresentation(/*is_user_initiated=*/false);
-    }
-  } else if (new_state == DistillationState::kDistillationWithContent &&
-             GetPresentationState() != PresentationState::kInactive &&
-             user_ed) {
-    if (features::IsReadAnythingLineFocusEnabled()) {
-      // Only show the line focus IPH if there is content because line focus
-      // does not do anything on an empty page.
-      user_ed->MaybeShowFeaturePromo(
-          feature_engagement::kIPHReadingModeLineFocusFeature);
-    }
-    if (features::IsReadAnythingReadAloudExperimentalPlaybackUiEnabled() &&
-        !ai_playback_iph_timer_.IsRunning()) {
-      ai_playback_iph_timer_.Start(
-          FROM_HERE, ai_playback_iph_delay_,
-          base::BindOnce(&ReadAnythingController::MaybeShowAiPlaybackIph,
-                         weak_factory_.GetWeakPtr()));
-    }
-  }
-}
-
-void ReadAnythingController::MaybeShowAiPlaybackIph() {
-  CHECK(features::IsReadAnythingReadAloudExperimentalPlaybackUiEnabled());
-  if (GetPresentationState() == PresentationState::kInactive ||
-      distillation_state_ != DistillationState::kDistillationWithContent) {
-    return;
-  }
-  if (auto* user_ed = BrowserUserEducationInterface::From(
-          tab_->GetBrowserWindowInterface())) {
-    user_ed->MaybeShowFeaturePromo(
-        feature_engagement::kIPHReadingModeAiPlaybackFeature);
-  }
-}
-
-void ReadAnythingController::OnAiPlaybackStateChanged(bool enabled) {
-  if (!features::IsReadAnythingReadAloudExperimentalPlaybackUiEnabled() ||
-      !enabled) {
-    return;
-  }
-  ai_playback_iph_timer_.Stop();
-  if (auto* user_ed = BrowserUserEducationInterface::From(
-          tab_->GetBrowserWindowInterface())) {
-    user_ed->NotifyFeaturePromoFeatureUsed(
-        feature_engagement::kIPHReadingModeAiPlaybackFeature,
-        FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
-    user_ed->MaybeShowFeaturePromo(
-        feature_engagement::kIPHReadingModeAiPlaybackSettingsFeature);
-  }
-}
-
-void ReadAnythingController::OnDistillationStatus(
-    read_anything::mojom::DistillationStatus status,
-    int word_count) {
-  content::WebContents* web_contents = tab_->GetContents();
-  if (last_open_trigger_ == ReadAnythingOpenTrigger::kOmniboxChip) {
-    if (status != read_anything::mojom::DistillationStatus::kStillRunning) {
-      last_open_trigger_ = ReadAnythingOpenTrigger::kUnknown;
-      base::UmaHistogramEnumeration(
-          "Accessibility.ReadAnything.DistillationStatusAfterOmnibox", status);
-      base::UmaHistogramCustomCounts(
-          "Accessibility.ReadAnything.WordsDistilledAfterOmnibox", word_count,
-          1, kMaxWordsDistilled, kWordsDistilledBuckets);
-
-      if (web_contents && web_contents->GetPrimaryMainFrame()) {
-        ukm::builders::Accessibility_ReadAnything_OmniboxEntryPointDistillation(
-            web_contents->GetPrimaryMainFrame()->GetPageUkmSourceId())
-            .SetDistillationStatus(static_cast<int>(status))
-            .Record(ukm::UkmRecorder::Get());
-      }
-    }
+    TogglePresentation(/*is_user_initiated=*/false);
   }
 }
 

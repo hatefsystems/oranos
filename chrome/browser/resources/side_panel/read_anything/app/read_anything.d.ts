@@ -157,6 +157,11 @@ declare namespace chrome {
     // to date when isTranslatePdfEnabled is true.
     let isContentTranslated: boolean;
 
+    // Whether the browser is waiting for the distilled content to be
+    // translated. While true, content should stay hidden behind the loading
+    // screen.
+    let isAwaitingTranslation: boolean;
+
     // Fonts supported by the user's current language.
     let supportedFonts: string[];
 
@@ -179,10 +184,10 @@ declare namespace chrome {
     // Max number of characters to display in one line of Reading mode.
     let maxLineWidth: number;
 
-    // Distiled title from DOM distiller distillation.
+    // Distilled title from Readability distillation.
     let htmlTitle: string;
 
-    // Distiled html content from DOM distiller distillation.
+    // Distilled html content from Readability distillation.
     let htmlContent: string;
 
     // The active URL of the main panel document.
@@ -423,6 +428,12 @@ declare namespace chrome {
     // Called by the Read Anything app to toggle between presentation modes.
     function togglePresentation(): void;
 
+    // Asynchronously calculates the phrase boundaries for each of the given
+    // sentences. The result is returned via onPhraseBoundariesReady() with the
+    // same `requestId`.
+    function requestPhraseBoundaries(requestId: number, sentences: string[]):
+        void;
+
     ////////////////////////////////////////////////////////////////
     // Implemented in read_anything/app.ts and called by native c++.
     ////////////////////////////////////////////////////////////////
@@ -434,6 +445,11 @@ declare namespace chrome {
     function onPresentationStateReceived(presentationState: number): void;
 
     function onPinStateReceived(pinState: boolean): void;
+
+    // Called when the browser starts or stops waiting for the distilled
+    // content to be translated. While awaiting, content should stay hidden
+    // behind the loading screen.
+    function onAwaitingTranslationChanged(awaiting: boolean): void;
 
     // Display the empty state page to tell the user we can't distill the page.
     function showEmpty(): void;
@@ -490,6 +506,14 @@ declare namespace chrome {
     // Called after the ReadAnythingAppController maps the readability text
     // blocks to the AXTree.
     function onRenderedTextMappingReady(): void;
+
+    // Called with the result of requestPhraseBoundaries(). `requestId` is the
+    // ID passed to requestPhraseBoundaries(). `boundaries` has one entry per
+    // requested sentence, each containing the start offsets of the phrases in
+    // that sentence. An entry is empty if the phrase boundaries for that
+    // sentence couldn't be calculated.
+    function onPhraseBoundariesReady(requestId: number, boundaries: number[][]):
+        void;
 
     // Increments the processed_granularity_index_ in ReadAnythingAppModel,
     // effectively updating ReadAloud's state of the current granularity to

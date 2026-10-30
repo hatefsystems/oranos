@@ -130,6 +130,7 @@
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/authentication_service_observer_bridge.h"
 #import "ios/chrome/browser/signin/model/avatar/avatar_provider.h"
+#import "ios/chrome/browser/signin/model/constants.h"
 #import "ios/chrome/browser/supervised_user/model/supervised_user_capabilities.h"
 #import "ios/chrome/browser/sync/model/sync_observer_bridge.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_utils.h"
@@ -442,6 +443,8 @@ void GetPresetNTPBackgroundPreview(
 @end
 
 @implementation OverflowMenuMediator
+
+@synthesize shouldShowLevelUpWalkthroughIPH = _shouldShowLevelUpWalkthroughIPH;
 
 - (instancetype)init {
   self = [super init];
@@ -3209,7 +3212,9 @@ void GetPresetNTPBackgroundPreview(
       password_manager::ManagePasswordsReferrer::kChromeMenuItem);
   [self dismissMenu];
   [self.settingsHandler
-      showSavedPasswordsSettingsFromViewController:self.baseViewController];
+      showSavedPasswordsSettingsFromViewController:self.baseViewController
+                   shouldShowLevelUpWalkthroughIPH:
+                       self.shouldShowLevelUpWalkthroughIPH];
 }
 
 // Dismisses the menu and opens Cobalt.
@@ -3271,9 +3276,10 @@ void GetPresetNTPBackgroundPreview(
                      : profile_metrics::BrowserProfileType::kRegular;
   UmaHistogramEnumeration("Settings.OpenSettingsFromMenu.PerProfileType", type);
   [self.sceneHandler
-      showSettingsFromViewController:self.baseViewController
-            hasDefaultBrowserBlueDot:(self.settingsDestination.badge ==
-                                      BadgeTypePromo)];
+       showSettingsFromViewController:self.baseViewController
+             hasDefaultBrowserBlueDot:(self.settingsDestination.badge ==
+                                       BadgeTypePromo)
+      shouldShowLevelUpWalkthroughIPH:self.shouldShowLevelUpWalkthroughIPH];
 }
 
 // Dismisses the menu and opens default browser settings.

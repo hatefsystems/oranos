@@ -213,9 +213,13 @@ void LensSearchController::OpenLensOverlay(
     bool should_show_csb) {
   CheckInitialized(initialized_);
 
-  // The overlay can only be reinvoked if the feature is enabled.
+  // The overlay can only be reinvoked if the feature is enabled or if invoked
+  // from the Contextual Tasks composebox.
   const bool allow_reinvoking_overlay =
-      lens::features::GetEnableLensButtonInSearchbox() || IsOff();
+      lens::features::GetEnableLensButtonInSearchbox() ||
+      invocation_source ==
+          lens::LensOverlayInvocationSource::kContextualTasksComposebox ||
+      IsOff();
   // If the eligibility checks fail, do not proceed with opening any UI.
   if (!allow_reinvoking_overlay ||
       !RunLensEligibilityChecks(
@@ -362,8 +366,6 @@ void LensSearchController::IssueContextualSearchRequest(
         invocation_source ==
             lens::LensOverlayInvocationSource::kContentAreaContextMenuPage ||
         invocation_source == lens::LensOverlayInvocationSource::kAppMenu ||
-        invocation_source ==
-            lens::LensOverlayInvocationSource::kCobrowsePinnedToolbarButton ||
         invocation_source ==
             lens::LensOverlayInvocationSource::kHomeworkActionChip);
 

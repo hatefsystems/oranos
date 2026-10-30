@@ -27,6 +27,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.ApplicationTestUtils;
 import org.chromium.base.test.util.CommandLineFlags;
@@ -57,7 +58,9 @@ import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.components.browser_ui.widget.RecyclerViewTestUtils;
+import org.chromium.content_public.browser.test.util.TouchCommon;
 import org.chromium.ui.base.DeviceFormFactor;
+import org.chromium.ui.base.ViewUtils;
 import org.chromium.ui.test.util.RenderTestRule;
 import org.chromium.ui.util.ColorUtils;
 
@@ -246,6 +249,30 @@ public class SidePanelContainerCoordinatorIntegrationTest {
 
     @Test
     @MediumTest
+    public void clickCloseButtonOutsideIcon_closesPanel() {
+        // Arrange.
+        var coordinator = getSidePanelContainerCoordinator();
+        showPanel(mResponsivePageStation.getTab());
+        ViewGroup containerView = waitForContainerViewOpen(coordinator);
+        View headerView = containerView.findViewById(R.id.side_panel_header);
+        View closeButton = containerView.findViewById(R.id.side_panel_close_button);
+
+        // The button fills the header's height and is wider than its 24dp icon, for a larger
+        // touch target.
+        Activity activity = mFreshCtaTransitTestRule.getActivity();
+        assertEquals(ViewUtils.dpToPx(activity, 48), closeButton.getWidth(), /* delta= */ 1);
+        assertEquals(headerView.getHeight(), closeButton.getHeight());
+
+        // Act: Click near the button's top-start corner, outside its icon.
+        int offsetPx = ViewUtils.dpToPx(activity, 2);
+        TouchCommon.singleClickView(closeButton, offsetPx, offsetPx);
+
+        // Assert.
+        waitForContainerViewClose(coordinator);
+    }
+
+    @Test
+    @MediumTest
     public void closePanel_removesContentView() {
         // Arrange.
         var coordinator = getSidePanelContainerCoordinator();
@@ -315,6 +342,8 @@ public class SidePanelContainerCoordinatorIntegrationTest {
         waitForContainerViewOpen(coordinator);
 
         // Act: Open the grid tab switcher.
+        // Wait for the toolbar to settle before clicking the GTS button (crbug.com/562893806).
+        waitForBrowserControlContainerWidth(coordinator);
         var regularTabSwitcherStation = mResponsivePageStation.openRegularTabSwitcher();
         var tabCardFacility = regularTabSwitcherStation.expectTabCard(tab.getId(), tab.getTitle());
         View tabCardView = tabCardFacility.cardViewElement.value();
@@ -364,17 +393,10 @@ public class SidePanelContainerCoordinatorIntegrationTest {
     public void changeTheme_retainsBrowserControlContainerWidth() {
         // Arrange:
         ChromeTabbedActivity activity = mResponsivePageStation.getActivity();
-        var tab = mResponsivePageStation.getTab();
         var coordinator = getSidePanelContainerCoordinator();
-        showPanel(tab);
-        int sidePanelWidth = waitForContainerViewOpen(coordinator).getWidth();
-        CriteriaHelper.pollUiThread(
-                () -> {
-                    int controlContainerWidth = getBrowserControlContainer(activity).getWidth();
-                    return controlContainerWidth > 0
-                            && controlContainerWidth + sidePanelWidth <= getWindowWidth(activity);
-                },
-                "Browser control container isn't resized to accommodate side panel.");
+        showPanel(mResponsivePageStation.getTab());
+        waitForContainerViewOpen(coordinator);
+        waitForBrowserControlContainerWidth(coordinator);
 
         // Act: Change the theme.
         ChromeTabbedActivity activityInNewTheme = changeTheme(activity);
@@ -382,19 +404,11 @@ public class SidePanelContainerCoordinatorIntegrationTest {
         // Assert:
         // (1) Wait for the SidePanelContainerCoordinator in the new Activity to be initialized,
         // then
-        // (2) Verify the browser control container's width in the new Activity matches the width
-        // before theme change.
+        // (2) Verify the browser control container in the new Activity is resized to accommodate
+        // the side panel.
         var newCoordinator = waitForSidePanelContainerCoordinator(activityInNewTheme);
-        int newSidePanelWidth = waitForContainerViewOpen(newCoordinator).getWidth();
-        CriteriaHelper.pollUiThread(
-                () -> {
-                    int newControlContainerWidth =
-                            getBrowserControlContainer(activityInNewTheme).getWidth();
-                    return newControlContainerWidth > 0
-                            && newControlContainerWidth + newSidePanelWidth
-                                    <= getWindowWidth(activityInNewTheme);
-                },
-                "Browser control container isn't resized to accommodate side panel.");
+        waitForContainerViewOpen(newCoordinator);
+        waitForBrowserControlContainerWidth(newCoordinator);
     }
 
     @Test
@@ -511,6 +525,8 @@ public class SidePanelContainerCoordinatorIntegrationTest {
         waitForContainerViewOpen(coordinator);
 
         // Act: Go to the grid tab switcher (GTS), and use the three-dot menu to close all tabs.
+        // Wait for the toolbar to settle before clicking the GTS button (crbug.com/562893806).
+        waitForBrowserControlContainerWidth(coordinator);
         var tabSwitcherStation = mResponsivePageStation.openRegularTabSwitcher();
         var dialogFacility = tabSwitcherStation.openAppMenu().clickCloseAllTabs();
         dialogFacility.positiveButtonElement.clickTo().exitFacility();
@@ -537,6 +553,8 @@ public class SidePanelContainerCoordinatorIntegrationTest {
         waitForContainerViewOpen(coordinator);
 
         // Act: Go to the grid tab switcher (GTS), and use the three-dot menu to close all tabs.
+        // Wait for the toolbar to settle before clicking the GTS button (crbug.com/562893806).
+        waitForBrowserControlContainerWidth(coordinator);
         var tabSwitcherStation = newTabPageStation.openRegularTabSwitcher();
         var dialogFacility = tabSwitcherStation.openAppMenu().clickCloseAllTabs();
         dialogFacility.positiveButtonElement.clickTo().exitFacility();
@@ -567,6 +585,8 @@ public class SidePanelContainerCoordinatorIntegrationTest {
         waitForContainerViewOpen(coordinator);
 
         // Act: Go to the grid tab switcher (GTS), and use the three-dot menu to close all tabs.
+        // Wait for the toolbar to settle before clicking the GTS button (crbug.com/562893806).
+        waitForBrowserControlContainerWidth(coordinator);
         var tabSwitcherStation = mResponsivePageStation.openRegularTabSwitcher();
         var dialogFacility = tabSwitcherStation.openAppMenu().clickCloseAllTabs();
         var undoSnackbar =
@@ -618,6 +638,8 @@ public class SidePanelContainerCoordinatorIntegrationTest {
         waitForContainerViewOpen(coordinator);
 
         // Act: Go to the grid tab switcher (GTS), and use the three-dot menu to close all tabs.
+        // Wait for the toolbar to settle before clicking the GTS button (crbug.com/562893806).
+        waitForBrowserControlContainerWidth(coordinator);
         var tabSwitcherStation = newTabPageStation.openRegularTabSwitcher();
         var dialogFacility = tabSwitcherStation.openAppMenu().clickCloseAllTabs();
         var undoSnackbar =
@@ -1084,6 +1106,37 @@ public class SidePanelContainerCoordinatorIntegrationTest {
         CriteriaHelper.pollUiThread(
                 () -> containerView.getParent() == null,
                 "The container View should have been detached.");
+    }
+
+    /**
+     * Waits for the browser control container to be resized to accommodate the open side panel,
+     * i.e. for the two to fit within the window width.
+     *
+     * <p>Without animations, the side panel container is laid out synchronously when the side panel
+     * opens, but the browser control container is only re-laid out in a later layout pass.
+     * Interacting with the toolbar before that pass can race with the relayout, e.g. turning a tap
+     * on the tab switcher button into a long press. See crbug.com/562893806.
+     */
+    private static void waitForBrowserControlContainerWidth(
+            SidePanelContainerCoordinatorImpl coordinator) {
+        Activity activity =
+                ThreadUtils.runOnUiThreadBlocking(() -> getActivity(coordinator.getView()));
+        @Px
+        int sidePanelWidth =
+                ThreadUtils.runOnUiThreadBlocking(() -> coordinator.getView().getWidth());
+        CriteriaHelper.pollUiThread(
+                () -> {
+                    int controlContainerWidth = getBrowserControlContainer(activity).getWidth();
+                    return controlContainerWidth > 0
+                            && controlContainerWidth + sidePanelWidth <= getWindowWidth(activity);
+                },
+                "Browser control container isn't resized to accommodate side panel.");
+    }
+
+    private static Activity getActivity(View view) {
+        Activity activity = ContextUtils.activityFromContext(view.getContext());
+        assertNotNull(activity);
+        return activity;
     }
 
     private static String getTabTitleInContentView(SidePanelContainerCoordinatorImpl coordinator) {

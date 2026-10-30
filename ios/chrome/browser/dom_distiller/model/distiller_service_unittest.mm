@@ -7,9 +7,7 @@
 #import <memory>
 
 #import "base/barrier_callback.h"
-#import "base/functional/callback_helpers.h"
 #import "base/run_loop.h"
-#import "components/dom_distiller/core/article_distillation_update.h"
 #import "components/dom_distiller/core/distiller_page.h"
 #import "components/dom_distiller/core/dom_distiller_constants.h"
 #import "components/dom_distiller/core/proto/distilled_article.pb.h"
@@ -41,7 +39,6 @@ class TestDistillerPage : public dom_distiller::DistillerPage {
 
 class DistillerServiceTest : public PlatformTest {
  public:
-  // For readability.
   using Article = std::unique_ptr<dom_distiller::DistilledArticleProto>;
 
   DistillerServiceTest() : profile_(TestProfileIOS::Builder().Build()) {
@@ -65,8 +62,7 @@ class DistillerServiceTest : public PlatformTest {
                  dom_distiller::DistillationParseResult /*result*/) {
                 barrier.Run(std::move(article));
               },
-              barrier),
-          base::DoNothing());
+              barrier));
     }
 
     // Wait for all requests to complete.

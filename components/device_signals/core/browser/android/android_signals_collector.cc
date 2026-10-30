@@ -5,12 +5,14 @@
 #include "components/device_signals/core/browser/android/android_signals_collector.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/android/android_info.h"
 #include "base/android/device_info.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/stringprintf.h"
@@ -19,6 +21,7 @@
 #include "base/time/time.h"
 #include "components/device_signals/core/browser/android/os_security_info_provider.h"
 #include "components/device_signals/core/browser/browser_utils.h"
+#include "components/device_signals/core/browser/metrics_utils.h"
 #include "components/device_signals/core/browser/signals_types.h"
 #include "components/device_signals/core/browser/user_permission_service.h"
 #include "components/device_signals/core/common/common_types.h"
@@ -89,12 +92,14 @@ void AndroidSignalsCollector::GetOsSignals(
     return;
   }
 
+  const base::TimeTicks start_time = base::TimeTicks::Now();
   OsSignalsResponse signal_response;
 
   if (permission == UserPermission::kGranted) {
-    // TODO(crbug.com/449189531): Refactor and use `policy::GetDeviceName()`
-    // instead.
-    signal_response.display_name = base::android::device_info::device_name();
+    signal_response.display_name =
+        base::FeatureList::IsEnabled(policy::kReportAndroidMachineName)
+            ? policy::GetDeviceName()
+            : base::android::device_info::device_name();
   }
   signal_response.operating_system = policy::GetOSPlatform();
   signal_response.os_version = base::SysInfo::OperatingSystemVersion();
@@ -109,8 +114,18 @@ void AndroidSignalsCollector::GetOsSignals(
   signal_response.screen_lock_secured =
       os_security_info_provider_->IsDeviceSecure() ? SettingValue::ENABLED
                                                    : SettingValue::DISABLED;
+  signal_response.disk_encryption =
+      os_security_info_provider_->GetDiskEncryption();
+  // Android has no OS firewall whose state Chrome can evaluate.
+  signal_response.os_firewall = std::nullopt;
 
   response.os_signals_response = std::move(signal_response);
+
+  // OS signals collection has no failure path once the permission check has
+  // passed, so the outcome is always recorded as a success.
+  LogSignalCollectionSucceeded(SignalName::kOsSignals, start_time,
+                               /*signal_collection_size=*/std::nullopt);
+
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, std::move(done_closure));
 }
@@ -172,6 +187,13 @@ void AndroidSignalsCollector::OnHasPotentiallyHarmfulApps(
   LogSafetyNetMetrics(result, num_of_apps, start_time);
 
   response.verify_apps_signals_response = std::move(verify_apps_response);
+
+  // A SafetyNet failure is captured by the HarmfulApps.Result histogram above
+  // and still yields a (partial) response, so it is not considered a signal
+  // collection failure.
+  LogSignalCollectionSucceeded(SignalName::kVerifyApps, start_time,
+                               /*signal_collection_size=*/std::nullopt);
+
   std::move(done_closure).Run();
 }
 

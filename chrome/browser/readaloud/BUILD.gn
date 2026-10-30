@@ -11,6 +11,7 @@ if (is_android) {
       "read_aloud_playback_session.h",
       "read_aloud_service.h",
       "read_aloud_service_factory.h",
+      "read_aloud_voice_catalog.h",
       "voice_preview_controller.h",
     ]
     public_deps = [
@@ -25,7 +26,6 @@ if (is_android) {
       "//media",
       "//media/mojo/mojom",
       "//mojo/public/cpp/base",
-      "//services/media_session/public/cpp",
     ]
   }
 

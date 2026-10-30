@@ -178,6 +178,7 @@
 #include "ui/base/cursor/mojom/cursor_type.mojom-blink.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom-blink.h"
 #include "ui/base/mojom/menu_source_type.mojom-blink.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/events/keycodes/dom/dom_key.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -801,6 +802,43 @@ TEST_F(WebViewTest, PlatformColorsChangedOnDeviceEmulation) {
   EXPECT_EQ(original, OutlineColor(span1));
   EXPECT_EQ(original, OutlineColor(span2));
   EXPECT_EQ(original, OutlineColor(span3));
+}
+
+TEST_F(WebViewTest, UpdateColorProvidersInvalidatesOnlyTargetPage) {
+  base::test::ScopedFeatureList scoped_feature_list(
+      ::features::kThemeChangeOptimizationV2);
+
+  WebViewImpl* web_view_1 = web_view_helper_.Initialize();
+  frame_test_helpers::WebViewHelper web_view_helper_2;
+  WebViewImpl* web_view_2 = web_view_helper_2.Initialize();
+
+  WebURL base_url = url_test_helpers::ToKURL("http://example.com/");
+  frame_test_helpers::LoadHTMLString(web_view_1->MainFrameImpl(),
+                                     "<div>Page 1</div>", base_url);
+  frame_test_helpers::LoadHTMLString(web_view_2->MainFrameImpl(),
+                                     "<div>Page 2</div>", base_url);
+
+  web_view_1->MainFrameViewWidget()->UpdateAllLifecyclePhases(
+      DocumentUpdateReason::kTest);
+  web_view_2->MainFrameViewWidget()->UpdateAllLifecyclePhases(
+      DocumentUpdateReason::kTest);
+
+  Document& doc_1 = *web_view_1->MainFrameImpl()->GetFrame()->GetDocument();
+  Document& doc_2 = *web_view_2->MainFrameImpl()->GetFrame()->GetDocument();
+  ASSERT_FALSE(doc_1.NeedsLayoutTreeUpdate());
+  ASSERT_FALSE(doc_2.NeedsLayoutTreeUpdate());
+
+  ColorProviderColorMaps color_maps = ColorProviderColorMaps::CreateDefault();
+  color_maps
+      .light_colors_map[color::mojom::RendererColorId::kColorCssSystemBtnFace] =
+      SK_ColorRED;
+
+  web_view_1->UpdateColorProviders(color_maps);
+
+  EXPECT_TRUE(doc_1.NeedsLayoutTreeUpdate());
+  EXPECT_TRUE(doc_1.GetLayoutView()->ShouldCheckForPaintInvalidation());
+  EXPECT_FALSE(doc_2.NeedsLayoutTreeUpdate());
+  EXPECT_FALSE(doc_2.GetLayoutView()->ShouldCheckForPaintInvalidation());
 }
 
 TEST_F(WebViewTest, ActiveState) {
@@ -7787,10 +7825,10 @@ TEST_F(WebViewTest, EmulatingPopupRect) {
       MakeGarbageCollected<EmptyChromeClient>(), *select);
   {
     // Make a popup widget.
-    WebPagePopup* popup = web_view->OpenPagePopup(menu);
+    WebPagePopupImpl* popup = web_view->OpenPagePopup(menu);
 
     // Fake that the browser showed it.
-    static_cast<WebPagePopupImpl*>(popup)->DidShowPopup();
+    popup->DidShowPopup();
 
     // Set its size.
     popup->SetScreenRects(widget_screen_rect, window_screen_rect);
@@ -7801,7 +7839,7 @@ TEST_F(WebViewTest, EmulatingPopupRect) {
     EXPECT_EQ(widget_screen_rect, gfx::Rect(popup->ViewRect()));
     EXPECT_EQ(screen_rect, gfx::Rect(popup->GetScreenInfo().rect));
 
-    static_cast<WebPagePopupImpl*>(popup)->ClosePopup();
+    popup->ClosePopup();
   }
 
   // Enable device emulation on the parent widget.
@@ -7816,10 +7854,10 @@ TEST_F(WebViewTest, EmulatingPopupRect) {
 
   {
     // Make a popup again. It should inherit device emulation params.
-    WebPagePopup* popup = web_view->OpenPagePopup(menu);
+    WebPagePopupImpl* popup = web_view->OpenPagePopup(menu);
 
     // Fake that the browser showed it.
-    static_cast<WebPagePopupImpl*>(popup)->DidShowPopup();
+    popup->DidShowPopup();
 
     // Set its size again.
     popup->SetScreenRects(widget_screen_rect, window_screen_rect);
@@ -7858,7 +7896,7 @@ TEST_F(WebViewTest, EmulatingPopupRect) {
     EXPECT_EQ(emulated_widget_rect,
               gfx::Rect(web_view->MainFrameWidget()->GetScreenInfo().rect));
 
-    static_cast<WebPagePopupImpl*>(popup)->ClosePopup();
+    popup->ClosePopup();
   }
 }
 

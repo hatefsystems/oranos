@@ -96,7 +96,9 @@ BASE_EXPORT BASE_DECLARE_FEATURE(kDCheckIsFatalFeature);
 // ScopedFeatureList. See base/test/scoped_feature_list.h for details.
 //
 // After initialization (which should be done single-threaded), the FeatureList
-// API is thread safe.
+// API is thread safe for features defined with BASE_FEATURE. For features
+// defined with BASE_RUNTIME_MUTABLE_FEATURE, their state and parameters may
+// only be queried and updated on the main sequence.
 //
 // Note: This class is a singleton, but does not use base/memory/singleton.h in
 // order to have control over its initialization sequence. Specifically, the
@@ -228,8 +230,8 @@ class BASE_EXPORT FeatureList {
     // first.
     void RunPreMutationCallback();
 
-    // Updates the feature's override state and associated field trial name.
-    // Must be called after `RunPreMutationCallback()`.
+    // Updates the feature's override state and associated runtime override
+    // info. Must be called after `RunPreMutationCallback()`.
     void UpdateState();
 
     // Runs the post-mutation callback (if any was registered). Must be called
@@ -294,14 +296,16 @@ class BASE_EXPORT FeatureList {
   // is about to change, and `post_mutation_callback` is invoked right after the
   // feature's state has changed.
   //
-  // This method should only be called once per feature and *MUST* be
-  // called before attempting to inspect the feature state of a runtime mutable
-  // feature (i.e. calling `IsEnabled()` or looking up a FeatureParam value).
+  // This method may only be called once per feature during FeatureList
+  // initialization (before `SetInstance()`) and on the main sequence, and
+  // *MUST* be called before inspecting the feature state on an initialized
+  // FeatureList (i.e. calling `IsEnabled()` or looking up a FeatureParam
+  // value). Early calls to `IsEnabled()` before `SetInstance()` return the
+  // feature's default state.
   //
-  // This method may only be called during FeatureList initialization and on
-  // the main sequence. Implementers of runtime-mutable features should update
-  // the PlatformFieldTrials::RegisterRuntimeMutableFeatures() override for
-  // their platform(s) to call this method for their runtime-mutable feature(s).
+  // Implementers of runtime-mutable features should update the
+  // PlatformFieldTrials::EnableRuntimeMutableFeatures() override for their
+  // platform(s) to call this method for their runtime-mutable feature(s).
   void EnableRuntimeMutability(
       const Feature& feature,
       OnRuntimeMutableFeatureStateChangedCallback pre_mutation_callback,
@@ -414,11 +418,11 @@ class BASE_EXPORT FeatureList {
 
   // Returns information about the field trial controlling or associated with
   // the given `feature_name`. If the feature has runtime mutability enabled and
-  // has an active runtime override, returns the runtime override trial name and
-  // sets `is_runtime_override` to true. Otherwise returns the associated field
-  // trial name (if any) and `is_runtime_override` set to false. If no trial is
-  // associated with the feature, `trial_name` will be empty. Must be called on
-  // the main sequence.
+  // has an applied runtime override, returns the runtime override trial name
+  // and sets `is_runtime_override` to true. Otherwise returns the associated
+  // field trial name (if any) and `is_runtime_override` set to false. If no
+  // trial is associated with the feature, `trial_name` will be empty. Must be
+  // called on the main sequence.
   ControllingTrialInfo GetControllingTrialInfoByFeatureName(
       std::string_view feature_name) const;
 
@@ -511,8 +515,8 @@ class BASE_EXPORT FeatureList {
   // instance, which is checked in builds with DCHECKs enabled.
   //
   // For a feature defined as BASE_RUNTIME_MUTABLE_FEATURE, its enabled state
-  // may only be queried from the main thread. Features defined as BASE_FEATURE
-  // are effectively constants, and can be queried from any thread.
+  // may only be queried from the main sequence. Features defined as
+  // BASE_FEATURE are effectively constants, and can be queried from any thread.
   static bool IsEnabled(const Feature& feature);
 
   // Some characters are not allowed to appear in feature names or the

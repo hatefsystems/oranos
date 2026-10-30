@@ -282,8 +282,8 @@ class ComposeboxQueryController
     }
 
     // Gets a pointer to the viewport request ID for this request for testing.
-    lens::LensOverlayRequestId* GetViewportRequestIdForTesting() const {
-      return viewport_request_id_.get();
+    const lens::LensOverlayRequestId* GetViewportRequestIdForTesting() const {
+      return viewport_request_id ? &*viewport_request_id : nullptr;
     }
 
    private:
@@ -293,11 +293,6 @@ class ComposeboxQueryController
 
     // Whether this file upload was explicitly cancelled.
     bool is_cancelled_ = false;
-
-    // The request ID for the viewport associated with this request, if it is
-    // different from the request ID. Set by StartFileUploadFlow() when
-    // use_separate_request_ids_for_viewport_images_ is true.
-    std::unique_ptr<lens::LensOverlayRequestId> viewport_request_id_;
 
     // Caches the latest search URL request ID generated for this file,
     // allowing stateless recontextualization updates to maintain sequence
@@ -538,6 +533,7 @@ class ComposeboxQueryController
 
   // Handles the response from the cluster info request.
   void HandleClusterInfoResponse(
+      std::vector<std::string> request_headers,
       std::unique_ptr<endpoint_fetcher::EndpointResponse> response);
 
   // Sets the query controller state and notifies the query controller state
@@ -642,7 +638,7 @@ class ComposeboxQueryController
       lens::LensOverlayServerRequest* request,
       std::vector<std::string>* request_headers,
       base::TimeDelta timeout,
-      base::OnceCallback<
+      base::RepeatingCallback<
           void(std::unique_ptr<endpoint_fetcher::EndpointFetcher>)>
           fetcher_created_callback,
       endpoint_fetcher::EndpointFetcherCallback response_received_callback,
@@ -653,12 +649,28 @@ class ComposeboxQueryController
       std::string request_string,
       std::vector<std::string>* request_headers,
       base::TimeDelta timeout,
-      base::OnceCallback<
+      base::RepeatingCallback<
           void(std::unique_ptr<endpoint_fetcher::EndpointFetcher>)>
           fetcher_created_callback,
       endpoint_fetcher::EndpointFetcherCallback response_received_callback,
       UploadProgressCallback upload_progress_callback,
       GURL fetch_url);
+
+  // Handles the response from a fetch request, retrying once without the
+  // Authorization header if identity delegation is enabled and the server
+  // returns HTTP 401.
+  void OnFetchResponseReceived(
+      std::string request_string,
+      std::vector<std::string> request_headers,
+      std::vector<std::string> cors_exempt_headers,
+      GURL fetch_url,
+      base::TimeDelta timeout,
+      base::RepeatingCallback<
+          void(std::unique_ptr<endpoint_fetcher::EndpointFetcher>)>
+          fetcher_created_callback,
+      endpoint_fetcher::EndpointFetcherCallback response_received_callback,
+      UploadProgressCallback upload_progress_callback,
+      std::unique_ptr<endpoint_fetcher::EndpointResponse> response);
 
   // Creates the encoded visual search interaction log data and attaches it to
   // the url param list.

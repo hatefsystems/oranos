@@ -641,9 +641,6 @@ foreach(_target_type,
       }
 
       # Consumed by the unsafe-buffers plugin during compile.
-      #
-      # TODO(crbug.com/326584510): Reclient doesn't respect this variable, see
-      # rbe_bug_326584510_missing_inputs in //build/config/clang/clang.gni
       _uses_cflags = false
       if (defined(sources)) {
         foreach(f, sources) {
@@ -697,9 +694,6 @@ foreach(_target_type,
       }
 
       # Consumed by the unsafe-buffers plugin during compile.
-      #
-      # TODO(crbug.com/326584510): Reclient doesn't respect this variable, see
-      # rbe_bug_326584510_missing_inputs in //build/config/clang/clang.gni
       _uses_cflags = false
       if (defined(sources)) {
         foreach(f, sources) {
@@ -859,11 +853,6 @@ template("component") {
   target(_component_mode, target_name) {
     if (defined(_output_name)) {
       output_name = _output_name
-    }
-    if (is_component_build && is_android) {
-      # By appending .cr, we prevent name collisions with libraries already
-      # loaded by the Android zygote.
-      output_extension = "cr.so"
     }
     forward_variables_from(invoker, TESTONLY_AND_VISIBILITY)
     forward_variables_from(invoker, "*", TESTONLY_AND_VISIBILITY)

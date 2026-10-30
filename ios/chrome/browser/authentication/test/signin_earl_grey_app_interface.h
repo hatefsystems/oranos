@@ -8,8 +8,6 @@
 #import <UIKit/UIKit.h>
 
 #import "components/policy/core/browser/signin/profile_separation_policies.h"
-#import "ios/chrome/browser/signin/model/capabilities_dict.h"
-#import "url/gurl.h"
 
 @class FakeSystemIdentity;
 @protocol GREYMatcher;
@@ -64,9 +62,6 @@ enum class UserSelectableType;
 // Returns the email of the primary account.
 // If there is no signed-in account returns an empty string.
 + (NSString*)primaryAccountEmail;
-
-// Returns the gaia IDs of all accounts in the current profile.
-+ (NSSet<NSString*>*)accountsInProfileGaiaIDs;
 
 // Checks that no identity is signed in.
 + (BOOL)isSignedOut;

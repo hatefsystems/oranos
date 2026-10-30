@@ -342,7 +342,7 @@ class MagicStackRankingModelTest : public PlatformTest {
           accountManagerService:nullptr
               engagementTracker:tracker
               layoutGuideCenter:nil
-          aimEligibilityService:nullptr];
+            aiModeButtonService:nil];
 
     _safetyCheckMediator = [[SafetyCheckMagicStackMediator alloc]
         initWithSafetyCheckManager:IOSChromeSafetyCheckManagerFactory::
@@ -363,7 +363,8 @@ class MagicStackRankingModelTest : public PlatformTest {
                           imageFetcher:
                               std::make_unique<image_fetcher::ImageDataFetcher>(
                                   GetProfile()->GetSharedURLLoaderFactory())
-        backgroundCustomizationService:nullptr];
+        backgroundCustomizationService:nullptr
+                 localStatePrefService:GetLocalState()];
 
     _priceTrackingPromoMediator = [[PriceTrackingPromoMediator alloc]
         initWithShoppingService:commerce::ShoppingServiceFactory::GetForProfile(
@@ -415,8 +416,8 @@ class MagicStackRankingModelTest : public PlatformTest {
     PlatformTest::TearDown();
   }
 
-  ProfileIOS* SetUpEnvironment(ProfileIOS* profile) {
-    segmentation_test_utils_->SetupForProfile(profile);
+  ProfileIOS& SetUpEnvironment(ProfileIOS& profile) {
+    segmentation_test_utils_->SetupForProfile(&profile);
     return profile;
   }
 

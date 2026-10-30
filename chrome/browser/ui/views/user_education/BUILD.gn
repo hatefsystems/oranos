@@ -41,6 +41,7 @@ source_set("user_education") {
     "//ui/events",
     "//ui/views",
     "//ui/webui/resources/cr_components/help_bubble:mojo_bindings",
+    "//ui/webui/tracked_element",
   ]
 
   # impl/browser_user_education_interface_impl.h needs
@@ -84,6 +85,7 @@ source_set("impl") {
     "//chrome/browser/desktop_to_mobile_promos:utils",
     "//chrome/browser/devtools",
     "//chrome/browser/dictation",
+    "//chrome/browser/indigo/resources:indigo_strings",
     "//chrome/browser/profiles",
     "//chrome/browser/profiles:profile",
     "//chrome/browser/search/background",

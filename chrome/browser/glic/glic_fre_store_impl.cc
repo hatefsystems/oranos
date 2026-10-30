@@ -89,10 +89,6 @@ class GeminiGlicFreStore final : public GlicFreStore {
     SetStatus(profile, prefs::FreStatus::kNotStarted);
   }
 
-  // The Gemini section already waits for the FRE through
-  // `ProfileEnablement::ShouldShowSettingsPage()`.
-  bool HidesSettingsUntilCompleted() const override { return false; }
-
   std::string_view GetStatusPrefName() const override {
     return prefs::kGlicCompletedFre;
   }
@@ -142,12 +138,9 @@ class GeminiEnterpriseGlicFreStore final : public GlicFreStore {
   }
 
   void OnPrimaryAccountCleared(Profile* profile) const override {
-    // The GEiC FRE is stored per GE instance, not per account, so it is kept.
-    // TODO(b/576047045): Confirm whether signing out should reset the GEiC FRE.
+    // Intentionally a no-op: this is only called on Android, where GEiC isn't
+    // supported.
   }
-
-  bool HidesSettingsUntilCompleted() const override { return true; }
-
   // Keyed by GE instance, so changes for other GE instances are also
   // reported.
   std::string_view GetStatusPrefName() const override {

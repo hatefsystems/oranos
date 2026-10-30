@@ -8,8 +8,8 @@
 #include <utility>
 #include <vector>
 
+#include "base/check.h"
 #include "base/functional/bind.h"
-#include "base/logging.h"
 #include "base/notimplemented.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
@@ -81,6 +81,8 @@
 #include "ui/display/screen.h"
 #include "ui/views/bubble/bubble_border.h"
 #include "ui/views/button_drag_utils.h"
+#include "ui/views/controls/menu/menu_controller.h"
+#include "ui/views/focus/focus_manager.h"
 #include "ui/views/widget/widget.h"
 
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
@@ -239,10 +241,13 @@ void WebUILocationBar::PropagateFocusRequest(
     // ... well, almost immediately, since we may be in middle of activation
     // (see views::Widget::Activate()), so trying to activate the popup instead
     // can make things very unhappy.
+    const bool was_focused =
+        omnibox_controller_ && omnibox_controller_->edit_model()->has_focus();
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&WebUILocationBar::HandleFocusRequestForFullPopup,
-                       focus_request_weak_ptr_factory_.GetWeakPtr(), target));
+                       focus_request_weak_ptr_factory_.GetWeakPtr(), target,
+                       was_focused));
   } else if (toolbar_delegate_) {
     toolbar_delegate_->OnFocusRequested(target);
     if (auto* web_view = toolbar_delegate_->GetInternalWebView();
@@ -298,6 +303,46 @@ void WebUILocationBar::SetFocusWithin(bool focused) {
   RefreshAiModePageAction();
 
   NotifyFocusChanged();
+}
+
+void WebUILocationBar::OnToolbarFocused() {
+  if (!omnibox_controller_ || !omnibox_popup_view_) {
+    return;
+  }
+  // Do not hand focus back to the popup while a Views menu is active (matching
+  // `OmniboxPopupFullPresenter::ShouldReceiveFocus()`), as `OnFocus()` would
+  // otherwise still update WebUI focus state and cancel pending context menus
+  // if browser widget activation restores focus to the toolbar WebView.
+  if (views::MenuController::GetActiveInstance()) {
+    return;
+  }
+  views::FocusManager* focus_manager = GetFocusManager();
+  const bool is_focus_restore =
+      focus_manager &&
+      focus_manager->focus_change_reason() ==
+          views::FocusManager::FocusChangeReason::kFocusRestore;
+  // Always consume `restore_focus_on_window_reactivation_` on the first
+  // toolbar focus after window deactivation, even if `is_focus_restore` is
+  // false (e.g. the user clicked directly into another toolbar element), so a
+  // stale pending restore doesn't erroneously restore focus later.
+  if (std::exchange(restore_focus_on_window_reactivation_, false) &&
+      is_focus_restore) {
+    omnibox_popup_view_->OnFocus(/*query_zps=*/false, /*select_all=*/false,
+                                 /*show_full_url=*/false);
+    return;
+  }
+
+  // When the browser window activates (e.g. clicking the tab strip), focus is
+  // restored to the toolbar WebView, which deactivates the popup widget. Hand
+  // focus back to the popup if the omnibox is still logically focused (an
+  // unfocused draft also keeps the popup in `kFull`, so check `has_focus()`
+  // too).
+  CHECK(omnibox_controller_->edit_model());
+  if (omnibox_controller_->edit_model()->has_focus() &&
+      omnibox_controller_->popup_state_manager()->popup_state() ==
+          OmniboxPopupState::kFull) {
+    OpenOmniboxIfFullPopup(/*query_zps=*/false);
+  }
 }
 
 void WebUILocationBar::OnBlur() {
@@ -824,18 +869,7 @@ void WebUILocationBar::OnLhsChipClicked(
                 toolbar_ui_api::mojom::LhsChipIdentifier::kPermissionIndicator
             ? permission_dashboard_->indicator_chip()
             : permission_dashboard_->request_chip();
-
-    // Drop stale clicks: the WebUI echoes the token it rendered with, so a
-    // mismatch means the chip's backing model changed while the click IPC was
-    // in flight (e.g. across a tab switch or same-tab navigation). See
-    // crbug.com/557279024.
-    if (chip->state_token() != state_token) {
-      VLOG(1) << "Dropped stale chip click for identifier "
-              << static_cast<int>(identifier) << ": received token "
-              << state_token << " != current token " << chip->state_token();
-      return;
-    }
-    chip->OnClicked(is_mouse_interaction);
+    chip->OnClickedIfCurrent(is_mouse_interaction, state_token);
     return;
   }
 
@@ -909,7 +943,16 @@ void WebUILocationBar::OnPageInfoBubbleClosed(
 }
 
 void WebUILocationBar::HandleFocusRequestForFullPopup(
-    toolbar_ui_api::mojom::FocusRequestTarget target) {
+    toolbar_ui_api::mojom::FocusRequestTarget target,
+    bool was_focused) {
+  // If the omnibox had focus when the request was posted (e.g. from
+  // `BrowserView::RestoreFocus()` when reactivating the browser window) but was
+  // blurred before this task ran (e.g. by the click or focus change that
+  // triggered that activation), do not refocus it.
+  if (was_focused && !omnibox_controller_->edit_model()->has_focus()) {
+    return;
+  }
+
   // Of things handled here, only kLocationBar is not user-inititiated.
   const bool is_user_initiated =
       (target != toolbar_ui_api::mojom::FocusRequestTarget::kLocationBar);
@@ -1080,6 +1123,15 @@ bool WebUILocationBar::is_full_webui_omnibox() const {
   return using_full_popup_;
 }
 
+void WebUILocationBar::SetRestoreFocusOnWindowReactivation(bool restore) {
+  restore_focus_on_window_reactivation_ = restore;
+}
+
+views::FocusManager* WebUILocationBar::GetFocusManager() {
+  views::Widget* widget = GetLocationBarWidget();
+  return widget ? widget->GetFocusManager() : nullptr;
+}
+
 bool WebUILocationBar::ShouldChipOverrideLocationIcon() {
   return permission_dashboard_->GetIndicatorChip()->GetVisible() ||
          permission_dashboard_->GetRequestChip()->GetVisible();
@@ -1186,6 +1238,10 @@ void WebUILocationBar::OnPopupStateChanged(OmniboxPopupState old_state,
       }
       break;
     case OmniboxPopupState::kNone:
+      if (using_full_popup_) {
+        omnibox_popup_view_->OnBlur();
+        GetOmniboxController()->edit_model()->OnKillFocus();
+      }
       break;
   }
 

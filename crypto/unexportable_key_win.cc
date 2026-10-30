@@ -10,6 +10,7 @@
 #include <array>
 #include <concepts>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -58,8 +59,8 @@ namespace crypto {
 
 namespace {
 
-// Persistent Storage Root Key (SRK) handles used as parent keys for TPM 2.0
-// keys by the Microsoft Platform Crypto Provider (PCP).
+// Persistent ECC Storage Root Key (SRK) handle used as the parent key for
+// TPM 2.0 ECC keys by the Microsoft Platform Crypto Provider (PCP).
 //
 // In the TCG TPM 2.0 handle registry, 0x81000001 is reserved for the primary
 // RSA Storage Root Key (SRK), while 0x81000002 is recommended for ECC.
@@ -71,17 +72,13 @@ namespace {
 //   - If absent, GetEccSrk creates a NIST P-256 primary key under TPM_RH_OWNER
 //     (objectAttributes = 0x00030472) and persists it to handle 0x81000009 via
 //     TPM2_EvictControl.
-//   - When importing opaque blobs (NCryptImportKey), PCPKsp.dll unconditionally
-//     passes 0x81000009 (ECC) or 0x81000001 (RSA) as the parentHandle to
-//     TPM2_Load.
+//   - When importing opaque ECC blobs (NCryptImportKey), PCPKsp.dll
+//     unconditionally passes 0x81000009 as the parentHandle to TPM2_Load.
 //
-// Both handles can be verified on a provisioned machine by executing
-// TPM2_ReadPublic(0x81000001) and TPM2_ReadPublic(0x81000009) via TBS, which
-// return TPM_ALG_RSA and TPM_ALG_ECC keys with attributes 0x00030472.
-enum class WindowsSrkHandle : uint32_t {
-  kRsa = 0x81000001,
-  kEcc = 0x81000009,
-};
+// The handle can be verified on a provisioned machine by executing
+// TPM2_ReadPublic(0x81000009) via TBS, which returns a TPM_ALG_ECC key with
+// attributes 0x00030472.
+constexpr uint32_t kEccSrkHandle = 0x81000009;
 
 enum class ProviderType {
   // Keys will be backed by a TPM. Requires TPM support.
@@ -229,31 +226,6 @@ std::optional<LPCWSTR> BCryptAlgorithmFor(sign::SignatureKind algo) {
 
     default:
       return std::nullopt;
-  }
-}
-
-// GetSrkHandleFor returns the persistent Storage Root Key (SRK) handle used as
-// the parent key when creating TPM 2.0 keys for the given algorithm.
-WindowsSrkHandle GetSrkHandleFor(sign::SignatureKind algo) {
-  switch (algo) {
-    case sign::RSA_PKCS1_SHA1:
-    case sign::RSA_PKCS1_SHA256:
-    case sign::RSA_PKCS1_SHA384:
-    case sign::RSA_PKCS1_SHA512:
-    case sign::RSA_PSS_SHA256:
-    case sign::RSA_PSS_SHA384:
-    case sign::RSA_PSS_SHA512:
-      return WindowsSrkHandle::kRsa;
-    case sign::ECDSA_SHA1:
-    case sign::ECDSA_SHA256:
-    case sign::ECDSA_SHA384:
-    case sign::ECDSA_SHA512:
-      return WindowsSrkHandle::kEcc;
-    case sign::ED25519:
-    case sign::MLDSA_44:
-    case sign::MLDSA_65:
-    case sign::MLDSA_87:
-      NOTREACHED();
   }
 }
 
@@ -676,13 +648,20 @@ bool IsTbsAvailable() {
   return is_available;
 }
 
-bool IsTpm20Available() {
-  if (!IsTbsAvailable()) {
-    return false;
-  }
-  TPM_DEVICE_INFO tpm_info{};
-  TBS_RESULT result = ::Tbsi_GetDeviceInfo(sizeof(tpm_info), &tpm_info);
-  return result == TBS_SUCCESS && tpm_info.tpmVersion >= TPM_VERSION_20;
+// Returns the TPM version reported by TBS, or nullopt if there is no usable
+// TPM. Cached for the lifetime of the process. The first call loads tbs.dll.
+std::optional<UINT32> GetTpmVersion() {
+  static const auto tpm_version = []() -> std::optional<UINT32> {
+    if (!IsTbsAvailable()) {
+      return std::nullopt;
+    }
+    TPM_DEVICE_INFO tpm_info{};
+    if (::Tbsi_GetDeviceInfo(sizeof(tpm_info), &tpm_info) != TBS_SUCCESS) {
+      return std::nullopt;
+    }
+    return tpm_info.tpmVersion;
+  }();
+  return tpm_version;
 }
 
 // Maps a TPM operation (represented by a TPM command) to a TPMOperation enum.
@@ -1150,7 +1129,7 @@ enum class SrkRecoveryResult {
 // LINT.ThenChange(//tools/metrics/histograms/metadata/crypto/enums.xml:SrkRecoveryResult)
 
 // Recovers from a TPM2_Create that failed with `error`, if `error` reports that
-// the parent handle does not exist, by recreating the Storage Root Key as a
+// the parent handle does not exist, by recreating the ECC Storage Root Key as a
 // transient object and creating the AIK under that instead. Returns `error`
 // unchanged otherwise.
 //
@@ -1172,17 +1151,11 @@ enum class SrkRecoveryResult {
 //
 // TPM2_Create takes exactly one handle (parentHandle), so a handle error
 // necessarily refers to the SRK.
-//
-// Only the ECC SRK is recreated. The template below is the ECC storage
-// primary, so an RSA key parented to it could not be loaded by the provider
-// afterwards. The RSA SRK does not need this: it is provisioned when the TPM
-// is taken ownership of rather than on first use.
 tpm::TpmParseErrorOr<tpm::CreateResponse> CreateAikUnderTransientSrk(
     tpm::TpmParseError error,
     TBS_HCONTEXT h_context,
     sign::SignatureKind algo) {
-  if (!tpm::IsHandleError(error) ||
-      GetSrkHandleFor(algo) != WindowsSrkHandle::kEcc) {
+  if (!tpm::IsHandleError(error)) {
     return base::unexpected(error);
   }
 
@@ -1218,13 +1191,14 @@ tpm::TpmParseErrorOr<tpm::CreateResponse> CreateAikUnderTransientSrk(
     }
   };
 
-  ASSIGN_OR_RETURN(std::vector<uint8_t> retry_cmd,
-                   tpm::BuildCreateAikCommand(primary.object_handle, algo),
+  ASSIGN_OR_RETURN(hash::HashKind hash_kind, ToHashKind(algo),
                    [&] { return fail(SrkRecoveryResult::kRetryNotSubmitted); });
 
   ASSIGN_OR_RETURN(std::vector<uint8_t> retry_resp,
                    SubmitTbsCommand(h_context, tpm::TpmCommand::kCreate,
-                                    retry_cmd, kMaxTpmResponseSize, algo),
+                                    tpm::BuildCreateEcdsaAikCommand(
+                                        primary.object_handle, hash_kind),
+                                    kMaxTpmResponseSize, algo),
                    [&] { return fail(SrkRecoveryResult::kRetryNotSubmitted); });
 
   tpm::TpmParseErrorOr<tpm::CreateResponse> retried =
@@ -1319,8 +1293,9 @@ class UnexportableKeyProviderWin : public UnexportableKeyProvider {
 
     // Both routes yield a restricted signing key, which `AttestationKeyWin`
     // can only sign with over TBS, so require TBS even on the PCP route.
-    if (provider_type_ != ProviderType::kTPM || !IsTbsAvailable() ||
-        !IsTpm20Available()) {
+    // `GetTpmVersion()` returns nullopt without TBS.
+    if (provider_type_ != ProviderType::kTPM ||
+        GetTpmVersion() < TPM_VERSION_20) {
       return nullptr;
     }
 
@@ -1373,20 +1348,18 @@ class UnexportableKeyProviderWin : public UnexportableKeyProvider {
                      });
 
     // 2. Construct and submit the TPM2_Create command to generate the AIK under
-    // the Storage Root Key (SRK).
-    ASSIGN_OR_RETURN(std::vector<uint8_t> create_cmd,
-                     tpm::BuildCreateAikCommand(
-                         std::to_underlying(GetSrkHandleFor(algo)), algo),
-                     [&] {
-                       LogTPMOperationError(
-                           TPMOperation::kNewAttestationKeyCreation,
+    // the ECC Storage Root Key (SRK).
+    ASSIGN_OR_RETURN(hash::HashKind hash_kind, ToHashKind(algo), [&] {
+      LogTPMOperationError(TPMOperation::kNewAttestationKeyCreation,
                            NTE_NOT_SUPPORTED, algo);
-                       return nullptr;
-                     });
+      return nullptr;
+    });
 
     ASSIGN_OR_RETURN(std::vector<uint8_t> create_resp,
                      SubmitTbsCommand(h_context, tpm::TpmCommand::kCreate,
-                                      create_cmd, kMaxTpmResponseSize, algo),
+                                      tpm::BuildCreateEcdsaAikCommand(
+                                          kEccSrkHandle, hash_kind),
+                                      kMaxTpmResponseSize, algo),
                      [] { return nullptr; });
 
     // 3. Parse the TPM2_Create response to extract the public and private key
@@ -1613,6 +1586,10 @@ ScopedNCryptKey DuplicatePlatformKeyHandle(const UnexportableSigningKey& key) {
 }
 
 std::unique_ptr<UnexportableKeyProvider> GetUnexportableKeyProviderWin() {
+  // Any TPM version counts. TPM 1.2 machines get an RSA-only provider.
+  if (!GetTpmVersion()) {
+    return nullptr;
+  }
   return std::make_unique<UnexportableKeyProviderWin>(ProviderType::kTPM);
 }
 

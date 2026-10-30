@@ -16,6 +16,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "components/crash/core/common/crash_key.h"
 #include "gpu/command_buffer/common/shm_count.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
@@ -497,14 +498,30 @@ bool GraphiteSharedContext::InsertRecordingImpl(
   // TODO(433845560): Check the kAddCommandsFailed failures.
   if (insert_status ==
       skgpu::graphite::InsertStatus::kAsyncShaderCompilesFailed) {
-    // For kAsyncShaderCompilesFailed, we should also clear the disk shader
-    // cache in case the error was due to a corrupted cached shader blob.
-    GpuProcessShmCount::ScopedIncrement use_shader_cache(
-        use_shader_cache_shm_count_);
-    static crash_reporter::CrashKeyString<4096> insert_error_key(
-        "graphite-insert-error");
-    insert_error_key.Set(insert_status.message());
-    CHECK(simulating_insert_failure);
+    if (!IsContextLost()) {
+#if BUILDFLAG(IS_WIN)
+      // Avoid sending crash dumps for DXC and FXC out of memory errors. Since
+      // Dawn and Skia do not report OOM as a distinct error, search the first
+      // line of the error string for E_OUTOFMEMORY on Windows.
+      const std::string_view insert_error =
+          simulating_insert_failure ? simulated_insert_status_.message()
+                                    : insert_status.message();
+      const auto first_line = insert_error.substr(0, insert_error.find('\n'));
+      if (delegate_ && first_line.contains("E_OUTOFMEMORY")) {
+        delegate_->MarkContextLost(error::kOutOfMemory);
+        return false;
+      }
+#endif  // BUILDFLAG(IS_WIN)
+
+      // For kAsyncShaderCompilesFailed, we should also clear the disk shader
+      // cache in case the error was due to a corrupted cached shader blob.
+      GpuProcessShmCount::ScopedIncrement use_shader_cache(
+          use_shader_cache_shm_count_);
+      static crash_reporter::CrashKeyString<4096> insert_error_key(
+          "graphite-insert-error");
+      insert_error_key.Set(insert_status.message());
+      CHECK(simulating_insert_failure);
+    }
   } else if (insert_status ==
              skgpu::graphite::InsertStatus::kOutOfOrderRecording) {
     if (delegate_) {
@@ -519,7 +536,8 @@ bool GraphiteSharedContext::InsertRecordingImpl(
   // All other failure modes are recoverable in the sense that future recordings
   // will be rendered correctly, so merely return a boolean here so that callers
   // can log the error.
-  return insert_status == skgpu::graphite::InsertStatus::kSuccess;
+  return insert_status == skgpu::graphite::InsertStatus::kSuccess &&
+         !IsContextLost();
 }
 
 void GraphiteSharedContext::submit(skgpu::graphite::SubmitInfo submit_info) {

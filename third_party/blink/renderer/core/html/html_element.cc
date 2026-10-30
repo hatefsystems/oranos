@@ -1503,6 +1503,22 @@ bool HTMLElement::IsPopoverReady(PopoverTriggerAction action,
                           "Not supported on elements that are not popovers.");
     return false;
   }
+  if (action == PopoverTriggerAction::kHide) {
+    if (GetPopoverData()->visibilityState() !=
+        PopoverVisibilityState::kShowing) {
+      // Important to check that visibility is not kShowing (rather than
+      // popoverOpen()), because a hide transition might have been started on
+      // this popover already, and we don't want to allow a double-hide.
+      return false;
+    }
+    if (expected_document && &GetDocument() != expected_document) {
+      maybe_throw_exception(DOMExceptionCode::kInvalidStateError,
+                            "Invalid when the document changes while showing "
+                            "or hiding a popover element.");
+      return false;
+    }
+    return true;
+  }
   if (!GetDocument().IsActive()) {
     maybe_throw_exception(
         DOMExceptionCode::kInvalidStateError,
@@ -1511,13 +1527,6 @@ bool HTMLElement::IsPopoverReady(PopoverTriggerAction action,
   }
   if (action == PopoverTriggerAction::kShow &&
       GetPopoverData()->visibilityState() != PopoverVisibilityState::kHidden) {
-    return false;
-  }
-  if (action == PopoverTriggerAction::kHide &&
-      GetPopoverData()->visibilityState() != PopoverVisibilityState::kShowing) {
-    // Important to check that visibility is not kShowing (rather than
-    // popoverOpen()), because a hide transition might have been started on this
-    // popover already, and we don't want to allow a double-hide.
     return false;
   }
   if (!isConnected()) {
@@ -1622,6 +1631,14 @@ ScriptPromise<IDLUndefined> HTMLElement::showUnboundedElement(
       MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(script_state);
   auto promise = resolver->Promise();
 
+  if (IsUnboundedElementActive() ||
+      (GetUnboundedEventData() && GetUnboundedEventData()->isTransitioning())) {
+    resolver->Reject(MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kInvalidStateError,
+        "The element is already an active unbounded element."));
+    return promise;
+  }
+
   if (!FastHasAttribute(html_names::kUnboundedAttr)) {
     resolver->Reject(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kInvalidStateError,
@@ -1705,6 +1722,18 @@ ScriptPromise<IDLUndefined> HTMLElement::showUnboundedElement(
   }
 #endif
 
+  // Dismiss any currently active unbounded element on the widget before
+  // activating this element, so that multiple elements are never active at
+  // once and any third elements opened inside closing beforetoggle listeners
+  // are cleanly dismissed.
+  while (HTMLElement* active = widget->GetActiveUnboundedElement()) {
+    if (active == this) {
+      break;
+    }
+    widget->DismissUnboundedSurfaceState(
+        WebFrameWidgetImpl::UnboundedDismissReason::kProgrammatic);
+  }
+
   SetUnboundedElementActive(true, UnboundedEvents::kFireNonCancelable);
 
   mojo::PendingAssociatedRemote<mojom::blink::UnboundedSurfaceHost> host_remote;
@@ -1728,7 +1757,8 @@ ScriptPromise<IDLUndefined> HTMLElement::hideUnboundedElement(
       MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(script_state);
   auto promise = resolver->Promise();
 
-  if (!IsUnboundedElementActive()) {
+  if (!IsUnboundedElementActive() ||
+      (GetUnboundedEventData() && GetUnboundedEventData()->isTransitioning())) {
     resolver->Reject(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kInvalidStateError,
         "The element is not an active unbounded element."));
@@ -1766,6 +1796,32 @@ bool HTMLElement::SetUnboundedElementActive(bool active,
   }
 
   if (fire_events != UnboundedEvents::kSuppress) {
+    class ScopedTransitioning {
+      STACK_ALLOCATED();
+
+     public:
+      explicit ScopedTransitioning(UnboundedEventData& data)
+          : data_(data), was_transitioning_(data.isTransitioning()) {
+        data_.setIsTransitioning(true);
+      }
+      ~ScopedTransitioning() {
+        if (!was_transitioning_) {
+          DCHECK(data_.isTransitioning());
+          data_.setIsTransitioning(false);
+        }
+      }
+
+      bool WasTransitioning() const { return was_transitioning_; }
+
+     private:
+      UnboundedEventData& data_;
+      bool was_transitioning_;
+    };
+    ScopedTransitioning scoped_transitioning(EnsureUnboundedEventData());
+    if (scoped_transitioning.WasTransitioning()) {
+      return true;
+    }
+
     String old_state = active ? keywords::kClosed : keywords::kOpen;
     String new_state = active ? keywords::kOpen : keywords::kClosed;
     Event::Cancelable cancelable =
@@ -2399,7 +2455,8 @@ PopoverHideResult HTMLElement::HideAllPopoversUntil(
         // stack.
         return PopoverHideResult::kHidden;
       }
-      while (last_to_hide && last_to_hide->popoverOpen()) {
+      while (last_to_hide && last_to_hide->popoverOpen() &&
+             stack.Contains(last_to_hide)) {
         CHECK(!stack.empty());
         auto stack_top = stack.back();
         if (stack_top->HidePopoverInternal(
@@ -2626,12 +2683,10 @@ PopoverHideResult HTMLElement::HidePopoverInternal(
     CHECK_EQ(event->newState(), keywords::kClosed);
     event->SetTarget(this);
     auto result = DispatchEvent(*event);
-    if (result != DispatchEventResult::kNotCanceled) {
-      // The event can be cancelled before dispatch, if the target or execution
-      // context no longer exists, etc. See crbug.com/1445329.
-      CHECK_EQ(result, DispatchEventResult::kCanceledBeforeDispatch);
-      return PopoverHideResult::kHidden;
-    }
+    // The event can be cancelled before dispatch, if the target or execution
+    // context no longer exists, etc. See crbug.com/40268117.
+    CHECK(result == DispatchEventResult::kNotCanceled ||
+          result == DispatchEventResult::kCanceledBeforeDispatch);
 
     // The 'beforetoggle' event handler could have changed this popover, e.g. by
     // changing its type, removing it from the document, or calling
@@ -2782,6 +2837,7 @@ PopoverHideResult HTMLElement::HidePopoverInternal(
 
   // Re-apply display:none, and stop matching `:popover-open`.
   GetPopoverData()->setVisibilityState(PopoverVisibilityState::kHidden);
+  GetPopoverData()->setHidingThisPopover(false);
 
   PseudoStateChanged(CSSSelector::kPseudoPopoverOpen);
   if (HTMLSelectElement::IsPopoverPickerElement(this)) {

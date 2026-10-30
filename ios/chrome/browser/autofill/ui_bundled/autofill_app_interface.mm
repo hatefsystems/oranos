@@ -26,6 +26,7 @@
 #import "components/autofill/core/browser/foundations/autofill_client.h"
 #import "components/autofill/core/browser/foundations/browser_autofill_manager_test_api.h"
 #import "components/autofill/core/browser/payments/credit_card_save_manager.h"
+#import "components/autofill/core/browser/payments/multiple_request_payments_network_interface.h"
 #import "components/autofill/core/browser/payments/payments_autofill_client.h"
 #import "components/autofill/core/browser/payments/payments_network_interface.h"
 #import "components/autofill/core/browser/payments/virtual_card_enrollment_manager.h"
@@ -50,7 +51,6 @@
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
-#import "ios/chrome/common/ui/reauthentication/fake_reauthentication_module.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/app/tab_test_util.h"
 #import "ios/public/provider/chrome/browser/risk_data/risk_data_api.h"
@@ -249,16 +249,19 @@ class FakeCreditCardServer : public CreditCardSaveManager::ObserverForTest {
         ->GetPaymentsNetworkInterface();
   }
 
+  // Access the `MultipleRequestPaymentsNetworkInterface`.
+  static payments::MultipleRequestPaymentsNetworkInterface*
+  GetMultipleRequestPaymentsNetworkInterface() {
+    return GetAutofillClient()
+        .GetPaymentsAutofillClient()
+        ->GetMultipleRequestPaymentsNetworkInterface();
+  }
+
+  // Access the `AutofillClient` for the current `WebState`.
   static AutofillClient& GetAutofillClient() {
     web::WebState* web_state = chrome_test_util::GetCurrentWebState();
-    web::WebFramesManager* frames_manager =
-        autofill::AutofillJavaScriptFeature::GetInstance()->GetWebFramesManager(
-            web_state);
-    web::WebFrame* main_frame = frames_manager->GetMainWebFrame();
     DCHECK(web_state);
-    return AutofillDriverIOS::FromWebStateAndWebFrame(web_state, main_frame)
-        ->GetAutofillManager()
-        .client();
+    return *autofill::AutofillClientIOS::FromWebState(web_state);
   }
 
   // Delete all failed attempds registered on every cards.
@@ -363,6 +366,14 @@ class FakeCreditCardServer : public CreditCardSaveManager::ObserverForTest {
 
     // Set a fake access token to avoid fetch requests.
     payments_network_interface->set_access_token_for_testing(
+        "fake_access_token");
+
+    payments::MultipleRequestPaymentsNetworkInterface*
+        multiple_request_payments_network_interface =
+            FakeCreditCardServer::GetMultipleRequestPaymentsNetworkInterface();
+    multiple_request_payments_network_interface
+        ->set_url_loader_factory_for_testing(shared_url_loader_factory_);
+    multiple_request_payments_network_interface->set_access_token_for_testing(
         "fake_access_token");
 
     // Observe actions in CreditCardSaveManager.
@@ -573,17 +584,6 @@ class FakeCreditCardServer : public CreditCardSaveManager::ObserverForTest {
       .size();
 }
 
-+ (NSString*)firstLocalCreditCardCvc {
-  autofill::PaymentsDataManager& paymentsDataManager =
-      [self personalDataManager]->payments_data_manager();
-  const std::vector<const autofill::CreditCard*>& cards =
-      paymentsDataManager.GetLocalCreditCards();
-  if (cards.empty()) {
-    return nil;
-  }
-  return autofill::GetCreditCardCvcString(*cards[0]);
-}
-
 + (NSString*)exampleCreditCardName {
   autofill::CreditCard card = autofill::test::GetCreditCard();
   return base::SysUTF16ToNSString(
@@ -689,6 +689,14 @@ class FakeCreditCardServer : public CreditCardSaveManager::ObserverForTest {
     payments_network_interface->set_access_token_for_testing(
         "fake_access_token");
   }
+  if (autofill::payments::
+          MultipleRequestPaymentsNetworkInterface* multiple_request_interface =
+              autofill::FakeCreditCardServer::
+                  GetMultipleRequestPaymentsNetworkInterface()) {
+    // Set a fake access token to avoid fetch requests.
+    multiple_request_interface->set_access_token_for_testing(
+        "fake_access_token");
+  }
 }
 
 + (void)setFormFillMaxStrikes:(int)max forCard:(NSString*)card {
@@ -760,15 +768,6 @@ class FakeCreditCardServer : public CreditCardSaveManager::ObserverForTest {
   }
   entityDataManager->RemoveEntityInstance(
       autofill::EntityInstance::EntityId(base::SysNSStringToUTF8(uuid)));
-}
-
-+ (void)removeEntityModifiedSince:(NSDate*)time {
-  autofill::EntityDataManager* entityDataManager = [self entityDataManager];
-  if (!entityDataManager) {
-    return;
-  }
-  entityDataManager->RemoveEntityInstancesModifiedBetween(
-      base::Time::FromNSDate(time), base::Time::Now());
 }
 
 + (BOOL)savePassportEntity {

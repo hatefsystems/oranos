@@ -17,6 +17,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
@@ -45,6 +46,8 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.IntentHandler;
+import org.chromium.chrome.browser.app.tabwindow.TabWindowManagerSingleton;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.homepage.settings.HomepageSettings;
@@ -53,8 +56,13 @@ import org.chromium.chrome.browser.multiwindow.TabbedStartupCoordinator;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileManager;
+import org.chromium.chrome.browser.settings.SettingsInTab;
 import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
 import org.chromium.chrome.browser.settings.SettingsTestRule;
+import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tabmodel.TabModel;
+import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+import org.chromium.chrome.browser.tabwindow.TabWindowManager;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.components.browser_ui.settings.SettingsNavigation;
 import org.chromium.components.browser_ui.widget.containment.ContainedLinearLayout;
@@ -63,11 +71,13 @@ import org.chromium.content_public.browser.test.NativeLibraryTestUtils;
 import org.chromium.ui.listmenu.ListMenuButton;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
 import org.chromium.ui.modaldialog.ModalDialogManager;
+import org.chromium.ui.modaldialog.ModalDialogManager.ModalDialogType;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
 import org.chromium.ui.modaldialog.ModalDialogProperties.ButtonType;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.text.ChromeClickableSpan;
 import org.chromium.ui.widget.TextViewWithClickableSpans;
+import org.chromium.url.GURL;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -81,6 +91,8 @@ public class OnStartupSettingsFragmentTest {
     private static final String URL_ESPN = "https://www.espn.com/";
     private static final String URL_WIKIPEDIA = "https://www.wikipedia.org/";
     private static final String URL_DOCS = "https://docs.google.com/document/u/0/";
+    private static final String URL_NTP = "chrome-native://newtab/";
+    private static final String URL_SETTINGS = "chrome://settings/";
 
     @Rule
     public final SettingsTestRule<OnStartupSettingsFragment> mSettingsTestRule =
@@ -99,6 +111,8 @@ public class OnStartupSettingsFragmentTest {
 
     @After
     public void tearDown() {
+        ThreadUtils.runOnUiThreadBlocking(
+                TabWindowManagerSingleton::resetTabModelSelectorFactoryForTesting);
         setRestoreOnStartupUrls(List.of());
         setRestoreOnStartupPref(SessionStartupPref.LAST);
     }
@@ -253,6 +267,9 @@ public class OnStartupSettingsFragmentTest {
 
                                     @Override
                                     public void onRemoveStartupPage(int index, String url) {}
+
+                                    @Override
+                                    public void onUseCurrentPages() {}
                                 },
                                 (url, callback) -> {
                                     if (URL_ESPN.equals(url)) {
@@ -351,7 +368,7 @@ public class OnStartupSettingsFragmentTest {
         assertNotNull(container);
         assertEquals(1, container.getChildCount());
 
-        // Act: Open the modal dialog via "Add a new page" and enter an unnormalized domain.
+        // Act: Open the tab-modal dialog via "Add a new page" and enter an unnormalized domain.
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     pref.getAddNewPageButtonForTesting().performClick();
@@ -359,6 +376,7 @@ public class OnStartupSettingsFragmentTest {
                             mSettingsTestRule.getActivity().getModalDialogManager();
                     PropertyModel dialogModel = modalDialogManager.getCurrentDialogForTest();
                     assertNotNull(dialogModel);
+                    assertEquals(ModalDialogType.TAB, modalDialogManager.getCurrentType());
                     assertTrue(dialogModel.get(ModalDialogProperties.POSITIVE_BUTTON_DISABLED));
 
                     EditText urlEditText =
@@ -456,7 +474,7 @@ public class OnStartupSettingsFragmentTest {
         assertNotNull(container);
 
         // Act & Verify: Invalid inputs keep positive button disabled and ignore the keyboard Done
-        // action; Cancel and Back/touch-outside dismissals leave stored URLs unchanged.
+        // action; Cancel and Back dismissals leave stored URLs unchanged.
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ModalDialogManager modalDialogManager =
@@ -464,6 +482,7 @@ public class OnStartupSettingsFragmentTest {
                     pref.getAddNewPageButtonForTesting().performClick();
                     PropertyModel dialogModel = modalDialogManager.getCurrentDialogForTest();
                     assertNotNull(dialogModel);
+                    assertEquals(ModalDialogType.TAB, modalDialogManager.getCurrentType());
                     EditText urlEditText =
                             dialogModel
                                     .get(ModalDialogProperties.CUSTOM_VIEW)
@@ -493,7 +512,7 @@ public class OnStartupSettingsFragmentTest {
                                     .findViewById(R.id.url_edit_text);
                     secondEditText.setText(URL_WIKIPEDIA);
                     modalDialogManager.dismissDialog(
-                            secondDialogModel, DialogDismissalCause.NAVIGATE_BACK_OR_TOUCH_OUTSIDE);
+                            secondDialogModel, DialogDismissalCause.NAVIGATE_BACK);
                     assertNull(modalDialogManager.getCurrentDialogForTest());
                 });
 
@@ -529,8 +548,111 @@ public class OnStartupSettingsFragmentTest {
                                         .getCurrentDialogForTest()));
     }
 
+    @Test
+    @SmallTest
+    public void testUrlDialog_inSettingsActivity_usesAppModalType() {
+        // Setup SettingsActivity hosting instead of SettingsInTab.
+        SettingsInTab.setShouldOpenSettingsInTabForTesting(false);
+        setRestoreOnStartupPref(SessionStartupPref.URLS);
+        RadioButtonGroupOnStartupPreference pref = launchAndGetRadioGroupPreference();
+
+        // Act.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> pref.getAddNewPageButtonForTesting().performClick());
+
+        // Verify opening the URL dialog in SettingsActivity uses ModalDialogType.APP.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    ModalDialogManager modalDialogManager =
+                            mSettingsTestRule.getActivity().getModalDialogManager();
+                    PropertyModel dialogModel = modalDialogManager.getCurrentDialogForTest();
+                    assertNotNull(dialogModel);
+                    assertEquals(ModalDialogType.APP, modalDialogManager.getCurrentType());
+                    modalDialogManager.dismissDialog(
+                            dialogModel, DialogDismissalCause.NAVIGATE_BACK_OR_TOUCH_OUTSIDE);
+                    assertNull(modalDialogManager.getCurrentDialogForTest());
+                });
+    }
+
+    @Test
+    @SmallTest
+    public void testUseCurrentPages_savesHttpAndHttpsTabsFromCurrentWindowOnly() {
+        // Setup normal TabModel in the active window with HTTP/HTTPS and internal scheme tabs.
+        setRestoreOnStartupPref(SessionStartupPref.URLS);
+        setupMockTabWindowManagerWithUrls(List.of(URL_ESPN, URL_NTP, URL_WIKIPEDIA, URL_SETTINGS));
+        RadioButtonGroupOnStartupPreference pref = launchAndGetRadioGroupPreference();
+        LinearLayout container = pref.getStartupPagesContainerForTesting();
+        assertNotNull(container);
+
+        // Act.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> pref.getUseCurrentPagesButtonForTesting().performClick());
+
+        // Verify only valid HTTP/HTTPS tab URLs from the active window's normal TabModel are saved
+        // and rendered.
+        assertEquals(2, container.getChildCount());
+        List<String> savedUrls =
+                ThreadUtils.runOnUiThreadBlocking(
+                        () ->
+                                TabbedStartupCoordinator.getSessionStartupUrls(
+                                        UserPrefs.get(mProfile)));
+        assertEquals(List.of(URL_ESPN, URL_WIKIPEDIA), savedUrls);
+    }
+
+    @Test
+    @SmallTest
+    public void testUseCurrentPages_withNoHttpOrHttpsTabs_clearsStartupUrls() {
+        // Setup normal TabModel containing only non-HTTP/HTTPS internal tabs.
+        setRestoreOnStartupPref(SessionStartupPref.URLS);
+        setRestoreOnStartupUrls(List.of(URL_ESPN));
+        setupMockTabWindowManagerWithUrls(List.of(URL_NTP));
+        RadioButtonGroupOnStartupPreference pref = launchAndGetRadioGroupPreference();
+        LinearLayout container = pref.getStartupPagesContainerForTesting();
+        assertNotNull(container);
+        assertEquals(1, container.getChildCount());
+
+        // Act.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> pref.getUseCurrentPagesButtonForTesting().performClick());
+
+        // Verify empty list is written to clear startup URLs and fall back to NEW_TAB.
+        assertEquals(0, container.getChildCount());
+        List<String> savedUrls =
+                ThreadUtils.runOnUiThreadBlocking(
+                        () ->
+                                TabbedStartupCoordinator.getSessionStartupUrls(
+                                        UserPrefs.get(mProfile)));
+        assertEquals(List.of(), savedUrls);
+        assertEquals(SessionStartupPref.NEW_TAB, getRestoreOnStartupPref());
+    }
+
+    private void setupMockTabWindowManagerWithUrls(List<String> currentWindowTabUrls) {
+        TabWindowManager tabWindowManager = mock(TabWindowManager.class);
+        TabModelSelector currentSelector = createMockTabModelSelector(currentWindowTabUrls);
+        TabModelSelector otherSelector = createMockTabModelSelector(List.of(URL_DOCS));
+        when(tabWindowManager.getTabModelSelectorById(1)).thenReturn(currentSelector);
+        when(tabWindowManager.getAllTabModelSelectors())
+                .thenReturn(List.of(otherSelector, currentSelector));
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> TabWindowManagerSingleton.setTabWindowManagerForTesting(tabWindowManager));
+    }
+
+    private static TabModelSelector createMockTabModelSelector(List<String> tabUrls) {
+        TabModelSelector tabModelSelector = mock(TabModelSelector.class);
+        TabModel normalTabModel = mock(TabModel.class);
+        when(tabModelSelector.getModel(/* incognito= */ false)).thenReturn(normalTabModel);
+        when(normalTabModel.getCount()).thenReturn(tabUrls.size());
+        for (int i = 0; i < tabUrls.size(); i++) {
+            Tab tab = mock(Tab.class);
+            when(tab.getUrl()).thenReturn(new GURL(tabUrls.get(i)));
+            when(normalTabModel.getTabAt(i)).thenReturn(tab);
+        }
+        return tabModelSelector;
+    }
+
     private RadioButtonGroupOnStartupPreference launchAndGetRadioGroupPreference() {
         mSettingsTestRule.startSettingsActivity();
+        mSettingsTestRule.getActivity().getIntent().putExtra(IntentHandler.EXTRA_WINDOW_ID, 1);
         OnStartupSettingsFragment fragment = mSettingsTestRule.getFragment();
         RadioButtonGroupOnStartupPreference pref =
                 fragment.findPreference(OnStartupSettingsFragment.PREF_RADIO_BUTTON_GROUP);

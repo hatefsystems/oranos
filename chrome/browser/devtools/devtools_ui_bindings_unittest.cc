@@ -4,6 +4,9 @@
 
 #include "chrome/browser/devtools/devtools_ui_bindings.h"
 
+#include <optional>
+#include <string>
+
 #include "base/base64.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
@@ -119,7 +122,8 @@ class MockDevToolsUIBindingsDelegate : public DevToolsUIBindings::Delegate {
   void SetInspectedPageBounds(const gfx::Rect& rect) override {}
   void InspectElementCompleted() override {}
   void SetIsDocked(bool is_docked) override {}
-  void OpenInNewTab(const std::string& url) override {}
+  void OpenInNewTab(const std::string& url,
+                    const std::optional<std::string>& initiator_id) override {}
   void OpenSearchResultsInNewTab(const std::string& query) override {}
   void SetWhitelistedShortcuts(const std::string& message) override {}
   void SetEyeDropperActive(bool active) override {}
@@ -146,7 +150,7 @@ TEST_F(DevToolsUIBindingsLoadNetworkResourceTest,
        RestrictsPrivilegedMethodsFromRemoteFrontend) {
   content::NavigationSimulator::NavigateAndCommitFromBrowser(
       web_contents(),
-      GURL("devtools://devtools/remote/serve_file/inspector.html"));
+      GURL("devtools://devtools-remote/remote/serve_file/inspector.html"));
 
   // Should be blocked by dispatcher without enabling device updates.
   DispatchMessage("setDevicesUpdatesEnabled", base::ListValue().Append(true));
@@ -164,7 +168,8 @@ TEST_F(DevToolsUIBindingsLoadNetworkResourceTest,
 
   content::NavigationSimulator::NavigateAndCommitFromBrowser(
       web_contents(),
-      GURL("devtools://devtools/remote/serve_rev/@12345/inspector.html"));
+      GURL("devtools://devtools-remote/remote/serve_rev/@12345/"
+           "inspector.html"));
 
   base::Value prefs_result = DispatchMessage("getPreferences");
   ASSERT_TRUE(prefs_result.is_dict());
@@ -185,7 +190,8 @@ TEST_F(DevToolsUIBindingsLoadNetworkResourceTest,
 
   content::NavigationSimulator::NavigateAndCommitFromBrowser(
       web_contents(),
-      GURL("devtools://devtools/remote/serve_rev/@12345/inspector.html"));
+      GURL("devtools://devtools-remote/remote/serve_rev/@12345/"
+           "inspector.html"));
 
   DispatchMessage(
       "setPreference",
@@ -207,7 +213,8 @@ TEST_F(DevToolsUIBindingsLoadNetworkResourceTest,
        RemoteFrontendCannotEnableSync) {
   content::NavigationSimulator::NavigateAndCommitFromBrowser(
       web_contents(),
-      GURL("devtools://devtools/remote/serve_rev/@12345/inspector.html"));
+      GURL("devtools://devtools-remote/remote/serve_rev/@12345/"
+           "inspector.html"));
 
   DispatchMessage("setPreference",
                   base::ListValue().Append("sync-preferences").Append("true"));
@@ -248,7 +255,8 @@ TEST_F(DevToolsUIBindingsLoadNetworkResourceTest,
 
   content::NavigationSimulator::NavigateAndCommitFromBrowser(
       web_contents(),
-      GURL("devtools://devtools/remote/serve_rev/@12345/inspector.html"));
+      GURL("devtools://devtools-remote/remote/serve_rev/@12345/"
+           "inspector.html"));
 
   base::Value result_val = DispatchMessage("getSyncInformation");
   ASSERT_TRUE(result_val.is_dict());
@@ -306,7 +314,8 @@ TEST_F(DevToolsUIBindingsLoadNetworkResourceTest,
 
   content::NavigationSimulator::NavigateAndCommitFromBrowser(
       web_contents(),
-      GURL("devtools://devtools/remote/serve_rev/@12345/inspector.html"));
+      GURL("devtools://devtools-remote/remote/serve_rev/@12345/"
+           "inspector.html"));
 
   {
     base::Value prefs_result = DispatchMessage("getPreferences");
@@ -327,7 +336,8 @@ TEST_F(DevToolsUIBindingsLoadNetworkResourceTest,
   scoped_command_line.GetProcessCommandLine()->AppendSwitch(
       switches::kAllowUnsafeDevToolsRemoteFileLoading);
 
-  GURL remote_url("devtools://devtools/remote/serve_rev/@12345/inspector.html");
+  GURL remote_url(
+      "devtools://devtools-remote/remote/serve_rev/@12345/inspector.html");
   content::NavigationSimulator::NavigateAndCommitFromBrowser(web_contents(),
                                                              remote_url);
 
@@ -402,7 +412,8 @@ TEST_F(DevToolsUIBindingsLoadNetworkResourceTest,
   // Navigating from a local frontend to a remote frontend clears registered
   // extension APIs, and subsequent registrations on the remote frontend are
   // ignored.
-  GURL remote_url("devtools://devtools/remote/serve_rev/@12345/inspector.html");
+  GURL remote_url(
+      "devtools://devtools-remote/remote/serve_rev/@12345/inspector.html");
   content::NavigationSimulator::NavigateAndCommitFromBrowser(web_contents(),
                                                              remote_url);
   EXPECT_TRUE(bindings()->GetExtensionsAPIForTesting().empty());
@@ -414,7 +425,8 @@ TEST_F(DevToolsUIBindingsLoadNetworkResourceTest,
 TEST_F(DevToolsUIBindingsLoadNetworkResourceTest,
        BlocksFileSchemeFromUntrustedFrontends) {
   std::vector<GURL> untrusted_urls = {
-      GURL("devtools://devtools/remote/serve_rev/@12345/inspector.html"),
+      GURL("devtools://devtools-remote/remote/serve_rev/@12345/"
+           "inspector.html"),
       GURL("https://chrome-devtools-frontend.appspot.com/serve_rev/@12345/"
            "inspector.html"),
       GURL("https://example.com/index.html")};
@@ -719,7 +731,7 @@ TEST_F(DevToolsUIBindingsNavigationTest,
        RemoteOpenerWithDevToolsBindingsRejected) {
   content::WebContents* opener_contents = CreateWebContents();
   const GURL kRemoteUrl(
-      "devtools://devtools/remote/serve_rev/@12345/inspector.html");
+      "devtools://devtools-remote/remote/serve_rev/@12345/inspector.html");
   content::WebContentsTester::For(opener_contents)
       ->NavigateAndCommit(kRemoteUrl);
   auto opener_bindings = std::make_unique<DevToolsUIBindings>(opener_contents);
@@ -751,7 +763,7 @@ TEST_F(DevToolsUIBindingsNavigationTest,
        RemoteOriginalOpenerRejectedEvenIfOpenerSevered) {
   content::WebContents* original_opener_contents = CreateWebContents();
   const GURL kRemoteUrl(
-      "devtools://devtools/remote/serve_rev/@12345/inspector.html");
+      "devtools://devtools-remote/remote/serve_rev/@12345/inspector.html");
   content::WebContentsTester::For(original_opener_contents)
       ->NavigateAndCommit(kRemoteUrl);
   auto opener_bindings =
@@ -802,7 +814,7 @@ TEST_F(DevToolsUIBindingsNavigationTest,
        RemoteFrontendRendererNavigationDoesNotBecomeLocal) {
   content::WebContents* opener_contents = CreateWebContents();
   const GURL kRemoteUrl(
-      "devtools://devtools/remote/serve_rev/@12345/inspector.html");
+      "devtools://devtools-remote/remote/serve_rev/@12345/inspector.html");
   content::WebContentsTester::For(opener_contents)
       ->NavigateAndCommit(kRemoteUrl);
   auto opener_bindings = std::make_unique<DevToolsUIBindings>(opener_contents);
@@ -844,7 +856,7 @@ TEST_F(DevToolsUIBindingsNavigationTest,
   std::unique_ptr<content::WebContents> opener_contents =
       content::WebContentsTester::CreateTestWebContents(&profile_, nullptr);
   const GURL kRemoteUrl(
-      "devtools://devtools/remote/serve_rev/@12345/inspector.html");
+      "devtools://devtools-remote/remote/serve_rev/@12345/inspector.html");
   content::WebContentsTester::For(opener_contents.get())
       ->NavigateAndCommit(kRemoteUrl);
   auto opener_bindings =
@@ -1717,7 +1729,8 @@ TEST_F(DevToolsUIBindingsExtensionsTest, DoesNotAddExtensionsToRemoteFrontend) {
               CallClientMethodImpl("DevToolsAPI", "addExtensions", _, _, _, _))
       .Times(0);
 
-  GURL remote_url("devtools://devtools/remote/serve_rev/@12345/inspector.html");
+  GURL remote_url(
+      "devtools://devtools-remote/remote/serve_rev/@12345/inspector.html");
   content::NavigationSimulator::NavigateAndCommitFromBrowser(web_contents_,
                                                              remote_url);
 

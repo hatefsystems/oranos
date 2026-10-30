@@ -56,8 +56,9 @@ std::unique_ptr<AudioDebugRecorder> GetNullptrAudioDebugRecorder(
 }
 
 // This enum must match the numbering for AudioOutputProxyStreamFormat in
-// enums.xml. Do not reorder or remove items, only add new items before
-// STREAM_FORMAT_MAX.
+// tools/metrics/histograms/metadata/media/enums.xml. Do not reorder or remove
+// items, only add new items before STREAM_FORMAT_MAX.
+// LINT.IfChange(StreamFormat)
 enum StreamFormat {
   STREAM_FORMAT_BITSTREAM = 0,
   STREAM_FORMAT_PCM_LINEAR = 1,
@@ -66,11 +67,13 @@ enum StreamFormat {
   STREAM_FORMAT_FAKE = 4,
   STREAM_FORMAT_MAX = 4,
 };
+// LINT.ThenChange(//tools/metrics/histograms/metadata/media/enums.xml:AudioOutputProxyStreamFormat)
 
 // Used to log errors in `AudioManagerBase::MakeAudioInputStream` and
 // `AudioManagerBase::MakeAudioOutputStream`. These values are persisted to
 // logs. Entries should not be renumbered and numeric values should never be
 // reused.
+// LINT.IfChange(MakeAudioStreamResult)
 enum class MakeAudioStreamResult {
   kNoError = 0,
   kErrorSwitchFailAudioStreamCreation = 1,
@@ -79,6 +82,7 @@ enum class MakeAudioStreamResult {
   kErrorCreateStream = 4,
   kMaxValue = kErrorCreateStream
 };
+// LINT.ThenChange(//tools/metrics/histograms/metadata/media/enums.xml:MakeAudioStreamStatus)
 
 void LogMakeAudioInputStreamResult(MakeAudioStreamResult result) {
   base::UmaHistogramEnumeration("Media.Audio.MakeAudioInputStreamStatus",
@@ -282,6 +286,20 @@ AudioManagerBase::~AudioManagerBase() {
   CHECK_EQ(0, num_output_streams_);
   // All the input streams should have been deleted.
   CHECK(input_streams_.empty());
+}
+
+void AudioManagerBase::CloseIdleStreams() {
+  if (GetTaskRunner()->BelongsToCurrentThread()) {
+    CloseAllIdleStreamsOnAudioThread();
+    return;
+  }
+  // AudioManagerBase outlives `audio_thread_` (stopped in
+  // AudioManager::Shutdown() before ~AudioManagerBase()), so base::Unretained
+  // is safe.
+  GetTaskRunner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&AudioManagerBase::CloseAllIdleStreamsOnAudioThread,
+                     base::Unretained(this)));
 }
 
 void AudioManagerBase::LogAudioManagerStartup() {
@@ -734,6 +752,15 @@ void AudioManagerBase::ShutdownOnAudioThread() {
 
   // Close all output streams.
   output_dispatchers_.clear();
+}
+
+void AudioManagerBase::CloseAllIdleStreamsOnAudioThread() {
+  DCHECK(GetTaskRunner()->BelongsToCurrentThread());
+  for (auto& params : output_dispatchers_) {
+    if (params->dispatcher) {
+      params->dispatcher->CloseAllIdleStreams();
+    }
+  }
 }
 
 void AudioManagerBase::AddOutputDeviceChangeListener(

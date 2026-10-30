@@ -74,7 +74,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "third_party/abseil-cpp/absl/strings/str_format.h"
-#include "ui/base/window_open_disposition.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 
 namespace {
 
@@ -144,7 +144,7 @@ bool IsEmptyTabUrl(const GURL& url) {
 
 BASE_FEATURE(kGlicActorFixPageObservationCrash,
              base::FEATURE_ENABLED_BY_DEFAULT);
-}
+}  // namespace
 
 std::optional<page_content_annotations::PaintPreviewOptions>
 CreateOptionalPaintPreviewOptions() {
@@ -241,6 +241,7 @@ void ActorKeyedService::Shutdown() {
     StopTask(task_id, ActorTask::StoppedReason::kShutdown);
   }
 
+  external_trigger_expiry_.Stop();
   if (!pending_tasks_.empty()) {
     pending_tasks_.clear();
     NotifyPendingTaskCountChanged();
@@ -431,9 +432,10 @@ void ActorKeyedService::CreateActorTab(TaskId task_id,
                         ::ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
 
   if (window_for_new_tab) {
-    params.disposition = open_in_background
-                             ? WindowOpenDisposition::kNewBackgroundTab
-                             : WindowOpenDisposition::kNewForegroundTab;
+    params.disposition =
+        open_in_background
+            ? ::ui::mojom::WindowOpenDisposition::kNewBackgroundTab
+            : ::ui::mojom::WindowOpenDisposition::kNewForegroundTab;
     params.browser = window_for_new_tab;
     params.window_action = NavigateParams::WindowAction::kNoAction;
 
@@ -451,8 +453,8 @@ void ActorKeyedService::CreateActorTab(TaskId task_id,
 #if BUILDFLAG(IS_ANDROID)
     if (open_in_background) {
       // Workaround for b/489440503. On Android we ignore
-      // WindowOpenDisposition::kNewBackgroundTab when a tabstrip_index is set,
-      // so revert the index to its default value.
+      // `::ui::mojom::WindowOpenDisposition::kNewBackgroundTab` when a
+      // tabstrip_index is set, so revert the index to its default value.
       params.tabstrip_index = -1;
     }
 #endif
@@ -463,7 +465,7 @@ void ActorKeyedService::CreateActorTab(TaskId task_id,
     // If window_for_new_tab is still null (e.g. the initiating window was
     // closed) the tab will be created in a new window.
     // TODO(b/454046200): Reconsider what should happen in this case.
-    params.disposition = WindowOpenDisposition::kNewWindow;
+    params.disposition = ::ui::mojom::WindowOpenDisposition::kNewWindow;
     params.window_action = NavigateParams::WindowAction::kShowWindow;
   }
 
@@ -521,6 +523,8 @@ void ActorKeyedService::ResetForTesting() {
     }
   }
   active_tasks_.clear();
+  external_trigger_expiry_.Stop();
+  pending_tasks_.clear();
 }
 
 TaskId ActorKeyedService::CreateTask(
@@ -602,6 +606,8 @@ TaskId ActorKeyedService::CreateTaskImpl(
       ui_state_manager->GetNavigationDelegate());
 
   NotifyTaskStateChanged(*active_tasks_[task_id]);
+
+  RemoveExternalTriggerPendingTask();
 
   return task_id;
 }
@@ -783,10 +789,9 @@ void ActorKeyedService::RequestActorSurfaceObservation(
               }
 
               if (ActorSurface* actor_surface = actor_surface_handle.Get()) {
-                // Null for headless surfaces.
                 if (ActorTabData* tab_data = actor_surface->GetActorTabData()) {
                   tab_data->DidObserveContent(
-                      fetch_result.annotated_page_content_result->proto,
+                      *fetch_result.annotated_page_content_result,
                       actor::ApcSource::kActor);
                 }
               }
@@ -1045,20 +1050,44 @@ void ActorKeyedService::OnMessageTriggerTaskStopped(
   message_trigger_task_stopped_callbacks_.Notify(message_id);
 }
 
+// static
+ActorKeyedService::PendingTaskKey ActorKeyedService::ExternalTriggerKey() {
+  return PendingTaskKey(ExternalTriggerToken());
+}
+
+void ActorKeyedService::AddExternalTriggerPendingTask(base::TimeDelta timeout) {
+  external_trigger_expiry_.Start(
+      FROM_HERE, timeout,
+      base::BindOnce(&ActorKeyedService::RemoveExternalTriggerPendingTask,
+                     base::Unretained(this)));
+  if (pending_tasks_.insert(ExternalTriggerKey()).second) {
+    NotifyPendingTaskCountChanged();
+  }
+}
+
+bool ActorKeyedService::HasExternalTriggerPendingTaskForTesting() const {
+  return pending_tasks_.contains(ExternalTriggerKey());
+}
+
 void ActorKeyedService::AddPendingTask(
     const std::string& triggering_context_id) {
   CHECK(!triggering_context_id.empty());
-  auto [it, inserted] = pending_tasks_.try_emplace(
-      triggering_context_id, PendingTask{triggering_context_id});
+  auto [_, inserted] =
+      pending_tasks_.insert(PendingTaskKey(triggering_context_id));
   if (inserted) {
-    NotifyPendingTaskCountChanged();
+    // The FCM pending task replaces the external trigger pending task, so the
+    // pending count does not drop to zero during the handoff.
+    external_trigger_expiry_.Stop();
+    if (pending_tasks_.erase(ExternalTriggerKey()) == 0) {
+      NotifyPendingTaskCountChanged();
+    }
     pending_task_added_callback_list_.Notify(triggering_context_id);
   }
 }
 
 void ActorKeyedService::RemovePendingTask(
     const std::string& triggering_context_id) {
-  if (pending_tasks_.erase(triggering_context_id) > 0) {
+  if (pending_tasks_.erase(PendingTaskKey(triggering_context_id)) > 0) {
     NotifyPendingTaskCountChanged();
   }
 }
@@ -1069,7 +1098,7 @@ size_t ActorKeyedService::GetPendingTasksCount() const {
 
 bool ActorKeyedService::HasPendingTask(
     const std::string& triggering_context_id) const {
-  return pending_tasks_.contains(triggering_context_id);
+  return pending_tasks_.contains(PendingTaskKey(triggering_context_id));
 }
 
 base::CallbackListSubscription
@@ -1084,7 +1113,7 @@ base::CallbackListSubscription ActorKeyedService::AddPendingTaskAddedCallback(
 }
 
 void ActorKeyedService::NotifyPendingTaskCountChanged() {
-  pending_task_count_change_callback_list_.Notify(pending_tasks_.size());
+  pending_task_count_change_callback_list_.Notify(GetPendingTasksCount());
 }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -1099,5 +1128,12 @@ void ActorKeyedService::EnsureForegroundServiceStarted(
   ensure_foreground_service_started_callbacks_.Notify(glic_trigger_message_id);
 }
 #endif
+
+void ActorKeyedService::RemoveExternalTriggerPendingTask() {
+  external_trigger_expiry_.Stop();
+  if (pending_tasks_.erase(ExternalTriggerKey()) > 0) {
+    NotifyPendingTaskCountChanged();
+  }
+}
 
 }  // namespace actor

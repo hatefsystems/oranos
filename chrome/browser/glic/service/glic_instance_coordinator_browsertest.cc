@@ -31,6 +31,7 @@
 #include "chrome/browser/glic/public/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/public/glic_side_panel_coordinator.h"
 #include "chrome/browser/glic/service/glic_instance_coordinator_impl.h"
+#include "chrome/browser/glic/service/glic_instance_helper.h"
 #include "chrome/browser/glic/service/glic_instance_impl.h"
 #include "chrome/browser/glic/service/glic_invoke_handler.h"
 #include "chrome/browser/glic/service/glic_invoke_task.h"
@@ -60,6 +61,7 @@
 #include "components/keep_alive_registry/scoped_keep_alive.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
+#include "components/tabs/public/mock_tab_interface.h"
 #include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -71,9 +73,9 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "ui/base/base_window.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/unowned_user_data/unowned_user_data_host.h"
-#include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/point_conversions.h"
 
@@ -362,7 +364,7 @@ IN_PROC_BROWSER_TEST_F(GlicInstanceCoordinatorBrowserTest,
 #else
   NavigateParams params(PlatformBrowserTest::browser(), GURL("about:blank"),
                         ui::PAGE_TRANSITION_AUTO_BOOKMARK);
-  params.disposition = WindowOpenDisposition::kNewForegroundTab;
+  params.disposition = ui::mojom::WindowOpenDisposition::kNewForegroundTab;
   Navigate(&params);
 #endif
 
@@ -908,8 +910,9 @@ class GlicInstanceCoordinatorPrintingTest
   printing::BrowserPrintingContextFactoryForTest test_printing_context_factory_;
 };
 
+// TODO(crbug.com/577322236): Flaky crash in PrintBackendServiceManager.
 IN_PROC_BROWSER_TEST_F(GlicInstanceCoordinatorPrintingTest,
-                       PrintAfterReloadDoesNotCrash) {
+                       DISABLED_PrintAfterReloadDoesNotCrash) {
   ASSERT_OK_AND_ASSIGN(auto* instance, OpenGlicForActiveTab());
   ASSERT_OK(WaitForGlicClient(instance));
 
@@ -1962,6 +1965,50 @@ IN_PROC_BROWSER_TEST_F(GlicInstanceCoordinatorBrowserTest,
                   mojom::InvocationSource::kTopChromeButton);
 
   EXPECT_TRUE(callback_ran);
+}
+
+// Regression test for crbug.com/575606987.
+// Verifies that calling Show() with kReshowInactive when a tab is already the
+// active embedder, but its IsActivated() returns false, cleanly no-ops instead
+// of attempting to show an inactive side panel embedder and crashing.
+IN_PROC_BROWSER_TEST_F(
+    GlicInstanceCoordinatorBrowserTest,
+    ReshowInactiveWhenActiveEmbedderNotActivatedDoesNotCrash) {
+  ASSERT_OK_AND_ASSIGN(GlicInstanceImpl * instance, OpenGlicForActiveTab());
+
+  // Set up a mock tab that starts activated.
+  tabs::MockTabInterface mock_tab;
+  ui::UnownedUserDataHost user_data_host;
+  ON_CALL(mock_tab, GetUnownedUserDataHost())
+      .WillByDefault(testing::ReturnRef(user_data_host));
+  ON_CALL(mock_tab, GetProfile()).WillByDefault(testing::Return(GetProfile()));
+  base::WeakPtrFactory<tabs::TabInterface> weak_factory(&mock_tab);
+  ON_CALL(mock_tab, GetWeakPtr())
+      .WillByDefault(testing::Return(weak_factory.GetWeakPtr()));
+  ON_CALL(mock_tab, IsActivated()).WillByDefault(testing::Return(true));
+
+  GlicInstanceHelper instance_helper(&mock_tab);
+
+  // Make mock_tab the active embedder for the instance.
+  SidePanelShowOptions side_panel_options{mock_tab};
+  ShowOptions show_options{side_panel_options};
+  instance->Show(show_options);
+  ASSERT_TRUE(instance->IsActiveEmbedder(SidePanelEmbedderKey(mock_tab)));
+
+  // Simulate the condition in crbug.com/575606987: the tab is the active
+  // embedder, but its IsActivated() returns false (e.g. during Android Activity
+  // recreation/reparenting where mCurrentTabSupplier was cleared).
+  ON_CALL(mock_tab, IsActivated()).WillByDefault(testing::Return(false));
+  ASSERT_TRUE(instance->IsActiveEmbedder(SidePanelEmbedderKey(mock_tab)));
+
+  // Showing with kReshowInactive should safely no-op instead of attempting
+  // to create an inactive side panel embedder and tripping
+  // CHECK(!IsActiveEmbedder).
+  ShowOptions reshow_options{side_panel_options};
+  reshow_options.invocation_source = mojom::InvocationSource::kReshowInactive;
+  instance->Show(reshow_options);
+
+  EXPECT_TRUE(instance->IsActiveEmbedder(SidePanelEmbedderKey(mock_tab)));
 }
 
 }  // namespace glic

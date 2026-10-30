@@ -118,6 +118,9 @@ glic::mojom::InvocationSource GlicInvokeOptions::GetInvocationSource() const {
             if (payload->is_experimental_triggering()) {
               return glic::mojom::InvocationSource::kExperimentalTriggering;
             }
+            if (payload->is_capture_region()) {
+              return glic::mojom::InvocationSource::kCaptureRegionHotkey;
+            }
             NOTREACHED();
           }},
       source_or_payload);
@@ -203,6 +206,8 @@ std::string_view GlicInvokeErrorToString(GlicInvokeError error) {
       return "Glic instance was destroyed: shutdown";
     case GlicInvokeError::kPanelClosed:
       return "Panel was closed before the client was ready";
+    case GlicInvokeError::kSignInRequired:
+      return "User did not sign in before the invocation timed out";
   }
   NOTREACHED();
 }

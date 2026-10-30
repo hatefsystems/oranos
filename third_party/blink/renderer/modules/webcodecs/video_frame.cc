@@ -67,7 +67,6 @@
 #include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/video_frame_image_util.h"
 #include "third_party/blink/renderer/platform/heap/cross_thread_handle.h"
-#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/text/format.h"
@@ -982,12 +981,12 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
   }
 
   // Validate data.
-  base::span<const uint8_t> buffer = AsSpan<SharedBufferPolicy::kAllow>(*data);
-  if (!buffer.data()) {
+  DOMArrayBufferView* data_view = CoerceToArrayBufferView(*data);
+  if (data_view->IsDetached()) {
     exception_state.ThrowTypeError("data is detached.");
     return nullptr;
   }
-  if (buffer.size() < src_layout.Size()) {
+  if (data_view->byteLength() < src_layout.Size()) {
     exception_state.ThrowTypeError("data is not large enough.");
     return nullptr;
   }
@@ -1000,8 +999,8 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
       return nullptr;
   }
 
-  auto frame_contents = TransferArrayBufferForSpan(init->transfer(), buffer,
-                                                   exception_state, isolate);
+  auto [frame_contents, buffer] = TransferArrayBuffers(
+      isolate, init->transfer(), data_view, exception_state);
   if (exception_state.HadException()) {
     return nullptr;
   }

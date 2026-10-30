@@ -18,12 +18,14 @@
 #include "ash/system/mahi/test/mock_mahi_media_app_content_manager.h"
 #include "ash/system/toast/anchored_nudge_manager_impl.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/test/ash_test_helper.h"
 #include "base/auto_reset.h"
+#include "base/check.h"
 #include "base/command_line.h"
 #include "base/debug/stack_trace.h"
+#include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
-#include "base/scoped_observation.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/gmock_callback_support.h"
 #include "base/test/gtest_util.h"
@@ -35,13 +37,9 @@
 #include "chrome/browser/ash/mahi/mahi_cache_manager.h"
 #include "chrome/browser/ash/mahi/web_contents/test_support/fake_mahi_web_contents_manager.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/profiles/profile_manager_observer.h"
 #include "chrome/test/base/testing_browser_process.h"
-#include "chrome/test/base/testing_profile.h"
-#include "chrome/test/base/testing_profile_manager.h"
-#include "chromeos/ash/components/browser_context_helper/annotated_account_id.h"
 #include "chromeos/ash/components/manta/manta_service_provider.h"
+#include "chromeos/ash/components/signin/fake_identity_manager_provider.h"
 #include "chromeos/components/magic_boost/public/cpp/magic_boost_state.h"
 #include "chromeos/components/mahi/public/cpp/mahi_media_app_content_manager.h"
 #include "chromeos/components/mahi/public/cpp/mahi_types.h"
@@ -49,20 +47,17 @@
 #include "chromeos/constants/chromeos_features.h"
 #include "chromeos/constants/chromeos_switches.h"
 #include "components/account_id/account_id.h"
+#include "components/account_id/account_id_literal.h"
 #include "components/manta/manta_service.h"
 #include "components/metrics/metrics_state_manager.h"
 #include "components/metrics/startup_visibility.h"
 #include "components/metrics/test/test_enabled_state_provider.h"
 #include "components/prefs/pref_service.h"
+#include "components/session_manager/test/user_session_test_environment.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/account_capabilities_test_mutator.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
-#include "components/user_manager/fake_user_manager_delegate.h"
-#include "components/user_manager/scoped_user_manager.h"
-#include "components/user_manager/test_helper.h"
-#include "components/user_manager/user_manager.h"
-#include "components/user_manager/user_manager_impl.h"
 #include "components/variations/pref_names.h"
 #include "components/variations/service/test_variations_service.h"
 #include "content/public/test/browser_task_environment.h"
@@ -86,28 +81,11 @@ using ::testing::Return;
 constexpr char kFakeSummary[] = "Fake summary";
 constexpr char kFakeContent[] = "Test page content";
 constexpr char kFakeElucidation[] = "Fake elucidation";
-
-// Annotates the next created `Profile` with `account_id` on creation start.
-class ScopedAccountIdAnnotator : public ProfileManagerObserver {
- public:
-  ScopedAccountIdAnnotator(ProfileManager* profile_manager,
-                           const AccountId& account_id)
-      : account_id_(account_id) {
-    observation_.Observe(profile_manager);
-  }
-
-  void OnProfileCreationStarted(Profile* profile) override {
-    if (account_id_.has_value()) {
-      ash::AnnotatedAccountId::Set(profile, *account_id_, /*for_test=*/false);
-      account_id_.reset();
-    }
-  }
-
- private:
-  std::optional<AccountId> account_id_;
-  base::ScopedObservation<ProfileManager, ProfileManagerObserver> observation_{
-      this};
-};
+constexpr char kTestEmail[] = "user@example.com";
+constexpr AccountId::Literal kTestAccountId =
+    AccountId::Literal::FromUserEmailGaiaId(
+        kTestEmail,
+        GaiaId::Literal("gaia_id_for_user"));
 
 class TestMantaServiceProvider : public ash::MantaServiceProvider {
  public:
@@ -116,7 +94,7 @@ class TestMantaServiceProvider : public ash::MantaServiceProvider {
       : service_(std::move(service)) {}
 
   manta::MantaService* Find(const AccountId& account_id) override {
-    return service_.get();
+    return account_id == kTestAccountId ? service_.get() : nullptr;
   }
 
  private:
@@ -200,20 +178,37 @@ class MahiManagerImplTest : public AshTestBase {
   // AshTestBase:
   void SetUpInitParams(ash::AshTestHelper::InitParams& init_params) override {
     AshTestBase::SetUpInitParams(init_params);
-    init_params.start_session = false;
+    init_params.users.clear();
   }
 
   void SetUp() override {
     feature_list_.InitWithFeatures(
         /*enabled_features=*/{chromeos::features::kFeatureManagementMahi},
         /*disabled_features=*/{});
-    AshTestBase::SetUp();
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         chromeos::switches::kMahiRestrictionsOverride);
 
+    // Needed for `MagicBoostState` and `MahiManagerImpl`.
+    PrefService* local_state =
+        TestingBrowserProcess::GetGlobal()->local_state();
+    metrics_state_manager_ = metrics::MetricsStateManager::Create(
+        local_state, &metrics_enabled_state_provider_,
+        /*backup_registry_key=*/std::wstring(),
+        /*user_data_dir=*/base::FilePath(),
+        metrics::StartupVisibility::kUnknown);
+    test_variations_service_ =
+        std::make_unique<variations::TestVariationsService>(
+            local_state, metrics_state_manager_.get());
+    TestingBrowserProcess::GetGlobal()->SetVariationsService(
+        test_variations_service_.get());
+
+    AshTestBase::SetUp();
+
     magic_boost_state_ = std::make_unique<MagicBoostState>(
+        TestingBrowserProcess::GetGlobal()->variations_service(),
         base::BindRepeating([]() { return static_cast<Profile*>(nullptr); }));
-    mahi_manager_impl_ = std::make_unique<MahiManagerImpl>();
+    mahi_manager_impl_ = std::make_unique<MahiManagerImpl>(
+        TestingBrowserProcess::GetGlobal()->variations_service());
     mahi_manager_impl_->mahi_provider_ = CreateMahiProvider();
 
     SimulateUserLogin(kRegularUserLoginInfo);
@@ -222,25 +217,14 @@ class MahiManagerImplTest : public AshTestBase {
   void TearDown() override {
     mahi_manager_impl_.reset();
     magic_boost_state_.reset();
-
-    if (test_variations_service_) {
-      TestingBrowserProcess::GetGlobal()->SetVariationsService(nullptr);
-      test_variations_service_.reset();
-    }
-    metrics_state_manager_.reset();
     manta_service_provider_.reset();
-
-    if (profile_manager_) {
-      for (const user_manager::User* user :
-           user_manager::UserManager::Get()->GetLoggedInUsers()) {
-        user_manager::UserManager::Get()->OnUserProfileWillBeDestroyed(
-            user->GetAccountId());
-      }
-      profile_manager_.reset();
-    }
-    user_manager_.reset();
+    identity_manager_provider_.reset();
 
     AshTestBase::TearDown();
+
+    TestingBrowserProcess::GetGlobal()->SetVariationsService(nullptr);
+    test_variations_service_.reset();
+    metrics_state_manager_.reset();
   }
 
   void SetCountryCode(std::string_view country_code) {
@@ -253,38 +237,15 @@ class MahiManagerImplTest : public AshTestBase {
     base::CommandLine::ForCurrentProcess()->RemoveSwitch(
         chromeos::switches::kMahiRestrictionsOverride);
 
-    PrefService* local_state =
-        TestingBrowserProcess::GetGlobal()->local_state();
+    mahi_manager_impl_.reset();
+    magic_boost_state_.reset();
+
     SetCountryCode(country_code);
-    metrics_state_manager_ = metrics::MetricsStateManager::Create(
-        local_state, &metrics_enabled_state_provider_,
-        /*backup_registry_key=*/std::wstring(),
-        /*user_data_dir=*/base::FilePath(),
-        metrics::StartupVisibility::kUnknown);
-    test_variations_service_ =
-        std::make_unique<variations::TestVariationsService>(
-            local_state, metrics_state_manager_.get());
-    TestingBrowserProcess::GetGlobal()->SetVariationsService(
-        test_variations_service_.get());
 
-    user_manager_ = std::make_unique<user_manager::ScopedUserManager>(
-        std::make_unique<user_manager::UserManagerImpl>(
-            std::make_unique<user_manager::FakeUserManagerDelegate>(),
-            local_state));
-
-    profile_manager_ = std::make_unique<TestingProfileManager>(
-        TestingBrowserProcess::GetGlobal());
-    ASSERT_TRUE(profile_manager_->SetUp());
-
-    constexpr char kTestEmail[] = "user@example.com";
-    constexpr char kTestGaiaId[] = "gaia_id_for_user";
-    const AccountId account_id =
-        AccountId::FromUserEmailGaiaId(kTestEmail, GaiaId(kTestGaiaId));
-    ASSERT_TRUE(user_manager::TestHelper(user_manager::UserManager::Get())
-                    .AddRegularUser(account_id));
-    const std::string hash =
-        user_manager::TestHelper::GetFakeUsernameHash(account_id);
-    user_manager::UserManager::Get()->UserLoggedIn(account_id, hash);
+    auto& user_session_test_env =
+        ash_test_helper()->user_session_test_environment();
+    CHECK(user_session_test_env.AddRegularUser(kTestAccountId));
+    user_session_test_env.LogIn(kTestAccountId);
 
     AccountInfo account_info = identity_test_env_.MakePrimaryAccountAvailable(
         kTestEmail, signin::ConsentLevel::kSignin);
@@ -294,12 +255,10 @@ class MahiManagerImplTest : public AshTestBase {
       identity_test_env_.UpdateAccountInfoForAccount(account_info);
     }
 
-    ScopedAccountIdAnnotator annotator(profile_manager_->profile_manager(),
-                                       account_id);
-    TestingProfile* profile =
-        profile_manager_->CreateTestingProfile(kTestEmail);
-    user_manager::UserManager::Get()->OnUserProfileCreated(account_id,
-                                                           profile->GetPrefs());
+    identity_manager_provider_ =
+        std::make_unique<FakeIdentityManagerProvider>();
+    identity_manager_provider_->SetIdentityManagerForAccount(
+        kTestAccountId, identity_test_env_.identity_manager());
 
     manta_service_provider_ = std::make_unique<TestMantaServiceProvider>(
         std::make_unique<manta::MantaService>(
@@ -312,17 +271,12 @@ class MahiManagerImplTest : public AshTestBase {
             /*locale=*/std::string()));
 
     // Recreate `magic_boost_state_` and `mahi_manager_impl_` so they initialize
-    // against the non-overridden eligibility environment. Injecting `nullptr`
-    // makes `MagicBoostState::RegisterPrefChanges()` call
-    // `OnRefreshTokensReady()` immediately (avoiding
-    // `IdentityManagerProvider`), while
-    // `mahi_availability::CanUseMahiService()` still fetches `profile` via
-    // `ProfileManager::GetActiveUserProfile()`.
-    mahi_manager_impl_.reset();
-    magic_boost_state_.reset();
+    // against the non-overridden eligibility environment.
     magic_boost_state_ = std::make_unique<MagicBoostState>(
+        TestingBrowserProcess::GetGlobal()->variations_service(),
         base::BindRepeating([]() { return static_cast<Profile*>(nullptr); }));
-    mahi_manager_impl_ = std::make_unique<MahiManagerImpl>();
+    mahi_manager_impl_ = std::make_unique<MahiManagerImpl>(
+        TestingBrowserProcess::GetGlobal()->variations_service());
     mahi_manager_impl_->mahi_provider_ = CreateMahiProvider();
   }
 
@@ -395,6 +349,10 @@ class MahiManagerImplTest : public AshTestBase {
             &test_url_loader_factory_),
         identity_test_env_.identity_manager());
   }
+  metrics::TestEnabledStateProvider metrics_enabled_state_provider_{
+      /*consent=*/false, /*enabled=*/false};
+  std::unique_ptr<metrics::MetricsStateManager> metrics_state_manager_;
+  std::unique_ptr<variations::TestVariationsService> test_variations_service_;
   std::unique_ptr<MagicBoostState> magic_boost_state_;
   std::unique_ptr<MahiManagerImpl> mahi_manager_impl_;
   base::test::ScopedFeatureList feature_list_;
@@ -410,15 +368,10 @@ class MahiManagerImplTest : public AshTestBase {
   chromeos::ScopedMahiWebContentsManagerOverride
       scoped_mahi_web_contents_manager_{&fake_mahi_web_contents_manager_};
 
-  std::unique_ptr<user_manager::ScopedUserManager> user_manager_;
-  std::unique_ptr<TestingProfileManager> profile_manager_;
-  std::unique_ptr<TestMantaServiceProvider> manta_service_provider_;
-  metrics::TestEnabledStateProvider metrics_enabled_state_provider_{
-      /*consent=*/false, /*enabled=*/false};
-  std::unique_ptr<metrics::MetricsStateManager> metrics_state_manager_;
-  std::unique_ptr<variations::TestVariationsService> test_variations_service_;
   network::TestURLLoaderFactory test_url_loader_factory_;
   signin::IdentityTestEnvironment identity_test_env_;
+  std::unique_ptr<FakeIdentityManagerProvider> identity_manager_provider_;
+  std::unique_ptr<TestMantaServiceProvider> manta_service_provider_;
 };
 
 TEST_F(MahiManagerImplTest, CacheSavedForContentRequest) {

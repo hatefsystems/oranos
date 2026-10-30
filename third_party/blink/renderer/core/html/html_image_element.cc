@@ -642,10 +642,22 @@ void HTMLImageElement::AttachLayoutTree(AttachContext& context) {
 
 Node::InsertionNotificationRequest HTMLImageElement::InsertedInto(
     ContainerNode& insertion_point) {
-  if (!form_was_set_by_parser_ ||
-      NodeTraversal::HighestAncestorOrSelf(insertion_point) !=
-          NodeTraversal::HighestAncestorOrSelf(*form_.Get()))
+  DCHECK(!form_was_set_by_parser_ || form_);
+  if (!form_was_set_by_parser_) {
     ResetFormOwner();
+  } else {
+    const Node& form_or_highest_ancestor =
+        NodeTraversal::HighestAncestorOrSelf(*this, /*limit=*/form_);
+    if (form_or_highest_ancestor != *form_) [[unlikely]] {
+      if (form_or_highest_ancestor ==
+          NodeTraversal::HighestAncestorOrSelf(*form_)) {
+        form_->DidAssociateNonDescendantByParser();
+      } else {
+        ResetFormOwner();
+      }
+    }
+  }
+
   if (listener_)
     GetDocument().GetMediaQueryMatcher().AddViewportListener(listener_);
   bool was_added_to_picture_parent = false;
@@ -1009,8 +1021,8 @@ gfx::SizeF HTMLImageElement::DefaultDestinationSize(
   if (!image_content || !image_content->HasImage())
     return gfx::SizeF();
 
-  Image* image = image_content->GetImage();
-  if (auto* svg_image = DynamicTo<SVGImage>(image)) {
+  scoped_refptr<Image> image = image_content->GetImage();
+  if (auto* svg_image = DynamicTo<SVGImage>(image.get())) {
     const SVGImageViewInfo* view_info =
         SVGImageForContainer::CreateViewInfo(*svg_image, *this);
     return SVGImageForContainer::ConcreteObjectSize(*svg_image, view_info,
@@ -1329,11 +1341,14 @@ void HTMLImageElement::AdjustStyle(ComputedStyleBuilder& builder) {
 }
 
 void HTMLImageElement::AssociateWith(HTMLFormElement* form) {
+  // InsertedInto() detects non-descendant parser associations, so this must
+  // happen before the element is inserted into any tree.
+  DCHECK(!parentNode());
+  DCHECK(!form_);
   if (form && form->isConnected()) {
     form_ = form;
     form_was_set_by_parser_ = true;
     form_->Associate(*this);
-    form_->DidAssociateByParser();
   }
 }
 

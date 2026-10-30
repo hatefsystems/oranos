@@ -69,9 +69,6 @@ UI_ANDROID_EXPORT BASE_DECLARE_FEATURE(kClipboardOversizedPayloadProvider);
 // Enables debug logging for connected display and density changes.
 UI_ANDROID_EXPORT BASE_DECLARE_FEATURE(kConnectedDisplayDensityDebugLogs);
 
-// Use the old-style opening of an External Picker when uploading files.
-UI_ANDROID_EXPORT BASE_DECLARE_FEATURE(kDeprecatedExternalPickerFunction);
-
 // Whether photo picker should be disabled for video capture.
 UI_ANDROID_EXPORT BASE_DECLARE_FEATURE(kDisablePhotoPickerForVideoCapture);
 
@@ -126,10 +123,6 @@ UI_ANDROID_EXPORT BASE_DECLARE_FEATURE(kCheckHitEligibility);
 // Enables touchpad overscroll for history navigation.
 UI_ANDROID_EXPORT BASE_DECLARE_FEATURE(
     kAndroidTouchpadOverscrollHistoryNavigation);
-
-// Update padding for display calculations to use view width instead of screen
-// width.
-UI_ANDROID_EXPORT BASE_DECLARE_FEATURE(kUpdatePaddingForDisplayCalculation);
 
 // Avoids allocating unique ColorProviders per Activity context in Android
 // embedders that do not supply a ColorProviderBridge.

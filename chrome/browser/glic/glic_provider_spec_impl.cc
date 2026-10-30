@@ -12,9 +12,11 @@
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
+#include "base/notreached.h"
 #include "chrome/browser/glic/glic_fre_store_impl.h"
 #include "chrome/browser/glic/host/guest_util.h"
 #include "chrome/browser/glic/public/features.h"
+#include "chrome/browser/glic/public/glic_feature.h"
 #include "chrome/browser/glic/public/glic_fre_store.h"
 #include "chrome/browser/glic/public/glic_keyed_service.h"
 #include "chrome/browser/glic/public/glic_provider.h"
@@ -76,8 +78,8 @@ GURL MaybeAppendAuthUser(const GURL& guest_url, Profile* profile) {
 class GeminiGlicProviderSpec final : public GlicProviderSpec {
  public:
   ~GeminiGlicProviderSpec() override = default;
-  GlicSettingsSection GetSettingsSection() const override {
-    return GlicSettingsSection::kGemini;
+  std::string_view GetSettingsSectionId() const override {
+    return kGeminiSettingsSectionId;
   }
   std::string_view GetSettingsSubpage() const override {
     return chrome::kGlicSettingsSubpage;
@@ -106,6 +108,11 @@ class GeminiGlicProviderSpec final : public GlicProviderSpec {
   }
   bool SupportsAnchoredEntryPoint() const override { return true; }
   const GlicFreStore& GetFreStore() const override { return *fre_store_; }
+  bool RequiresGeminiAccountEligibility() const override { return true; }
+  bool SupportsFeature(GlicFeature feature) const override { return true; }
+  bool SupportsSsr() const override {
+    return base::FeatureList::IsEnabled(features::kGlicSsr);
+  }
 
  private:
   const std::unique_ptr<GlicFreStore> fre_store_ = CreateGeminiFreStore();
@@ -116,8 +123,8 @@ class GeminiEnterpriseGlicProviderSpec final : public GlicProviderSpec {
   explicit GeminiEnterpriseGlicProviderSpec(GeicProviderInitOptions options)
       : guest_url_(std::move(options.guest_url)) {}
   ~GeminiEnterpriseGlicProviderSpec() override = default;
-  GlicSettingsSection GetSettingsSection() const override {
-    return GlicSettingsSection::kGeminiEnterprise;
+  std::string_view GetSettingsSectionId() const override {
+    return kGeminiEnterpriseSettingsSectionId;
   }
   std::string_view GetSettingsSubpage() const override {
     return chrome::kGlicEnterpriseSettingsSubpage;
@@ -127,7 +134,9 @@ class GeminiEnterpriseGlicProviderSpec final : public GlicProviderSpec {
     return "GeminiEnterprise";
   }
   std::string_view GetMetricsInfix() const override { return "Enterprise"; }
-  bool IsActuationSupported() const override { return false; }
+  bool IsActuationSupported() const override {
+    return base::FeatureList::IsEnabled(features::kGeicActuation);
+  }
   bool RequiresNoWebview() const override { return true; }
   GURL GetGuestUrl(Profile* profile) const override {
     if (guest_url_.is_empty()) {
@@ -140,6 +149,19 @@ class GeminiEnterpriseGlicProviderSpec final : public GlicProviderSpec {
   // TODO(b/576834093): Support anchoring with GEiC error states.
   bool SupportsAnchoredEntryPoint() const override { return false; }
   const GlicFreStore& GetFreStore() const override { return *fre_store_; }
+  bool RequiresGeminiAccountEligibility() const override { return false; }
+  bool SupportsFeature(GlicFeature feature) const override {
+    switch (feature) {
+      case GlicFeature::kLive:
+      case GlicFeature::kShareImage:
+        return false;
+    }
+    NOTREACHED();
+  }
+  // TODO(b/576365433): Enable `kGeicSsr` once the webapp supports it.
+  bool SupportsSsr() const override {
+    return base::FeatureList::IsEnabled(features::kGeicSsr);
+  }
 
  private:
   const GURL guest_url_;

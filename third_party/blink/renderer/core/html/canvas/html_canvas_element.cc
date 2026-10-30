@@ -38,6 +38,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/no_destructor.h"
 #include "base/notimplemented.h"
 #include "base/numerics/checked_math.h"
 #include "base/numerics/safe_conversions.h"
@@ -284,14 +285,11 @@ bool HTMLCanvasElement::PrepareTransferableResource(
 
   DoDeferredPaintInvalidation();
 
-  scoped_refptr<CanvasResource> frame =
+  scoped_refptr<ExportedCanvasResource> exported_resource =
       RenderingContext()->PaintRenderingResultsToResource(kBackBuffer, reason);
-  if (!frame) {
+  if (!exported_resource) {
     return false;
   }
-
-  auto exported_resource =
-      base::MakeRefCounted<ExportedCanvasResource>(std::move(frame));
 
   CHECK_DEREF(out_resource) = exported_resource->PrepareTransferableResource();
 
@@ -723,12 +721,10 @@ void HTMLCanvasElement::PostFinalizeFrame(FlushReason reason) {
   // context types, setting the attribute is a no-op).
   if (LowLatencyEnabled() && (IsWebGL() || IsRenderingContext2D()) &&
       frame_dispatcher_ && !dirty_rect_.IsEmpty()) {
-    if (scoped_refptr<CanvasResource> canvas_resource =
+    if (scoped_refptr<ExportedCanvasResource> exported_resource =
             context_->PaintRenderingResultsToResource(kBackBuffer, reason)) {
       const gfx::Rect src_rect(Size());
       dirty_rect_.Intersect(src_rect);
-      auto exported_resource = base::MakeRefCounted<ExportedCanvasResource>(
-          std::move(canvas_resource));
       frame_dispatcher_->DispatchFrame(std::move(exported_resource),
                                        dirty_rect_, IsOpaque());
       dirty_rect_ = gfx::Rect();
@@ -1232,15 +1228,16 @@ void HTMLCanvasElement::NotifyListenersCanvasChanged() {
 std::pair<blink::Image*, float> HTMLCanvasElement::BrokenCanvas(
     float device_scale_factor) {
   if (device_scale_factor >= 2) {
-    DEFINE_STATIC_REF(blink::Image, broken_canvas_hi_res,
-                      (blink::Image::LoadPlatformResource(IDR_BROKENCANVAS,
-                                                          ui::k200Percent)));
-    return std::make_pair(broken_canvas_hi_res, 2);
+    static const base::NoDestructor<scoped_refptr<blink::Image>>
+        broken_canvas_hi_res(blink::Image::LoadPlatformResource(
+            IDR_BROKENCANVAS, ui::k200Percent));
+    return std::make_pair(broken_canvas_hi_res->get(), 2);
   }
 
-  DEFINE_STATIC_REF(blink::Image, broken_canvas_lo_res,
-                    (blink::Image::LoadPlatformResource(IDR_BROKENCANVAS)));
-  return std::make_pair(broken_canvas_lo_res, 1);
+  static const base::NoDestructor<scoped_refptr<blink::Image>>
+      broken_canvas_lo_res(
+          blink::Image::LoadPlatformResource(IDR_BROKENCANVAS));
+  return std::make_pair(broken_canvas_lo_res->get(), 1);
 }
 
 bool HTMLCanvasElement::LowLatencyEnabled() const {
@@ -1784,7 +1781,14 @@ void HTMLCanvasElement::SetNeedsPushProperties() {
 }
 
 void HTMLCanvasElement::DiscardResources() {
-  ResetLayer();
+  if (auto* host = cc_layer_ ? cc_layer_->layer_tree_host() : nullptr;
+      host && host->in_will_commit()) {
+    host->ScheduleLayerForPostCommitDisposal(cc_layer_);
+    cc_layer_->ClearClient();
+    cc_layer_ = nullptr;
+  } else {
+    ResetLayer();
+  }
   UpdateMemoryUsage();
   dirty_rect_ = gfx::Rect();
 }

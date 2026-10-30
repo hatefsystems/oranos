@@ -446,6 +446,32 @@ public class AutocompleteMediatorUnitTest {
         assertEquals(expectedUrl.getSpec(), mOmniboxLoadUrlParamsCaptor.getValue().url);
     }
 
+    /**
+     * Clicks a search suggestion in AI Mode from the given page and returns the resulting load
+     * parameters.
+     *
+     * @param pageUrl The URL of the page the query is submitted from.
+     * @param modifiers The key modifiers held while clicking the suggestion.
+     */
+    private OmniboxLoadUrlParams clickAimSuggestionAndGetParams(GURL pageUrl, int modifiers) {
+        setUpLocationBarDataProvider(pageUrl, PAGE_TITLE, PageClassification.OTHER);
+        mMediator.beginInput(createSession(AutocompleteRequestType.AI_MODE));
+        doAnswer(
+                        invocation -> {
+                            Callback<GURL> callback = invocation.getArgument(1);
+                            callback.onResult(JUnitTestGURLs.BLUE_1);
+                            return null;
+                        })
+                .when(mComposeboxQueryControllerBridge)
+                .getAimUrlFromInputState(any(), any());
+
+        mMediator.onSuggestionClicked(
+                createSearchSuggestMatch(), /* matchIndex= */ 0, JUnitTestGURLs.RED_1, modifiers);
+
+        verify(mAutocompleteDelegate).loadUrl(mOmniboxLoadUrlParamsCaptor.capture());
+        return mOmniboxLoadUrlParamsCaptor.getValue();
+    }
+
     private void verifySuggestionModelsRoundSides(@RoundSides int roundSides) {
         assertTrue(mSuggestionModels.size() > 0);
         for (int i = 0; i < mSuggestionModels.size(); i++) {
@@ -824,6 +850,7 @@ public class AutocompleteMediatorUnitTest {
     }
 
     @Test
+    @DisableFeatures(OmniboxFeatureList.OMNIBOX_POST_FRAME_AUTOCOMPLETE_START)
     public void onTextChanged_nonEmptyTextTriggersSuggestions() {
         GURL url = JUnitTestGURLs.BLUE_1;
         @PageClassification int pageClassification = PageClassification.BLANK;
@@ -840,6 +867,7 @@ public class AutocompleteMediatorUnitTest {
     }
 
     @Test
+    @DisableFeatures(OmniboxFeatureList.OMNIBOX_POST_FRAME_AUTOCOMPLETE_START)
     public void onTextChanged_cancelsPendingRequests() {
         GURL url = JUnitTestGURLs.BLUE_1;
         @PageClassification int pageClassification = PageClassification.BLANK;
@@ -854,6 +882,101 @@ public class AutocompleteMediatorUnitTest {
         session.getAutocompleteInput().setUserText("nottest");
         RobolectricUtil.runAllBackgroundAndUiIncludingDelayed();
         verifyAutocompleteStart(url, pageClassification, "nottest", 4, false);
+    }
+
+    @Test
+    @EnableFeatures(OmniboxFeatureList.OMNIBOX_POST_FRAME_AUTOCOMPLETE_START)
+    public void onTextChanged_postFrameStart_triggersSuggestionsAfterNextFrame() {
+        GURL url = JUnitTestGURLs.BLUE_1;
+        @PageClassification int pageClassification = PageClassification.BLANK;
+        var session = createSession(url, url.getSpec(), pageClassification);
+        mMediator.beginInput(session);
+
+        when(mTextStateProvider.shouldAutocomplete()).thenReturn(true);
+        when(mTextStateProvider.getSelectionStart()).thenReturn(4);
+        when(mTextStateProvider.getSelectionEnd()).thenReturn(4);
+
+        session.getAutocompleteInput().setUserText("test");
+        // The request is deferred until the next frame has been produced; nothing should have
+        // been started synchronously.
+        verify(mAutocompleteController, never()).start(any(), any(), anyInt(), anyBoolean());
+
+        RobolectricUtil.runAllBackgroundAndUiIncludingDelayed();
+        verifyAutocompleteStart(url, pageClassification, "test", 4, false);
+    }
+
+    @Test
+    @EnableFeatures(OmniboxFeatureList.OMNIBOX_POST_FRAME_AUTOCOMPLETE_START)
+    public void onTextChanged_postFrameStart_coalescesEditsWithinFrame() {
+        GURL url = JUnitTestGURLs.BLUE_1;
+        @PageClassification int pageClassification = PageClassification.BLANK;
+        var session = createSession(url, url.getSpec(), pageClassification);
+        mMediator.beginInput(session);
+
+        when(mTextStateProvider.shouldAutocomplete()).thenReturn(true);
+        when(mTextStateProvider.getSelectionStart()).thenReturn(4);
+        when(mTextStateProvider.getSelectionEnd()).thenReturn(4);
+
+        session.getAutocompleteInput().setUserText("test");
+        session.getAutocompleteInput().setUserText("nottest");
+        RobolectricUtil.runAllBackgroundAndUiIncludingDelayed();
+        // Only the most recent edit should result in an autocomplete request.
+        verifyAutocompleteStart(url, pageClassification, "nottest", 4, false);
+    }
+
+    @Test
+    @EnableFeatures(OmniboxFeatureList.OMNIBOX_POST_FRAME_AUTOCOMPLETE_START)
+    public void onTextChanged_postFrameStart_endInputCancelsPendingRequest() {
+        GURL url = JUnitTestGURLs.BLUE_1;
+        @PageClassification int pageClassification = PageClassification.BLANK;
+        var session = createSession(url, url.getSpec(), pageClassification);
+        mMediator.beginInput(session);
+
+        when(mTextStateProvider.shouldAutocomplete()).thenReturn(true);
+        when(mTextStateProvider.getSelectionStart()).thenReturn(4);
+        when(mTextStateProvider.getSelectionEnd()).thenReturn(4);
+
+        session.getAutocompleteInput().setUserText("test");
+        mMediator.endInput();
+        RobolectricUtil.runAllBackgroundAndUiIncludingDelayed();
+        verify(mAutocompleteController, never()).start(any(), any(), anyInt(), anyBoolean());
+    }
+
+    @Test
+    @EnableFeatures(OmniboxFeatureList.OMNIBOX_POST_FRAME_AUTOCOMPLETE_START)
+    public void onTextChanged_postFrameStart_reentrantEditSchedulesFollowUpRequest() {
+        GURL url = JUnitTestGURLs.BLUE_1;
+        @PageClassification int pageClassification = PageClassification.BLANK;
+        var session = createSession(url, url.getSpec(), pageClassification);
+        mMediator.beginInput(session);
+
+        when(mTextStateProvider.shouldAutocomplete()).thenReturn(true);
+        when(mTextStateProvider.getSelectionStart()).thenReturn(4);
+        when(mTextStateProvider.getSelectionEnd()).thenReturn(4);
+
+        // Simulate a text change arriving synchronously from within the autocomplete start, i.e.
+        // a new request being scheduled re-entrantly while the previous one is executing. Not
+        // currently reachable in production (the only caller is a user text change), but the
+        // scheduling contract should hold regardless of what the action does.
+        // The mediator passes the same mutable AutocompleteInput to every start() call, so record
+        // the text each call saw instead of capturing the shared argument.
+        List<String> startedUserTexts = new ArrayList<>();
+        doAnswer(
+                        inv -> {
+                            String userText = session.getAutocompleteInput().getUserText();
+                            startedUserTexts.add(userText);
+                            if ("test".equals(userText)) {
+                                session.getAutocompleteInput().setUserText("nottest");
+                            }
+                            return null;
+                        })
+                .when(mAutocompleteController)
+                .start(any(), any(), anyInt(), anyBoolean());
+
+        session.getAutocompleteInput().setUserText("test");
+        RobolectricUtil.runAllBackgroundAndUiIncludingDelayed();
+
+        assertEquals(List.of("test", "nottest"), startedUserTexts);
     }
 
     @Test
@@ -3178,6 +3301,124 @@ public class AutocompleteMediatorUnitTest {
 
         mUrlCallbackCaptor.getValue().onResult(JUnitTestGURLs.BLUE_1);
         verifyLoadUrl(JUnitTestGURLs.BLUE_1);
+    }
+
+    @Test
+    @EnableFeatures(OmniboxFeatureList.OMNIBOX_AIM_OPEN_IN_NEW_TAB)
+    public void onSuggestionClicked_aimOnWebPage_opensInNewTab() {
+        assertTrue(clickAimSuggestionAndGetParams(PAGE_URL, /* modifiers= */ 0).openInNewTab);
+    }
+
+    @Test
+    @EnableFeatures(OmniboxFeatureList.OMNIBOX_AIM_OPEN_IN_NEW_TAB)
+    public void onSuggestionClicked_aimOnNtp_loadsInCurrentTab() {
+        assertFalse(
+                clickAimSuggestionAndGetParams(JUnitTestGURLs.NTP_URL, /* modifiers= */ 0)
+                        .openInNewTab);
+    }
+
+    @Test
+    @EnableFeatures(OmniboxFeatureList.OMNIBOX_AIM_OPEN_IN_NEW_TAB)
+    public void onSuggestionClicked_aimOnWebPage_newWindowTakesPrecedence() {
+        OmniboxLoadUrlParams params =
+                clickAimSuggestionAndGetParams(PAGE_URL, KeyEvent.META_SHIFT_ON);
+        assertFalse(params.openInNewTab);
+        assertTrue(params.openInNewWindow);
+    }
+
+    @Test
+    @DisableFeatures(OmniboxFeatureList.OMNIBOX_AIM_OPEN_IN_NEW_TAB)
+    public void onSuggestionClicked_aimOnWebPage_featureDisabled_loadsInCurrentTab() {
+        assertFalse(clickAimSuggestionAndGetParams(PAGE_URL, /* modifiers= */ 0).openInNewTab);
+    }
+
+    @Test
+    @EnableFeatures(OmniboxFeatureList.OMNIBOX_AIM_OPEN_IN_NEW_TAB)
+    public void onSuggestionClicked_conventionalOnWebPage_loadsInCurrentTab() {
+        setUpLocationBarDataProvider(PAGE_URL, PAGE_TITLE, PageClassification.OTHER);
+        mMediator.beginInput(createSession(AutocompleteRequestType.SEARCH));
+
+        mMediator.onSuggestionClicked(
+                createSearchSuggestMatch(),
+                /* matchIndex= */ 0,
+                JUnitTestGURLs.RED_1,
+                /* modifiers= */ 0);
+
+        verify(mAutocompleteDelegate).loadUrl(mOmniboxLoadUrlParamsCaptor.capture());
+        assertFalse(mOmniboxLoadUrlParamsCaptor.getValue().openInNewTab);
+    }
+
+    @Test
+    @EnableFeatures({
+        OmniboxFeatureList.OMNIBOX_AIM_OPEN_IN_NEW_TAB,
+        OmniboxFeatureList.OMNIBOX_MULTIMODAL_INPUT
+    })
+    public void loadTypedOmniboxText_aimAttachmentsOnlyOnWebPage_opensInNewTab() {
+        setUpLocationBarDataProvider(PAGE_URL, PAGE_TITLE, PageClassification.OTHER);
+        var session = createSession(AutocompleteRequestType.AI_MODE, /* userText= */ "");
+        when(mTextStateProvider.getTextWithAutocomplete()).thenReturn("");
+        when(mFuseboxCoordinator.getHasAttachmentsSupplier())
+                .thenReturn(ObservableSuppliers.createNonNull(true));
+        doAnswer(
+                        invocation -> {
+                            Callback<GURL> callback = invocation.getArgument(1);
+                            callback.onResult(JUnitTestGURLs.BLUE_2);
+                            return null;
+                        })
+                .when(mComposeboxQueryControllerBridge)
+                .getAimUrlFromInputState(any(), any());
+        mMediator.beginInput(session);
+
+        mMediator.loadTypedOmniboxText(
+                TEST_EVENT_TIME, AutocompleteCoordinator.NavigationTarget.CURRENT_TAB);
+
+        verify(mAutocompleteDelegate).loadUrl(mOmniboxLoadUrlParamsCaptor.capture());
+        assertTrue(mOmniboxLoadUrlParamsCaptor.getValue().openInNewTab);
+    }
+
+    @Test
+    @EnableFeatures(OmniboxFeatureList.OMNIBOX_AIM_OPEN_IN_NEW_TAB)
+    public void loadUrlFromVoice_aimOnWebPage_opensInNewTab() {
+        setUpLocationBarDataProvider(PAGE_URL, PAGE_TITLE, PageClassification.OTHER);
+        mMediator.beginInput(createSession(AutocompleteRequestType.AI_MODE));
+        doReturn(JUnitTestGURLs.BLUE_1).when(mTemplateUrlService).getUrlForVoiceSearchQuery(any());
+        doAnswer(
+                        invocation -> {
+                            Callback<GURL> callback = invocation.getArgument(1);
+                            callback.onResult(JUnitTestGURLs.BLUE_2);
+                            return null;
+                        })
+                .when(mComposeboxQueryControllerBridge)
+                .getAimUrlFromInputState(any(), any());
+
+        mMediator.loadUrlFromVoice("sample voice query", /* fallbackProfile= */ null);
+
+        verify(mAutocompleteDelegate).loadUrl(mOmniboxLoadUrlParamsCaptor.capture());
+        assertTrue(mOmniboxLoadUrlParamsCaptor.getValue().openInNewTab);
+    }
+
+    @Test
+    @EnableFeatures(OmniboxFeatureList.OMNIBOX_AIM_OPEN_IN_NEW_TAB)
+    public void loadPastedText_aimOnWebPage_opensInNewTab() {
+        setUpLocationBarDataProvider(PAGE_URL, PAGE_TITLE, PageClassification.OTHER);
+        mMediator.beginInput(createSession(AutocompleteRequestType.AI_MODE));
+        doReturn(createSearchSuggestMatch()).when(mAutocompleteController).classify(any());
+        doAnswer(
+                        invocation -> {
+                            Callback<GURL> callback = invocation.getArgument(1);
+                            callback.onResult(JUnitTestGURLs.BLUE_2);
+                            return null;
+                        })
+                .when(mComposeboxQueryControllerBridge)
+                .getAimUrlFromInputState(any(), any());
+
+        mMediator.loadPastedText(
+                "pasted query",
+                TEST_EVENT_TIME,
+                AutocompleteCoordinator.NavigationTarget.CURRENT_TAB);
+
+        verify(mAutocompleteDelegate).loadUrl(mOmniboxLoadUrlParamsCaptor.capture());
+        assertTrue(mOmniboxLoadUrlParamsCaptor.getValue().openInNewTab);
     }
 
     @Test

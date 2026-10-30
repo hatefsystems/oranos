@@ -6,12 +6,9 @@
 #define CHROME_BROWSER_READALOUD_READ_ALOUD_PLAYBACK_SESSION_H_
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "content/public/browser/media_session_player_observer.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "services/media_session/public/cpp/media_metadata.h"
-#include "services/media_session/public/cpp/media_position.h"
 
 namespace content {
 class WebContents;
@@ -42,9 +39,6 @@ class ReadAloudPlaybackSession : public content::MediaSessionPlayerObserver,
   void NotifyPlaybackPaused();
   void NotifyPlaybackStopped();
 
-  bool is_paused() const { return is_paused_; }
-  bool is_playback_in_progress() const { return is_playback_in_progress_; }
-
   // content::MediaSessionPlayerObserver overrides:
   void OnSuspend(int player_id, bool triggered_by_user) override;
   void OnResume(int player_id, bool triggered_by_user) override;
@@ -61,18 +55,16 @@ class ReadAloudPlaybackSession : public content::MediaSessionPlayerObserver,
   // not happened yet.
   enum class SessionCommand { kNone, kSuspend, kResume };
 
-  // Returns true and clears `pending_session_command_` if it is `command`.
+  // Consumes any pending MediaSession command and returns whether it matched
+  // `command`.
   bool ConsumePendingSessionCommand(SessionCommand command);
 
   const raw_ptr<ReadAloudService> service_;
   static constexpr int kPlayerId = 0;
 
   bool is_paused_ = true;
-  bool is_playback_in_progress_ = false;
 
   SessionCommand pending_session_command_ = SessionCommand::kNone;
-
-  base::WeakPtrFactory<ReadAloudPlaybackSession> weak_factory_{this};
 };
 
 }  // namespace readaloud

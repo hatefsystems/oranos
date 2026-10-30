@@ -5,6 +5,7 @@
 import("//build/config/ozone.gni")
 import("//build/config/ui.gni")
 import("//components/signin/features.gni")
+import("//third_party/blink/public/public_features.gni")
 
 assert(is_win || is_mac || is_linux || is_chromeos)
 
@@ -227,7 +228,6 @@ source_set("impl") {
     "//chrome/browser/gpu",
     "//chrome/browser/hid",
     "//chrome/browser/history",
-    "//chrome/browser/history_embeddings",
     "//chrome/browser/indigo/resources:indigo_strings",
     "//chrome/browser/lifetime",
     "//chrome/browser/media",
@@ -273,6 +273,7 @@ source_set("impl") {
     "//chrome/browser/ui/hats",
     "//chrome/browser/ui/interaction",
     "//chrome/browser/ui/omnibox",
+    "//chrome/browser/ui/omnibox/omnibox_everywhere",
     "//chrome/browser/ui/omnibox/omnibox_everywhere:prefs",
     "//chrome/browser/ui/page_info",
     "//chrome/browser/ui/passwords",
@@ -351,6 +352,7 @@ source_set("impl") {
     "//components/webauthn/core/browser:passkey_model",
     "//extensions/browser",
     "//services/device/public/cpp:device_features",
+    "//third_party/blink/public:buildflags",
     "//ui/base",
     "//ui/webui/tracked_element",
     "//v8:v8_version",
@@ -413,7 +415,6 @@ source_set("impl") {
       "//chrome/browser/ash/profiles",
       "//chrome/browser/ash/tpm",
       "//chrome/browser/search_engine_choice",
-      "//chrome/browser/smart_card",
       "//chrome/browser/ui:settings_window_manager_chromeos",
       "//chrome/browser/ui/ash/system_web_apps",
       "//chrome/browser/ui/webui:plural_string_handler",
@@ -428,6 +429,10 @@ source_set("impl") {
       "//chromeos/version",
       "//ui/chromeos",
     ]
+  }
+
+  if (enable_smart_card) {
+    deps += [ "//chrome/browser/smart_card" ]
   }
 
   if (enable_dice_support) {
@@ -522,6 +527,18 @@ source_set("browser_tests") {
 
   if (use_ozone) {
     deps += [ "//ui/ozone" ]
+  }
+
+  # Pixel tests are only supported on these platforms.
+  if (is_win || is_linux) {
+    sources += [ "search_engine_picker_pixel_browsertest.cc" ]
+    deps += [
+      "//chrome/browser/ui/test:dialog",
+      "//chrome/test/base:mixin_based_in_process_browser_test",
+      "//chrome/test/interaction",
+      "//components/regional_capabilities",
+      "//components/search_engines/search_engine_choice:switches",
+    ]
   }
 
   if (is_chromeos) {
@@ -692,6 +709,7 @@ if (!is_android) {
       "//services/preferences/public/cpp/tracked",
       "//testing/gmock",
       "//testing/gtest",
+      "//third_party/blink/public:buildflags",
       "//third_party/blink/public/common",
       "//ui/events/devices",
       "//ui/webui",
@@ -729,11 +747,14 @@ if (!is_android) {
       ]
     }
 
+    if (enable_smart_card) {
+      deps += [ "//chrome/browser/smart_card" ]
+    }
+
     if (is_chromeos) {
       deps += [
         "//ash/constants",
         "//chrome/browser/ash/login/users:test_support",
-        "//chrome/browser/smart_card",
         "//chromeos/constants",
         "//components/account_id",
         "//components/user_manager",

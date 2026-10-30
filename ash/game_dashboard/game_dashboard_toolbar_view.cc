@@ -36,7 +36,6 @@
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
-#include "ui/views/highlight_border.h"
 #include "ui/views/widget/widget.h"
 
 namespace ash {
@@ -246,7 +245,7 @@ GameDashboardToolbarView::GameDashboardToolbarView(
       cros_tokens::kCrosSysSystemBaseElevatedOpaque, kCornerRadius));
   SetBorder(views::CreateRoundedRectBorder(
       1, kCornerRadius, ui::ColorIds::kColorCrosSystemHighlightBorder));
-  shadow_ = SystemDecoration::CreateShadowOnNinePatchLayerForView(
+  shadow_ = SystemDecoration::CreateForView(
       this, SystemDecoration::ShadowType::kElevation12);
   shadow_->SetRoundedCorners(gfx::RoundedCornersF(kCornerRadius));
 

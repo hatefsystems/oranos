@@ -25,8 +25,8 @@
 #include "chrome/browser/enterprise/connectors/reporting/event_initiator_utils.h"
 #include "chrome/browser/enterprise/connectors/reporting/reporting_event_router_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/safe_browsing/advanced_protection_status_manager.h"
-#include "chrome/browser/safe_browsing/advanced_protection_status_manager_factory.h"
+#include "chrome/browser/safe_browsing/advanced_protection/advanced_protection_status_manager.h"
+#include "chrome/browser/safe_browsing/advanced_protection/advanced_protection_status_manager_factory.h"
 #include "chrome/browser/safe_browsing/download_protection/check_client_download_request.h"
 #include "chrome/browser/safe_browsing/download_protection/check_file_system_access_write_request.h"
 #include "chrome/browser/safe_browsing/download_protection/download_item_metadata.h"
@@ -65,8 +65,8 @@
 #include "net/base/url_util.h"
 #include "net/cert/x509_util.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/page_transition_types.h"
-#include "ui/base/window_open_disposition.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/api/safe_browsing_private/safe_browsing_private_event_router.h"
@@ -405,7 +405,7 @@ void DownloadProtectionService::ShowDetailsForDownload(
 
   navigator->OpenURL(
       content::OpenURLParams::CreateBrowserInitiated(
-          learn_more_url, WindowOpenDisposition::kNewForegroundTab,
+          learn_more_url, ui::mojom::WindowOpenDisposition::kNewForegroundTab,
           ui::PAGE_TRANSITION_LINK),
       /*navigation_handle_callback=*/{});
 }
@@ -420,11 +420,13 @@ void DownloadProtectionService::SetDownloadProtectionData(
     download::DownloadItem* item,
     const std::string& token,
     const ClientDownloadResponse::Verdict& verdict,
-    const ClientDownloadResponse::TailoredVerdict& tailored_verdict) {
+    const ClientDownloadResponse::TailoredVerdict& tailored_verdict,
+    bool is_registered_app_store) {
   if (item) {
-    item->SetUserData(kDownloadProtectionDataKey,
-                      std::make_unique<DownloadProtectionData>(
-                          token, verdict, tailored_verdict));
+    item->SetUserData(
+        kDownloadProtectionDataKey,
+        std::make_unique<DownloadProtectionData>(
+            token, verdict, tailored_verdict, is_registered_app_store));
   }
 }
 
@@ -469,6 +471,21 @@ DownloadProtectionService::GetDownloadProtectionTailoredVerdict(
         ->tailored_verdict();
   else
     return ClientDownloadResponse::TailoredVerdict();
+}
+
+// static
+bool DownloadProtectionService::WasFromRegisteredAppStore(
+    const download::DownloadItem* item) {
+  if (!item) {
+    return false;
+  }
+  const base::SupportsUserData::Data* protection_data =
+      item->GetUserData(kDownloadProtectionDataKey);
+  if (protection_data) {
+    return static_cast<const DownloadProtectionData*>(protection_data)
+        ->is_registered_app_store();
+  }
+  return false;
 }
 
 void DownloadProtectionService::MaybeSendDangerousDownloadOpenedReport(

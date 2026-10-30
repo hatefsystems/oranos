@@ -158,13 +158,23 @@ void ListedElement::InsertedInto(ContainerNode& insertion_point) {
   data_list_ancestor_state_ = DataListAncestorState::kUnknown;
   UpdateWillValidateCache(WillValidateReason::kForInsertionOrRemoval);
 
-  if (!form_was_set_by_parser_ || !form_ ||
-      NodeTraversal::HighestAncestorOrSelf(insertion_point) !=
-          NodeTraversal::HighestAncestorOrSelf(*form_.Get())) {
+  HTMLElement& element = ToHTMLElement();
+  DCHECK(!form_was_set_by_parser_ || form_);
+  if (!form_was_set_by_parser_) {
     ResetFormOwner();
+  } else {
+    const Node& form_or_highest_ancestor =
+        NodeTraversal::HighestAncestorOrSelf(element, /*limit=*/form_);
+    if (form_or_highest_ancestor != *form_) [[unlikely]] {
+      if (form_or_highest_ancestor ==
+          NodeTraversal::HighestAncestorOrSelf(*form_)) {
+        form_->DidAssociateNonDescendantByParser();
+      } else {
+        ResetFormOwner();
+      }
+    }
   }
 
-  HTMLElement& element = ToHTMLElement();
   if (insertion_point.isConnected()) {
     if (element.FastHasAttribute(html_names::kFormAttr))
       ResetFormAttributeTargetObserver();
@@ -258,10 +268,12 @@ void ListedElement::FormRemovedFromTree(const Node& form_root) {
 }
 
 void ListedElement::AssociateByParser(HTMLFormElement* form) {
+  // InsertedInto() detects non-descendant parser associations, so this must
+  // happen before the element is inserted into any tree.
+  DCHECK(!ToHTMLElement().parentNode());
   if (form && form->isConnected()) {
     form_was_set_by_parser_ = true;
     SetForm(form);
-    form->DidAssociateByParser();
   }
 }
 

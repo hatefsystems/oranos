@@ -44,6 +44,7 @@ import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.incognito.IncognitoUtils;
 import org.chromium.chrome.browser.ntp.NewTabPageUtils.ActionChips;
+import org.chromium.chrome.browser.ntp.NewTabPageUtils.LayoutType;
 import org.chromium.chrome.browser.util.BrowserUiUtils.ModuleTypeOnStartAndNtp;
 import org.chromium.components.search_engines.AiModeButtonUiConfig;
 import org.chromium.ui.base.DeviceFormFactor;
@@ -53,11 +54,15 @@ import org.chromium.url.JUnitTestGURLs;
 /** Unit tests for {@link ComposeplateCoordinator}. */
 @RunWith(BaseRobolectricTestRunner.class)
 public class ComposeplateCoordinatorUnitTest {
+    // A phone in full screen portrait mode.
+    private static final String PORTRAIT_QUALIFIER = "+w411dp-h731dp-port";
     // A phone in full screen landscape mode.
     private static final String LANDSCAPE_QUALIFIER = "+w731dp-h411dp-land";
     // A phone in top/bottom split-screen mode: the window is in landscape, but as narrow as in
     // portrait mode.
     private static final String SPLIT_SCREEN_LANDSCAPE_QUALIFIER = "+w411dp-h360dp-land";
+    // A phone in left/right split-screen mode resized to a very narrow window.
+    private static final String NARROW_SPLIT_SCREEN_QUALIFIER = "+w300dp-h411dp-port";
     // A tablet in a window wide enough for the large form factor layout.
     private static final String TABLET_QUALIFIER = "sw600dp-w600dp";
 
@@ -161,6 +166,27 @@ public class ComposeplateCoordinatorUnitTest {
                         .expectNoRecords(
                                 ComposeplateMetricsUtils.HISTOGRAM_COMPOSEPLATE_BUTTONS_IMPRESSION)
                         .build();
+
+        mCoordinator.recordButtonsImpression();
+
+        histogramWatcher.assertExpected();
+    }
+
+    @Test
+    @EnableFeatures({
+        ChromeFeatureList.NTP_AURORA,
+        ChromeFeatureList.NTP_AURORA_V2 + ":layout_type/" + LayoutType.BESIDE_MVT
+    })
+    public void testRecordButtonsImpression_besideMvtEnabled() {
+        mCoordinator.setVisibility(/* visible= */ true, /* isCurrentPage= */ false);
+        mCoordinator.setOptionalButtonClickListener(
+                mOriginalOnClickListener, ActionChips.CREATE_IMAGE);
+        mCoordinator.setOptionalButtonVisibility(/* visible= */ true);
+
+        HistogramWatcher histogramWatcher =
+                HistogramWatcher.newSingleRecordWatcher(
+                        ComposeplateMetricsUtils.HISTOGRAM_COMPOSEPLATE_BUTTONS_IMPRESSION,
+                        ActionChips.DEFAULT);
 
         mCoordinator.recordButtonsImpression();
 
@@ -337,11 +363,13 @@ public class ComposeplateCoordinatorUnitTest {
     }
 
     @Test
+    @Config(qualifiers = PORTRAIT_QUALIFIER)
     public void testSetOptionalButtonVisibility_visible() {
         testSetOptionalButtonVisibilityImpl(/* visible= */ true);
     }
 
     @Test
+    @Config(qualifiers = PORTRAIT_QUALIFIER)
     public void testSetOptionalButtonVisibility_hidden() {
         testSetOptionalButtonVisibilityImpl(/* visible= */ false);
     }
@@ -399,12 +427,7 @@ public class ComposeplateCoordinatorUnitTest {
     @Test
     public void testOnDisplayStyleChanged_optionalButtonVisible() {
         mCoordinator.setOptionalButtonVisibility(/* visible= */ true);
-        int portraitPadding =
-                mContext.getResources()
-                        .getDimensionPixelSize(R.dimen.composeplate_view_optional_button_padding);
-        assertEquals(
-                portraitPadding,
-                mPropertyModel.get(ComposeplateProperties.OPTIONAL_BUTTON_LATERAL_PADDING));
+        int portraitPadding = testOnDisplayStyleChangedImpl(PORTRAIT_QUALIFIER);
 
         int landscapePadding = testOnDisplayStyleChangedImpl(LANDSCAPE_QUALIFIER);
         assertNotEquals(portraitPadding, landscapePadding);
@@ -430,15 +453,29 @@ public class ComposeplateCoordinatorUnitTest {
     @Test
     public void testOnDisplayStyleChanged_fromLandscapeToSplitScreen_usesPortraitSpacing() {
         mCoordinator.setOptionalButtonVisibility(/* visible= */ true);
-        int portraitPadding =
-                mContext.getResources()
-                        .getDimensionPixelSize(R.dimen.composeplate_view_optional_button_padding);
+        int portraitPadding = testOnDisplayStyleChangedImpl(PORTRAIT_QUALIFIER);
 
         int landscapePadding = testOnDisplayStyleChangedImpl(LANDSCAPE_QUALIFIER);
         assertNotEquals(portraitPadding, landscapePadding);
 
         int splitScreenPadding = testOnDisplayStyleChangedImpl(SPLIT_SCREEN_LANDSCAPE_QUALIFIER);
         assertEquals(portraitPadding, splitScreenPadding);
+    }
+
+    @Test
+    public void testOnDisplayStyleChanged_toNarrowSplitScreen_reducesPadding() {
+        mCoordinator.setOptionalButtonVisibility(/* visible= */ true);
+        int portraitPadding = testOnDisplayStyleChangedImpl(PORTRAIT_QUALIFIER);
+
+        int narrowPadding = testOnDisplayStyleChangedImpl(NARROW_SPLIT_SCREEN_QUALIFIER);
+        assertEquals(
+                mContext.getResources()
+                        .getDimensionPixelSize(R.dimen.composeplate_view_button_margin),
+                narrowPadding);
+        assertTrue(narrowPadding < portraitPadding);
+
+        // The regular padding is restored once the window is wide enough again.
+        assertEquals(portraitPadding, testOnDisplayStyleChangedImpl(PORTRAIT_QUALIFIER));
     }
 
     /**

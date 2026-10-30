@@ -31,9 +31,6 @@ tast.arc.BuildProperties
 tast.arc.CheckAndroidVersion
 tast.arc.Downloads
 
-# b/338111076
-tast.crostini.AppAndroidStudio.bookworm_clamshell_stable@octopus
-
 # b/346793249, b/330290054
 tast.videoconferencing.OpenCLCacher
 
@@ -104,10 +101,6 @@ tast.crostini.AudioPlaybackConfigurations.bookworm_stable@brya
 # TODO(b/568738156): Re-enable tast.arc.Print.vm_t.
 tast.arc.Print.vm_t
 
-# b/569522120
-# TODO(b/569522120): Re-enable tast.shimlessrma.CancelFlow.select_components_none_next_cancel_critical.
-tast.shimlessrma.CancelFlow.select_components_none_next_cancel_critical
-
 # b/572833952
 # TODO(b/572833952): Re-enable tast.camera.CCAUISmoke.fake_hal and
 # tast.camera.CCAUISmoke.vivid.
@@ -121,5 +114,12 @@ tast.crash.ValidateFirmwareDumpGeneration.multi_session_policy_all
 tast.crash.ValidateFirmwareDumpGeneration.policy_all
 tast.crash.ValidateFirmwareDumpGeneration.policy_none
 tast.crash.ValidateFirmwareDumpGeneration.policy_wifi
+
+# b/579292091: Consistently failing on jacuzzi since ChromeOS snapshot 122704
+# (LKGM 16872.0.0-1081298), blocking LKGM uprev.
+# TODO(b/579292091): Re-enable once the ChromeOS-side regression is fixed.
+tast.arc.AudioValidity.record_vm@jacuzzi
+tast.arc.AudioValidity.record_vm_fieldtrial_testing_config_on@jacuzzi
+tast.arc.AudioValidity.record_vm_fieldtrial_testing_config_off@jacuzzi
 
 # READ COMMENT AT TOP BEFORE ADDING NEW TESTS HERE.

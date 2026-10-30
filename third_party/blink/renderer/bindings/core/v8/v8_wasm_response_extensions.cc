@@ -31,6 +31,7 @@
 #include "third_party/blink/renderer/core/workers/worklet_global_scope.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
+#include "third_party/blink/renderer/platform/bindings/v8_binding.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
 #include "third_party/blink/renderer/platform/crypto.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -38,9 +39,9 @@
 #include "third_party/blink/renderer/platform/loader/fetch/cached_metadata.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/cached_metadata_handler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
-#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/text/strcat.h"
+#include "v8/include/v8-exception.h"
 
 namespace blink {
 
@@ -76,14 +77,15 @@ class WasmCodeCachingCallback
     TRACE_EVENT_INSTANT(TRACE_DISABLED_BY_DEFAULT("devtools.timeline"),
                         "v8.wasm.compiledModule", "url", response_url_.Utf8());
     v8::OwnedBuffer serialized_module = compiled_module.Serialize();
+    base::span<const uint8_t> module_bytes = serialized_module.as_span();
     // V8 might not be able to serialize the module.
-    if (serialized_module.size == 0) {
+    if (module_bytes.empty()) {
       return;
     }
 
     TRACE_EVENT_INSTANT(TRACE_DISABLED_BY_DEFAULT("devtools.timeline"),
                         "v8.wasm.cachedModule", "producedCacheSize",
-                        serialized_module.size);
+                        module_bytes.size());
 
     DigestValue wire_bytes_digest;
     {
@@ -101,7 +103,7 @@ class WasmCodeCachingCallback
 
     mojo_base::BigBuffer serialized_data(
         base::CheckAdd(sizeof(CachedMetadataHeader) + kWireBytesDigestSize,
-                       serialized_module.size)
+                       module_bytes.size())
             .ValueOrDie());
     base::span<uint8_t> serialized_data_span(serialized_data);
     const CachedMetadataHeader header = {
@@ -112,11 +114,7 @@ class WasmCodeCachingCallback
         base::byte_span_from_ref(header));
     serialized_data_span.take_first<kWireBytesDigestSize>()
         .copy_from_nonoverlapping(wire_bytes_digest);
-    // SAFETY: v8::CompiledWasmModule::Serialize ensures the
-    // serialized_module.buffer size is equal to serialized_module.size.
-    serialized_data_span.copy_from_nonoverlapping(UNSAFE_BUFFERS(
-        base::span(base::unchecked, serialized_module.buffer.get(),
-                   serialized_module.size)));
+    serialized_data_span.copy_from_nonoverlapping(module_bytes);
 
     DCHECK(execution_context_task_runner_.get());
     execution_context_task_runner_->PostTask(
@@ -559,8 +557,8 @@ void StreamFromResponseCallback(
                                   WasmStreamingInputType::kReponseEmpty);
     // Since the status is 2xx (ok), this must be status 204 (No Content),
     // status 205 (Reset Content) or a malformed status 200 (OK).
-    auto exception = V8ThrowException::CreateWasmCompileError(
-        args.GetIsolate(), "Empty WebAssembly module");
+    auto exception = v8::Exception::WasmCompileError(
+        V8String(args.GetIsolate(), "Empty WebAssembly module"));
     PropagateExceptionToWasmStreaming(script_state, exception, streaming);
     return;
   }

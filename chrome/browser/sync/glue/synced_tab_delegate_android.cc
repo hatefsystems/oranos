@@ -88,7 +88,7 @@ SyncedTabDelegateAndroid::ReadPlaceholderTabSnapshotIfItShouldSync(
 
   TabModel* tab_model = TabModelList::FindTabModelWithWindowSessionId(
       tab_android_data_provider_->GetWindowId());
-  DCHECK(tab_model);
+  CHECK(tab_model, base::NotFatalUntil::M163);
   Profile* profile = tab_model->GetProfile();
 
   return browser_sync::WebContentsStateSyncedTabDelegate::Create(
@@ -96,12 +96,15 @@ SyncedTabDelegateAndroid::ReadPlaceholderTabSnapshotIfItShouldSync(
 }
 
 void SyncedTabDelegateAndroid::SetWebContents(
-    content::WebContents* web_contents) {
-  TabContentsSyncedTabDelegate::SetWebContents(web_contents);
+    content::WebContents* web_contents,
+    tasks::TaskTabHelper* task_tab_helper,
+    SupervisedUserNavigationObserver* supervised_user_navigation_observer) {
+  TabContentsSyncedTabDelegate::SetWebContents(
+      web_contents, task_tab_helper, supervised_user_navigation_observer);
 }
 
 void SyncedTabDelegateAndroid::ResetWebContents() {
-  TabContentsSyncedTabDelegate::SetWebContents(nullptr);
+  TabContentsSyncedTabDelegate::SetWebContents(nullptr, nullptr, nullptr);
 }
 
 SessionID SyncedTabDelegateAndroid::SessionIdFromAndroidId(int android_tab_id) {

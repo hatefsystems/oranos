@@ -20,6 +20,7 @@
 #include "chrome/browser/ui/views/frame/shadow_frame_view.h"
 #include "chrome/browser/ui/views/tabs/organizer/layout_constants.h"
 #include "chrome/browser/ui/views/tabs/organizer/organizer_panel_controls_view.h"
+#include "chrome/browser/ui/views/tabs/organizer/organizer_panel_view.h"
 #include "ui/base/interaction/element_tracker.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/compositor/layer.h"
@@ -225,6 +226,11 @@ void OrganizerTrayView::AddedToWidget() {
   shadow_frame_->SetShadowVisible(true);
 }
 
+void OrganizerTrayView::RemovedFromWidget() {
+  // This makes sure the event observer is cleaned up during browser teardown.
+  event_observer_.reset();
+}
+
 void OrganizerTrayView::VisibilityChanged(views::View* from, bool visible) {
   if (visible) {
     event_observer_ = std::make_unique<EventObserver>(*this);
@@ -292,6 +298,19 @@ void OrganizerTrayView::Layout(PassKey) {
     }
   }
   controls_view_->SetButtonOpacity(opacity);
+}
+
+bool OrganizerTrayView::OnMousePressed(const ui::MouseEvent& event) {
+  if (!event.IsOnlyLeftMouseButton()) {
+    return false;
+  }
+  if (panel_view_ && panel_view_->bounds().Contains(event.location())) {
+    return false;
+  }
+  if (auto* const panel = views::AsViewClass<OrganizerPanelView>(panel_view_)) {
+    panel->ClearFocusedElement();
+  }
+  return true;
 }
 
 void OrganizerTrayView::ClosePanel() {

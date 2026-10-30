@@ -13,7 +13,6 @@
 #include "base/command_line.h"
 #include "base/containers/flat_set.h"
 #include "base/feature_list.h"
-#include "base/functional/function_ref.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
@@ -40,9 +39,11 @@
 #include "chrome/browser/glic/host/glic_features.mojom-features.h"
 #include "chrome/browser/glic/host/glic_synthetic_trial_manager.h"
 #include "chrome/browser/glic/public/features.h"
+#include "chrome/browser/glic/public/glic_feature.h"
 #include "chrome/browser/glic/public/glic_fre_store.h"
 #include "chrome/browser/glic/public/glic_keyed_service.h"
 #include "chrome/browser/glic/public/glic_keyed_service_factory.h"
+#include "chrome/browser/glic/public/glic_provider_metrics.h"
 #include "chrome/browser/glic/public/glic_provider_spec.h"
 #include "chrome/browser/global_features.h"
 #include "chrome/browser/metrics/chrome_feature_list_creator.h"
@@ -82,6 +83,7 @@
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/android_info.h"
 #include "base/android/device_info.h"
+#include "chrome/browser/glic/android/background_actuation_capability.h"
 #endif
 
 namespace glic {
@@ -303,96 +305,122 @@ using AnchoredDespiteEligibilityReason =
 
 void RecordDisabledReasonsWith(
     const GlicEnabling::ProfileEnablement& enablement,
-    base::FunctionRef<void(DisabledReason)> record_reason) {
+    const GlicMetricReporter& reporter,
+    std::string_view suffix) {
+  const std::string histogram_name =
+      base::StrCat({"ProfileEnablement.DisabledReason.", suffix});
   if (!enablement.feature_enabled) {
-    record_reason(DisabledReason::kFeatureDisabled);
+    reporter.RecordEnumeration(histogram_name,
+                               DisabledReason::kFeatureDisabled);
   }
   if (!enablement.is_regular_profile) {
-    record_reason(DisabledReason::kNotRegularProfile);
+    reporter.RecordEnumeration(histogram_name,
+                               DisabledReason::kNotRegularProfile);
   }
   if (!enablement.is_rolled_out) {
-    record_reason(DisabledReason::kNotRolledOut);
+    reporter.RecordEnumeration(histogram_name, DisabledReason::kNotRolledOut);
   }
   if (!enablement.primary_account_is_capable) {
-    record_reason(DisabledReason::kPrimaryAccountNotCapable);
+    reporter.RecordEnumeration(histogram_name,
+                               DisabledReason::kPrimaryAccountNotCapable);
   }
   if (!enablement.allowed_by_chrome_policy) {
-    record_reason(DisabledReason::kDisallowedByChromePolicy);
+    reporter.RecordEnumeration(histogram_name,
+                               DisabledReason::kDisallowedByChromePolicy);
   }
   if (!enablement.allowed_by_remote_admin) {
-    record_reason(DisabledReason::kDisallowedByRemoteAdmin);
+    reporter.RecordEnumeration(histogram_name,
+                               DisabledReason::kDisallowedByRemoteAdmin);
   }
   if (!enablement.allowed_by_remote_other) {
-    record_reason(DisabledReason::kDisallowedByRemoteOther);
+    reporter.RecordEnumeration(histogram_name,
+                               DisabledReason::kDisallowedByRemoteOther);
   }
 }
 
 void RecordFeatureDisabledReasonsWith(
     const GlicEnabling::ProfileEnablement& enablement,
-    base::FunctionRef<void(FeatureDisabledReason)> record_reason) {
+    const GlicMetricReporter& reporter,
+    std::string_view suffix) {
+  const std::string histogram_name =
+      base::StrCat({"GlobalEnabling.FeatureDisabledReason.", suffix});
   if (!enablement.feature_flag_enabled) {
-    record_reason(FeatureDisabledReason::kFeatureFlagDisabled);
+    reporter.RecordEnumeration(histogram_name,
+                               FeatureDisabledReason::kFeatureFlagDisabled);
   }
   if (!enablement.allowed_by_country_filter) {
-    record_reason(FeatureDisabledReason::kCountryDisabled);
+    reporter.RecordEnumeration(histogram_name,
+                               FeatureDisabledReason::kCountryDisabled);
   }
   if (!enablement.allowed_by_locale_filter) {
-    record_reason(FeatureDisabledReason::kLocaleDisabled);
+    reporter.RecordEnumeration(histogram_name,
+                               FeatureDisabledReason::kLocaleDisabled);
   }
   if (!enablement.system_requirement_met) {
-    record_reason(FeatureDisabledReason::kSystemRequirementNotMet);
+    reporter.RecordEnumeration(histogram_name,
+                               FeatureDisabledReason::kSystemRequirementNotMet);
   }
   if (!enablement.os_version_supported) {
-    record_reason(FeatureDisabledReason::kOsVersionNotSupported);
+    reporter.RecordEnumeration(histogram_name,
+                               FeatureDisabledReason::kOsVersionNotSupported);
   }
 }
 
 void RecordAnchoredDespiteEligibilityReasonsWith(
     const GlicEnabling::ProfileEnablement& enablement,
-    std::string_view name) {
+    const GlicMetricReporter& reporter,
+    std::string_view suffix) {
+  const std::string histogram_name = base::StrCat(
+      {"ProfileEnablement.AnchoredDespiteEligibilityReason.", suffix});
   if (!enablement.feature_flag_enabled) {
-    base::UmaHistogramEnumeration(
-        name, AnchoredDespiteEligibilityReason::kFeatureFlagDisabled);
+    reporter.RecordEnumeration(
+        histogram_name, AnchoredDespiteEligibilityReason::kFeatureFlagDisabled);
   }
   if (!enablement.allowed_by_country_filter) {
-    base::UmaHistogramEnumeration(
-        name, AnchoredDespiteEligibilityReason::kCountryDisabled);
+    reporter.RecordEnumeration(
+        histogram_name, AnchoredDespiteEligibilityReason::kCountryDisabled);
   }
   if (!enablement.allowed_by_locale_filter) {
-    base::UmaHistogramEnumeration(
-        name, AnchoredDespiteEligibilityReason::kLocaleDisabled);
+    reporter.RecordEnumeration(
+        histogram_name, AnchoredDespiteEligibilityReason::kLocaleDisabled);
   }
   if (!enablement.system_requirement_met) {
-    base::UmaHistogramEnumeration(
-        name, AnchoredDespiteEligibilityReason::kSystemRequirementNotMet);
+    reporter.RecordEnumeration(
+        histogram_name,
+        AnchoredDespiteEligibilityReason::kSystemRequirementNotMet);
   }
   if (!enablement.os_version_supported) {
-    base::UmaHistogramEnumeration(
-        name, AnchoredDespiteEligibilityReason::kOsVersionNotSupported);
+    reporter.RecordEnumeration(
+        histogram_name,
+        AnchoredDespiteEligibilityReason::kOsVersionNotSupported);
   }
   if (!enablement.primary_account_is_capable) {
-    base::UmaHistogramEnumeration(
-        name, AnchoredDespiteEligibilityReason::kPrimaryAccountNotCapable);
+    reporter.RecordEnumeration(
+        histogram_name,
+        AnchoredDespiteEligibilityReason::kPrimaryAccountNotCapable);
   }
   if (!enablement.allowed_by_chrome_policy) {
-    base::UmaHistogramEnumeration(
-        name, AnchoredDespiteEligibilityReason::kDisallowedByChromePolicy);
+    reporter.RecordEnumeration(
+        histogram_name,
+        AnchoredDespiteEligibilityReason::kDisallowedByChromePolicy);
   }
   if (!enablement.allowed_by_remote_admin) {
-    base::UmaHistogramEnumeration(
-        name, AnchoredDespiteEligibilityReason::kDisallowedByRemoteAdmin);
+    reporter.RecordEnumeration(
+        histogram_name,
+        AnchoredDespiteEligibilityReason::kDisallowedByRemoteAdmin);
   }
   if (!enablement.allowed_by_remote_other) {
-    base::UmaHistogramEnumeration(
-        name, AnchoredDespiteEligibilityReason::kDisallowedByRemoteOther);
+    reporter.RecordEnumeration(
+        histogram_name,
+        AnchoredDespiteEligibilityReason::kDisallowedByRemoteOther);
   }
   if (!enablement.is_regular_profile) {
-    base::UmaHistogramEnumeration(
-        name, AnchoredDespiteEligibilityReason::kNotRegularProfile);
+    reporter.RecordEnumeration(
+        histogram_name, AnchoredDespiteEligibilityReason::kNotRegularProfile);
   }
   if (!enablement.is_rolled_out) {
-    base::UmaHistogramEnumeration(
-        name, AnchoredDespiteEligibilityReason::kNotRolledOut);
+    reporter.RecordEnumeration(histogram_name,
+                               AnchoredDespiteEligibilityReason::kNotRolledOut);
   }
 }
 
@@ -404,52 +432,12 @@ mojom::ProfileReadyState GetSanitizedProfileReadyState(int state_val) {
   return mojom::ProfileReadyState::kUnknownError;
 }
 
-GlicEnabling::ProfileEnablement ComputeProfileEnablement(
+void ApplyGeminiAccountEligibility(
     Profile* profile,
     std::optional<std::pair<std::string_view, std::string_view>>
         country_override,
-    const AccountInfo* account_info_override) {
-  GlicEnabling::ProfileEnablement result;
-
-  if (g_bypass_enablement_checks_for_testing) {
-    return result;
-  }
-
-  GlicGlobalEnabling& global_enabling =
-      g_browser_process->GetFeatures()->glic_global_enabling();
-
-  result.feature_flag_enabled = base::FeatureList::IsEnabled(features::kGlic);
-  if (country_override.has_value()) {
-    result.allowed_by_country_filter =
-        GlicEnabling::IsRetailDemoModeDesktop() ||
-        EvaluateCountryEnablement(country_override->first,
-                                  country_override->second);
-  } else {
-    result.allowed_by_country_filter = global_enabling.IsCountryEnabled();
-  }
-  result.allowed_by_locale_filter = global_enabling.IsLocaleEnabled();
-  result.system_requirement_met = global_enabling.IsSystemRequirementMet();
-  result.fre_is_consented = GlicEnabling::HasConsentedForProfile(profile);
-  result.os_version_supported = global_enabling.IsOsVersionSupported();
-
-  bool global_criteria_met = global_enabling.IsEnabledByGlobalCriteria();
-  if (!global_criteria_met) {
-    result.anchor_entrypoint_override_active =
-        result.feature_flag_enabled &&
-        GlicEnabling::IsAnchoredButIneligible(
-            global_criteria_met,
-            IsAnchorable(profile, result.fre_is_consented));
-    if (!result.anchor_entrypoint_override_active) {
-      result.feature_enabled = false;
-      return result;
-    }
-  }
-
-  if (!profile || !profile->IsRegularProfile()) {
-    result.is_regular_profile = false;
-    return result;
-  }
-
+    const AccountInfo* account_info_override,
+    GlicEnabling::ProfileEnablement& result) {
   // Certain checks are bypassed if --glic-dev is passed.
   auto* command_line = base::CommandLine::ForCurrentProcess();
   if (!command_line->HasSwitch(::switches::kGlicDev)) {
@@ -491,6 +479,8 @@ GlicEnabling::ProfileEnablement ComputeProfileEnablement(
       // adults are capable, so minor users outside minor-enabled countries are
       // reported as not capable (rather than blocked by the country filter,
       // which always reflects the adult country list).
+      GlicGlobalEnabling& global_enabling =
+          g_browser_process->GetFeatures()->glic_global_enabling();
       const bool allowed_by_minor_country_filter =
           country_override.has_value()
               ? GlicEnabling::IsRetailDemoModeDesktop() ||
@@ -525,7 +515,6 @@ GlicEnabling::ProfileEnablement ComputeProfileEnablement(
     }
   }
 
-
   if (profile->GetPrefs()->GetInteger(
           optimization_guide::prefs::kGeminiSettings) !=
       std::to_underlying(
@@ -552,6 +541,78 @@ GlicEnabling::ProfileEnablement ComputeProfileEnablement(
       }
     }
   }
+}
+
+GlicEnabling::ProfileEnablement ComputeProfileEnablement(
+    Profile* profile,
+    std::optional<std::pair<std::string_view, std::string_view>>
+        country_override,
+    const AccountInfo* account_info_override) {
+  GlicEnabling::ProfileEnablement result;
+
+  if (g_bypass_enablement_checks_for_testing) {
+    return result;
+  }
+
+  GlicGlobalEnabling& global_enabling =
+      g_browser_process->GetFeatures()->glic_global_enabling();
+
+  result.feature_flag_enabled = base::FeatureList::IsEnabled(features::kGlic);
+  if (country_override.has_value()) {
+    result.allowed_by_country_filter =
+        GlicEnabling::IsRetailDemoModeDesktop() ||
+        EvaluateCountryEnablement(country_override->first,
+                                  country_override->second);
+  } else {
+    result.allowed_by_country_filter = global_enabling.IsCountryEnabled();
+  }
+  result.allowed_by_locale_filter = global_enabling.IsLocaleEnabled();
+  result.system_requirement_met = global_enabling.IsSystemRequirementMet();
+  result.fre_is_consented = GlicEnabling::HasConsentedForProfile(profile);
+  result.os_version_supported = global_enabling.IsOsVersionSupported();
+
+  // The global criteria are shared by all providers. There is no
+  // `features::kGeic` check for Gemini Enterprise here: a profile is only
+  // latched to Gemini Enterprise if kGeic is enabled when the provider is
+  // latched (see GlicProviderLatchFactory), and features don't change at
+  // runtime.
+  bool global_criteria_met = global_enabling.IsEnabledByGlobalCriteria();
+  if (!global_criteria_met) {
+    result.anchor_entrypoint_override_active =
+        result.feature_flag_enabled &&
+        GlicEnabling::IsAnchoredButIneligible(
+            global_criteria_met,
+            IsAnchorable(profile, result.fre_is_consented));
+    if (!result.anchor_entrypoint_override_active) {
+      result.feature_enabled = false;
+      return result;
+    }
+  }
+
+  if (!profile || !profile->IsRegularProfile()) {
+    result.is_regular_profile = false;
+    return result;
+  }
+
+  // Gemini account eligibility (whether the consumer Google account may use
+  // Gemini) doesn't apply to providers whose access is decided when the
+  // provider is latched (Gemini Enterprise); see
+  // GlicProviderSpec::RequiresGeminiAccountEligibility(). They skip the
+  // rollout, the primary account's sign-in state and capabilities
+  // (`account_info_override` is ignored), the GeminiSettings policy and the
+  // server-side user status checks below. Those fields keep their default
+  // (allowed) values, and the checks above still apply.
+  const GlicProviderSpec& provider_spec = GetGlicProviderSpec(profile);
+  if (provider_spec.RequiresGeminiAccountEligibility()) {
+    ApplyGeminiAccountEligibility(profile, country_override,
+                                  account_info_override, result);
+  }
+
+  result.live_allowed =
+      result.live_allowed && provider_spec.SupportsFeature(GlicFeature::kLive);
+  result.share_image_allowed =
+      result.share_image_allowed &&
+      provider_spec.SupportsFeature(GlicFeature::kShareImage);
 
   return result;
 }
@@ -627,65 +688,44 @@ GlicEnabling::ProfileEnablement::ProfileEnablement(ProfileEnablement&&) =
     default;
 GlicEnabling::ProfileEnablement::~ProfileEnablement() = default;
 
-void GlicEnabling::ProfileEnablement::RecordMetrics(
-    const std::string& suffix) const {
-  bool is_enabled = IsEnabled();
-  base::UmaHistogramBoolean(
-      base::StrCat({"Glic.ProfileEnablement.IsEnabled.", suffix}), is_enabled);
+// static
+void GlicEnabling::RecordProfileEnablementMetrics(
+    Profile* profile,
+    EnablementMetricsPhase phase,
+    const ProfileEnablement& enablement) {
+  std::string_view suffix =
+      phase == EnablementMetricsPhase::kStartup ? "Startup" : "SteadyState";
+  GlicMetricReporter reporter(profile);
+  bool is_enabled = enablement.IsEnabled();
+  reporter.RecordBoolean(base::StrCat({"ProfileEnablement.IsEnabled.", suffix}),
+                         is_enabled);
 
-  auto record_reason = [&](DisabledReason reason) {
-    base::UmaHistogramEnumeration(
-        base::StrCat({"Glic.ProfileEnablement.DisabledReason.", suffix}),
-        reason);
-  };
-
-  RecordDisabledReasonsWith(*this, record_reason);
-  if (!feature_enabled) {
-    RecordFeatureDisabledReason(suffix);
+  RecordDisabledReasonsWith(enablement, reporter, suffix);
+  if (!enablement.feature_enabled) {
+    RecordFeatureDisabledReasonsWith(enablement, reporter, suffix);
   }
 
   if (is_enabled) {
-    base::UmaHistogramBoolean(
-        base::StrCat({"Glic.ProfileEnablement.IsConsented.", suffix}),
-        fre_is_consented);
+    reporter.RecordBoolean(
+        base::StrCat({"ProfileEnablement.IsConsented.", suffix}),
+        enablement.fre_is_consented);
   }
-  base::UmaHistogramBoolean(
-      base::StrCat({"Glic.ProfileEnablement.EligibleForLive.", suffix}),
-      EligibleForLive());
-  base::UmaHistogramBoolean(
+  reporter.RecordBoolean(
+      base::StrCat({"ProfileEnablement.EligibleForLive.", suffix}),
+      enablement.EligibleForLive());
+  reporter.RecordBoolean(
       base::StrCat(
-          {"Glic.ProfileEnablement.IsPrimaryAccountFullySignedIn.", suffix}),
-      primary_account_is_fully_signed_in);
-  if (anchor_entrypoint_override_active && ShouldShowGlicButton()) {
-    RecordAnchoredDespiteEligibilityReasonsWith(
-        *this, base::StrCat({"Glic.ProfileEnablement."
-                             "AnchoredDespiteEligibilityReason.",
-                             suffix}));
+          {"ProfileEnablement.IsPrimaryAccountFullySignedIn.", suffix}),
+      enablement.primary_account_is_fully_signed_in);
+  if (enablement.anchor_entrypoint_override_active &&
+      enablement.ShouldShowGlicButton()) {
+    RecordAnchoredDespiteEligibilityReasonsWith(enablement, reporter, suffix);
   }
 
-  base::UmaHistogramBoolean(
+  reporter.RecordBoolean(
       base::StrCat(
-          {"Glic.ProfileEnablement.IsPrimaryAccountNeedsSignedIn.", suffix}),
-      primary_account_needs_signed_in);
-}
-
-void GlicEnabling::ProfileEnablement::RecordFeatureDisabledReason(
-    const std::string& suffix) const {
-  auto record_reason = [&](FeatureDisabledReason reason) {
-    base::UmaHistogramEnumeration(
-        base::StrCat({"Glic.GlobalEnabling.FeatureDisabledReason.", suffix}),
-        reason);
-  };
-
-  RecordFeatureDisabledReasonsWith(*this, record_reason);
-}
-
-void GlicEnabling::ProfileEnablement::RecordStartupMetrics() const {
-  RecordMetrics("Startup");
-}
-
-void GlicEnabling::ProfileEnablement::RecordSteadyStateMetrics() const {
-  RecordMetrics("SteadyState");
+          {"ProfileEnablement.IsPrimaryAccountNeedsSignedIn.", suffix}),
+      enablement.primary_account_needs_signed_in);
 }
 
 bool GlicEnabling::ProfileEnablement::IsProfileEligible() const {
@@ -743,7 +783,6 @@ bool GlicEnabling::ProfileEnablement::EligibleForLive() const {
 bool GlicEnabling::ProfileEnablement::EligibleForShareImage() const {
   return IsProfileEligible() && share_image_allowed;
 }
-
 
 bool GlicEnabling::ProfileEnablement::DisallowedByAdmin() const {
   return !allowed_by_chrome_policy || !allowed_by_remote_admin;
@@ -965,13 +1004,13 @@ void GlicEnabling::RecordProfileIneligibilityMetricsAtStartup(
     return;
   }
 
-  base::UmaHistogramBoolean("Glic.ProfileEnablement.IsEnabled.Startup", false);
+  GlicMetricReporter reporter(profile);
+  reporter.RecordBoolean("ProfileEnablement.IsEnabled.Startup", false);
 
   // Log specific causes of ineligibility.
   if (!IsEnabledByGlobalCriteria()) {
-    base::UmaHistogramEnumeration(
-        "Glic.ProfileEnablement.DisabledReason.Startup",
-        DisabledReason::kFeatureDisabled);
+    reporter.RecordEnumeration("ProfileEnablement.DisabledReason.Startup",
+                               DisabledReason::kFeatureDisabled);
   }
   // Aside from flag enablement, `profile` can also be ineligible if it is not
   // a regular profile, or it fails ChromeOS-specific checks in
@@ -987,9 +1026,8 @@ void GlicEnabling::RecordProfileIneligibilityMetricsAtStartup(
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
   if (not_regular_profile) {
-    base::UmaHistogramEnumeration(
-        "Glic.ProfileEnablement.DisabledReason.Startup",
-        DisabledReason::kNotRegularProfile);
+    reporter.RecordEnumeration("ProfileEnablement.DisabledReason.Startup",
+                               DisabledReason::kNotRegularProfile);
   }
 }
 
@@ -1004,6 +1042,10 @@ bool GlicEnabling::IsEnabledForFirstRunProfile(
     std::string_view permanent_country,
     std::string_view session_country,
     const AccountInfo& account_info) {
+  // Gemini Enterprise doesn't use the consumer First Run Gemini step.
+  if (!GetGlicProviderSpec(profile).RequiresGeminiAccountEligibility()) {
+    return false;
+  }
   // Chrome First Run dedicated checks should go first before 'general' GiC
   // eligibility checks.
   if (!CanUseAdultFeatures(account_info.GetAccountCapabilities())) {
@@ -1311,7 +1353,8 @@ bool GlicEnabling::IsContextualMenuItemEnabled(
       IsEnabledForProfile(profile) &&
       (base::FeatureList::IsEnabled(features::kGlicContextMenu) ||
        text_selection_menu_enabled);
-  base::UmaHistogramBoolean("Glic.WebContentContextMenu.Enabled", enabled);
+  GlicMetricReporter(profile).RecordBoolean("WebContentContextMenu.Enabled",
+                                            enabled);
   return enabled;
 }
 
@@ -1334,7 +1377,6 @@ bool GlicEnabling::IsShareImageEnabledForProfile(Profile* profile) {
          base::FeatureList::IsEnabled(features::kGlicShareImage);
 }
 
-
 // static
 std::unique_ptr<GlicEnabling> GlicEnabling::CreateForTesting(  // IN-TEST
     Profile* profile,
@@ -1353,10 +1395,6 @@ GlicEnabling::GlicEnabling(
       profile_attributes_storage_(profile_attributes_storage),
       actor_policy_checker_(actor_policy_checker) {
   pref_registrar_.Init(profile_->GetPrefs());
-  pref_registrar_.Add(
-      optimization_guide::prefs::kGeminiSettings,
-      base::BindRepeating(&GlicEnabling::OnGlicSettingsPolicyChanged,
-                          base::Unretained(this)));
   // Only the active provider's FRE pref is observed, so that changes to the
   // other provider's FRE don't notify consent observers.
   pref_registrar_.Add(GetFreStore(profile_).GetStatusPrefName(),
@@ -1370,30 +1408,46 @@ GlicEnabling::GlicEnabling(
       prefs::kGlicExperimentalTriggeringEnabled,
       base::BindRepeating(&GlicEnabling::OnExperimentalTriggeringEnabledChanged,
                           base::Unretained(this)));
-  if (!base::FeatureList::IsEnabled(features::kGlicRollout) &&
-      base::FeatureList::IsEnabled(features::kGlicTieredRollout)) {
+
+  // The provider is latched before GlicEnabling is created, so it doesn't
+  // change for the lifetime of this object. Consumer Gemini account eligibility
+  // and policy checks (rollout, primary account identity and capabilities,
+  // GeminiSettings policy, server-side user status, and AI subscription tier)
+  // don't apply to providers that skip those checks (Gemini Enterprise).
+  const bool requires_gemini_account_eligibility =
+      GetGlicProviderSpec(profile_).RequiresGeminiAccountEligibility();
+  if (requires_gemini_account_eligibility) {
     pref_registrar_.Add(
-        prefs::kGlicRolloutEligibility,
-        base::BindRepeating(&GlicEnabling::OnTieredRolloutStatusMaybeChanged,
+        optimization_guide::prefs::kGeminiSettings,
+        base::BindRepeating(&GlicEnabling::OnGlicSettingsPolicyChanged,
                             base::Unretained(this)));
-  }
-  signin::IdentityManager* identity_manager =
-      IdentityManagerFactory::GetForProfile(profile);
-  CHECK(identity_manager);
-  identity_manager_observation_.Observe(identity_manager);
 
-  if (base::FeatureList::IsEnabled(features::kGlicUserStatusCheck)) {
-    glic_user_status_fetcher_ = std::make_unique<GlicUserStatusFetcher>(
-        profile_, base::BindRepeating(&GlicEnabling::UpdateEnabledStatus,
-                                      base::Unretained(this)));
-  }
+    if (!base::FeatureList::IsEnabled(features::kGlicRollout) &&
+        base::FeatureList::IsEnabled(features::kGlicTieredRollout)) {
+      pref_registrar_.Add(
+          prefs::kGlicRolloutEligibility,
+          base::BindRepeating(&GlicEnabling::OnTieredRolloutStatusMaybeChanged,
+                              base::Unretained(this)));
+    }
 
-  subscription_eligibility::SubscriptionEligibilityService*
-      subscription_eligibility_service = subscription_eligibility::
-          SubscriptionEligibilityServiceFactory::GetForProfile(profile);
-  if (subscription_eligibility_service) {
-    subscription_eligibility_service_observation_.Observe(
-        subscription_eligibility_service);
+    signin::IdentityManager* identity_manager =
+        IdentityManagerFactory::GetForProfile(profile);
+    CHECK(identity_manager);
+    identity_manager_observation_.Observe(identity_manager);
+
+    if (base::FeatureList::IsEnabled(features::kGlicUserStatusCheck)) {
+      glic_user_status_fetcher_ = std::make_unique<GlicUserStatusFetcher>(
+          profile_, base::BindRepeating(&GlicEnabling::UpdateEnabledStatus,
+                                        base::Unretained(this)));
+    }
+
+    subscription_eligibility::SubscriptionEligibilityService*
+        subscription_eligibility_service = subscription_eligibility::
+            SubscriptionEligibilityServiceFactory::GetForProfile(profile);
+    if (subscription_eligibility_service) {
+      subscription_eligibility_service_observation_.Observe(
+          subscription_eligibility_service);
+    }
   }
 
   if (actor_policy_checker_) {
@@ -1407,7 +1461,21 @@ GlicEnabling::GlicEnabling(
                 "If you want to inherit from GlicEnabling, ensure this "
                 "function call does not violate the 'no virtual functions in "
                 "constructors' style guide rule. Consider a 2-phase setup");
+#if BUILDFLAG(IS_ANDROID)
+  if (base::FeatureList::IsEnabled(features::kGlicExperimentalTriggering) &&
+      base::FeatureList::IsEnabled(features::kGlicBackgroundActuation)) {
+    background_actuation_capability_ =
+        std::make_unique<BackgroundActuationCapability>(
+            profile_->GetPrefs(),
+            IdentityManagerFactory::GetForProfile(profile_),
+            base::BindRepeating(
+                &GlicEnabling::MaybeNotifyExperimentalTriggeringStateChanged,
+                base::Unretained(this)));
+  }
+#endif  // BUILDFLAG(IS_ANDROID)
   last_experimental_triggering_state_ = GetExperimentalTriggeringState();
+  last_experimental_triggering_capabilities_ =
+      GetExperimentalTriggeringCapabilities();
   int pref_state =
       profile_->GetPrefs()->GetInteger(prefs::kGlicLastProfileReadyState);
   last_profile_ready_state_ = GetSanitizedProfileReadyState(pref_state);
@@ -1636,6 +1704,12 @@ GlicEnabling::GetExperimentalTriggeringCapabilities() const {
           features::kGlicExperimentalTriggeringScreenshot)) {
     capabilities.insert(kGlicCapabilityScreenshot);
   }
+#if BUILDFLAG(IS_ANDROID)
+  if (background_actuation_capability_ &&
+      background_actuation_capability_->can_actuate_in_background()) {
+    capabilities.insert(kGlicCapabilityBackgroundActuation);
+  }
+#endif  // BUILDFLAG(IS_ANDROID)
   return capabilities;
 }
 
@@ -1663,7 +1737,22 @@ void GlicEnabling::MaybeRecordStartupMetrics() {
   }
 
   recorded_startup_metrics_ = true;
-  EnablementForProfile(profile_).RecordStartupMetrics();
+  RecordProfileEnablementMetrics(profile_, EnablementMetricsPhase::kStartup,
+                                 EnablementForProfile(profile_));
+}
+
+// static
+void GlicEnabling::RecordSteadyStateMetrics(Profile* profile) {
+  RecordProfileEnablementMetrics(profile, EnablementMetricsPhase::kSteadyState,
+                                 EnablementForProfile(profile));
+}
+
+// static
+void GlicEnabling::RecordProfileEnablementMetricsForTesting(
+    Profile* profile,
+    EnablementMetricsPhase phase,
+    const ProfileEnablement& enablement) {
+  RecordProfileEnablementMetrics(profile, phase, enablement);
 }
 
 base::CallbackListSubscription GlicEnabling::RegisterAllowedChanged(
@@ -1786,14 +1875,17 @@ void GlicEnabling::OnErrorStateOfRefreshTokenUpdatedForAccount(
 }
 
 void GlicEnabling::UpdateEnabledStatus() {
-  if (IsAllowed()) {
-    profile_->GetPrefs()->SetBoolean(prefs::kGlicPreviouslyNotAllowed, false);
-  } else {
-    signin::IdentityManager* identity_manager =
-        IdentityManagerFactory::GetForProfile(profile_);
-    if (identity_manager &&
-        identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin)) {
-      profile_->GetPrefs()->SetBoolean(prefs::kGlicPreviouslyNotAllowed, true);
+  if (GetGlicProviderSpec(profile_).RequiresGeminiAccountEligibility()) {
+    if (IsAllowed()) {
+      profile_->GetPrefs()->SetBoolean(prefs::kGlicPreviouslyNotAllowed, false);
+    } else {
+      signin::IdentityManager* identity_manager =
+          IdentityManagerFactory::GetForProfile(profile_);
+      if (identity_manager &&
+          identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin)) {
+        profile_->GetPrefs()->SetBoolean(prefs::kGlicPreviouslyNotAllowed,
+                                         true);
+      }
     }
   }
   if (profile_attributes_storage_) {
@@ -1818,9 +1910,14 @@ void GlicEnabling::UpdateConsentStatus() {
 }
 
 void GlicEnabling::MaybeNotifyExperimentalTriggeringStateChanged() {
-  auto new_state = GetExperimentalTriggeringState();
-  if (new_state != last_experimental_triggering_state_) {
+  syncer::DeviceInfo::GlicExperimentalTriggeringState new_state =
+      GetExperimentalTriggeringState();
+  base::flat_set<std::string> new_capabilities =
+      GetExperimentalTriggeringCapabilities();
+  if (new_state != last_experimental_triggering_state_ ||
+      new_capabilities != last_experimental_triggering_capabilities_) {
     last_experimental_triggering_state_ = new_state;
+    last_experimental_triggering_capabilities_ = std::move(new_capabilities);
     experimental_triggering_state_changed_callback_list_.Notify();
   }
 }
@@ -1853,8 +1950,9 @@ void GlicEnabling::MaybeRecordRecoveryOnInteraction() {
       GetSanitizedProfileReadyState(last_state_val);
 
   if (last_state != mojom::ProfileReadyState::kReady) {
-    base::UmaHistogramEnumeration("Glic.ProfileEnablement.RecoveredFromState",
-                                  last_state);
+    GlicMetricReporter reporter(profile_);
+    reporter.RecordEnumeration("ProfileEnablement.RecoveredFromState",
+                               last_state);
 
     // Clear/reset the persisted preference so we don't log it again on next
     // clicks.

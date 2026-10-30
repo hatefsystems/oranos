@@ -584,8 +584,17 @@ bool WaylandWindow::IsVisible() const {
 void WaylandWindow::PrepareForShutdown() {
   shutting_down_ = true;
   if (drag_finished_callback_) {
+    auto alive = AsWeakPtr();
     OnDragSessionClose(DragOperation::kNone);
+    if (!alive) {
+      return;
+    }
   }
+  // Destruction of `this` may be deferred after `PrepareForShutdown()`, so
+  // prevent in-flight events from being dispatched directly or rerouted by
+  // another window to `this` during shutdown.
+  PlatformEventSource::GetInstance()->RemovePlatformEventDispatcher(this);
+  ReleaseCapture();
 }
 
 void WaylandWindow::SetBoundsInPixels(const gfx::Rect& bounds_px) {
@@ -1467,8 +1476,13 @@ void WaylandWindow::RequestState(PlatformWindowDelegate::State state,
       state.bounds_dip, state.ui_scale / new_ui_scale);
   state.ui_scale = new_ui_scale;
 
-  // Adjust state values if necessary.
-  state.bounds_dip = AdjustBoundsToConstraintsDIP(state.bounds_dip);
+  // Adjust state values if necessary. Size constraints only apply to normal
+  // windows; per the xdg-shell specification, maximized geometry must be obeyed
+  // exactly, and fullscreen geometry is an upper bound (otherwise compositors
+  // raise xdg_wm_base.invalid_surface_state).
+  if (state.window_state == PlatformWindowState::kNormal) {
+    state.bounds_dip = AdjustBoundsToConstraintsDIP(state.bounds_dip);
+  }
 
   const float scale = state.window_scale * state.ui_scale;
 

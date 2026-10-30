@@ -24,8 +24,9 @@
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
+#include "third_party/jni_zero/jni_zero.h"
 #include "ui/android/window_android.h"
-#include "ui/base/window_open_disposition.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "url/gurl.h"
 
 // JNI headers must be included after standard headers.
@@ -71,16 +72,6 @@ bool IsNewTabPageUrl(const GURL& url) {
 }
 
 }  // namespace
-
-void JNI_GlicExperimentalOptInUiCoordinator_OnDismissed(
-    JNIEnv* env,
-    int64_t nativeGlicExperimentalOptInUIHostAndroid) {
-  auto* host = reinterpret_cast<GlicExperimentalOptInUIHostAndroid*>(
-      nativeGlicExperimentalOptInUIHostAndroid);
-  if (host) {
-    host->OnDismissed();
-  }
-}
 
 GlicExperimentalOptInUIHostAndroid::GlicExperimentalOptInUIHostAndroid(
     Profile* profile,
@@ -133,9 +124,9 @@ void GlicExperimentalOptInUIHostAndroid::Show(
 
   JNIEnv* env = base::android::AttachCurrentThread();
   base::android::ScopedJavaLocalRef<jobject> java_obj =
-      Java_GlicExperimentalOptInUiCoordinator_show(
-          env, reinterpret_cast<intptr_t>(this), window_android,
-          opt_in_web_contents_.get());
+      Java_GlicExperimentalOptInUiCoordinator_show(env, jni_zero::MakeRaw(this),
+                                                   window_android,
+                                                   opt_in_web_contents_.get());
 
   if (!java_obj) {
     OnDismissed();
@@ -143,6 +134,7 @@ void GlicExperimentalOptInUIHostAndroid::Show(
   }
 
   java_dialog_.Reset(java_obj);
+  OnDialogOpened();
 }
 
 void GlicExperimentalOptInUIHostAndroid::Close(bool accepted) {
@@ -157,6 +149,7 @@ void GlicExperimentalOptInUIHostAndroid::Close(bool accepted) {
 }
 
 void GlicExperimentalOptInUIHostAndroid::OnDismissed() {
+  RecordShowDurationOnClose();
   java_dialog_.Reset();
   dialog_tab_ = tabs::TabHandle();
   if (opt_in_web_contents_) {
@@ -173,7 +166,7 @@ void GlicExperimentalOptInUIHostAndroid::OpenLinkInNewTab(const GURL& url) {
   }
   std::unique_ptr<NavigateParams> params =
       std::make_unique<NavigateParams>(profile_, url, ui::PAGE_TRANSITION_LINK);
-  params->disposition = WindowOpenDisposition::kNewPopup;
+  params->disposition = ui::mojom::WindowOpenDisposition::kNewPopup;
   params->opened_by_another_window = true;
   glic::NavigateAsync(std::move(params), base::DoNothing());
 }

@@ -29,7 +29,7 @@
 <translation id="1100066534610197918">الفتح في علامة تبويب جديدة في مجموعة</translation>
 <translation id="1103142993930332957">‏هل تريد المساهمة في تحسين أداء Chrome؟</translation>
 <translation id="1105960400813249514">التقاط الشاشة</translation>
-<translation id="1108214977745280468">عرض إحصاءات الصفحة</translation>
+<translation id="1108214977745280468">عرض "لمحة عن الصفحة"</translation>
 <translation id="1108938384783527433">مزامنة السجلّ</translation>
 <translation id="1109663842695712985">‏لم يتم حفظ بعض بيانات Chrome في حسابك على Google إلى الآن.\يُرجى الانتظار بضع دقائق قبل تسجيل الخروج. إذا تمّ تسجيل الخروج الآن، سيتم حذف هذه البيانات غير المحفوظة.</translation>
 <translation id="1111673857033749125">ستظهر هنا الإشارات التي تم حفظها على أجهزتك الأخرى.</translation>
@@ -50,6 +50,7 @@
 <translation id="1165109137568919258">التقِط صورة أو أضِف صورة من معرض الصور للبحث</translation>
 <translation id="1173894706177603556">إعادة تسمية</translation>
 <translation id="1174479719160874822">‏سيطلب Chrome الوصول إلى الموقع الإلكتروني المخصّص للأجهزة الجوالة إذا كان حجم الشاشة صغيرًا</translation>
+<translation id="1174759280027683968">‏الانتقال إلى Chrome</translation>
 <translation id="1175241315203286684">‏يمكن للمشرف إجراء تغييرات على ملفك الشخصي والمتصفّح عن بُعد، وتحليل المعلومات عن المتصفّح من خلال إعداد التقارير وتنفيذ المهام الضرورية الأخرى. وقد تتم أيضًا إدارة النشاط على هذا الجهاز خارج Chrome.</translation>
 <translation id="1177863135347784049">مخصص</translation>
 <translation id="1181037720776840403">إزالة</translation>
@@ -336,6 +337,7 @@
 <translation id="2332515770639153015">ميزة "الحماية المُحسَّنة للتصفّح الآمن" مفعَّلة</translation>
 <translation id="233375395665273385">الحذف وتسجيل الخروج</translation>
 <translation id="2334275697832662087">‏يوفّر لك Chrome وسائل أمان مستندة إلى الذكاء الاصطناعي لحمايتك من التهديدات على الإنترنت، ما يعزِّز ثقتك أثناء التصفُّح</translation>
+<translation id="2335758110242123814">فتح المجموعة</translation>
 <translation id="2341410551640223969">تعذَّر تثبيت <ph name="WEBAPK_NAME" />.</translation>
 <translation id="2349710944427398404">‏إجمالي البيانات المُستخدَمة من قِبل Chrome، بما في ذلك الحسابات والإشارات المرجعية والإعدادات المحفوظة</translation>
 <translation id="2354001756790975382">الإشارات المرجعية الأخرى</translation>
@@ -389,7 +391,6 @@
 <translation id="2532336938189706096">عرض الويب</translation>
 <translation id="2535807170289627159">جميع علامات التبويب</translation>
 <translation id="2536728043171574184">جارٍ عرض نسخة متاحة بلا إنترنت من هذه الصفحة</translation>
-<translation id="2537574774089209541">‏تم نقل بعض الأدوات لتسهيل وصولك إلى Gemini أثناء التصفّح</translation>
 <translation id="2539002604555291451">Sans Serif</translation>
 <translation id="2542094237868555728">‫"<ph name="TAB_TITLE" />"، علامة تبويب مثبَّتة ومكتومة الصوت تم اختيارها في "وضع التصفّح المتخفي"</translation>
 <translation id="2542548955756682219">علامة التبويب "<ph name="TAB_TITLE" />"</translation>
@@ -609,6 +610,7 @@
 <translation id="3452832259067974318">‏لحماية خصوصيتك، لن يملء متصفِّح Chrome تلقائيًا كلمة المرور في هذا الحقل.</translation>
 <translation id="3474624961160222204">المتابعة بحساب "<ph name="NAME" />"</translation>
 <translation id="3478363558367712427">يمكنك استخدام محرّك بحث آخر.</translation>
+<translation id="3479552764303398839">ليس الآن</translation>
 <translation id="3482805106082349287">يمكنك البحث باستخدام لوحة المفاتيح أو الصوت أو الكاميرا أو في وضع التصفّح المتخفي</translation>
 <translation id="3487903178221457900">‏قد يكون بإمكان الخدمات الأخرى (بما في ذلك التطبيقات) الوصول إلى الملف الذي تم تصديره. وبعد تصدير كلمات المرور، يتم حذفها من Chrome.</translation>
 <translation id="3488199663160411179">الاسم</translation>
@@ -897,6 +899,7 @@
 <translation id="4578289292431526768">لنبدأ</translation>
 <translation id="4583164079174244168">{MINUTES,plural, =1{قبل دقيقة واحدة (#)}zero{قبل # دقيقة}two{قبل دقيقتين (#)}few{قبل # دقائق}many{قبل # دقيقة}other{قبل # دقيقة}}</translation>
 <translation id="4585751637295612750">يمكنك فتح علامة تبويب جديدة لإضافتها إلى سؤالك</translation>
+<translation id="4585793705637313973">تعديل الصفحة</translation>
 <translation id="4587589328781138893">المواقع</translation>
 <translation id="4594952190837476234">تم إنشاء هذه الصفحة المتوفّرة بلا اتصال بالإنترنت في <ph name="CREATION_TIME" />، وقد تختلف عن النسخة المتوفِّرة على الإنترنت.</translation>
 <translation id="4595237294768457124">افتح علامة تبويب جديدة</translation>
@@ -1035,6 +1038,7 @@
 <translation id="5096775069898886423">بالنسبة إلى المواقع الإلكترونية التي لا تتيح الاتصالات الآمنة، ستتلقّى تحذيرًا قبل الانتقال إليها</translation>
 <translation id="510275257476243843">يتبقى ساعة واحدة</translation>
 <translation id="5105442806410269908">‏إدارة البيانات الأخرى على Google</translation>
+<translation id="5111326646107464148">فتح المجموعة في نافذة جديدة</translation>
 <translation id="5114895953710637392">تم إغلاق ورقة بيانات فلتر التطبيقات.</translation>
 <translation id="5115811374190515607">إلى "<ph name="PRODUCT_NAME" />"</translation>
 <translation id="5116239826668864748">‏يمكنك استخدام Chrome في أي وقت تنقر فيه على روابط في الرسائل والمستندات والتطبيقات الأخرى</translation>
@@ -1537,6 +1541,7 @@
 <translation id="6996145122199359148">تنزيل هذه الصفحة</translation>
 <translation id="7007648447224463482">فتح الكل في نافذة جديدة</translation>
 <translation id="7013762323294215682">سيتم حفظ مفتاح المرور هذا في مدير كلمات المرور. سيتمكن أي شخص لديه إذن بالوصول من استخدام مفتاح المرور هذا.</translation>
+<translation id="7017219178341817193">إضافة صفحة جديدة</translation>
 <translation id="7022756207310403729">فتح في المتصفح</translation>
 <translation id="7029809446516969842">كلمات المرور</translation>
 <translation id="7037994709569287156">‏ضبط Chrome كمتصفِّح تلقائي</translation>
@@ -1604,6 +1609,7 @@
 <translation id="72415438529550637">تم إغلاق اقتراح كلمة المرور.</translation>
 <translation id="724510009481365878">تتعذَّر طباعة هذه الصفحة</translation>
 <translation id="7248671827512403053">تطبيق</translation>
+<translation id="7253205084599155458">يمكنك عرض عناصر التنقّل والأدوات في شريط أدوات سفلي للوصول إليها بسهولة</translation>
 <translation id="7253951228444156601">جارٍ التحقّق من كلمات المرور…</translation>
 <translation id="7265857422443387781">‏البحث بعلامة التبويب مع "عدسة Google" <ph name="BEGIN_NEW" />جديد<ph name="END_NEW" /></translation>
 <translation id="727288900855680735">هل المطلوب إرسال <ph name="ONE_TIME_CODE" /> إلى <ph name="ORIGIN" />؟</translation>
@@ -1616,7 +1622,6 @@
 <translation id="7291910923717764901">تم إضافة أوصاف الصور لهذه الصفحة.</translation>
 <translation id="7293429513719260019">اختيار لغة</translation>
 <translation id="7298319215489933099">‫"<ph name="TAB_TITLE" />"، علامة تبويب مثبَّتة تم اختيارها وتشارك محتواها</translation>
-<translation id="7304003340539141201">‏يمكنك طلب المساعدة من Gemini في مهامك وعلامات التبويب</translation>
 <translation id="7311244614769792472">لم يتم العثور على نتائج.</translation>
 <translation id="7314734791127433392">يتعذّر التحقّق من كلمات المرور</translation>
 <translation id="7324354302972299151">‏إرسال طلب Do Not Track
@@ -1753,6 +1758,7 @@
 <translation id="7821130663268546430">يمكنك الوصول إلى جميع علامات التبويب المفتوحة من خلال أداة التبديل بين علامات التبويب.</translation>
 <translation id="7822705602465980873">‏عندما تكون مسجّلاً للدخول، يتم ربط هذه البيانات بحسابك على Google لحمايتك على خدمات Google، مثلاً لزيادة مستوى الحماية في Gmail بعد وقوع محاولة اختراق أمني.</translation>
 <translation id="7824665136384946951">أوقفت مؤسستك ميزة "التصفُّح الآمن".</translation>
+<translation id="782590969421016895">استخدام الصفحات الحالية</translation>
 <translation id="7825973332242257878">مجموعات علامات التبويب</translation>
 <translation id="7845155831233417403">الحد الأقصى لعدد النوافذ التي يمكنك فتحها هو <ph name="MAX_INSTANCE_COUNT" />. يُرجى إغلاق إحدى النوافذ للمتابعة.</translation>
 <translation id="7846161022626028328">حدث خطأ. يُرجى إعادة المحاولة.</translation>
@@ -1986,7 +1992,6 @@
 <translation id="8694622119922491927">‏يحتاج التطبيق <ph name="APP_NAME" /> إلى منح هذا الموقع الإلكتروني إذنًا للوصول إلى أجهزة الواجهة البشرية (HID). ويمكنك تغيير هذا الإعداد لاحقًا من خلال "الإعدادات" &gt; "التطبيقات" &gt; "أذونات خاصة للتطبيقات".</translation>
 <translation id="8696297579102085705">الإرسال إلى جهازك</translation>
 <translation id="8699120352855309748">عدم اقتراح ترجمة لهذه اللغات</translation>
-<translation id="8700565880437506364">‏إليك "Gemini في Chrome"</translation>
 <translation id="8712637175834984815">حسنًا</translation>
 <translation id="8715286883001906001">‏يجب تعزيز أمان كلمات مرور في حسابك على Google</translation>
 <translation id="8715300232952757586">سيتم إغلاق "<ph name="TAB_TITLE" />"</translation>

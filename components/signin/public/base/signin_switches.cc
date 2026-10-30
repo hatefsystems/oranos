@@ -66,6 +66,12 @@ BASE_FEATURE(kAccountRetrievalWaitsForRestoration,
 // add account flow.
 BASE_FEATURE(kAddSessionFallbackToPrimaryAccount,
              base::FEATURE_ENABLED_BY_DEFAULT);
+
+// When enabled, an ADDSESSION Mirror header for a secondary account on the
+// device starts the reauth flow for the primary account if the primary account
+// is in a persistent auth error and the secondary account is not.
+BASE_FEATURE(kAddSessionReauthPrimaryAccountFirst,
+             base::FEATURE_ENABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_ANDROID)
 
 BASE_FEATURE(kAiSubscriptionAvatarRingFollowup,
@@ -281,6 +287,10 @@ BASE_FEATURE(kDiceHeaderVersion2, base::FEATURE_ENABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
+BASE_FEATURE(kDiceInterceptSanitizeGaiaUrl, base::FEATURE_ENABLED_BY_DEFAULT);
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
+
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
 BASE_FEATURE(kDiceLinkedAccounts, base::FEATURE_DISABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
@@ -430,7 +440,7 @@ BASE_FEATURE_PARAM(
 BASE_FEATURE(kEnableAccountPreviewPreferredAccountFollowup,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-#if BUILDFLAG(IS_IOS)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 BASE_FEATURE(kEnableAccountPreviewPreferredAccountFRE,
              base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE_PARAM(base::TimeDelta,
@@ -679,7 +689,12 @@ BASE_FEATURE(kExtensionWebAuthFlowInitiatorOrigin,
 #endif
 
 BASE_FEATURE(kFetchAccountCapabilitiesOnRestart,
-             base::FEATURE_DISABLED_BY_DEFAULT);
+#if BUILDFLAG(IS_IOS)
+             base::FEATURE_DISABLED_BY_DEFAULT
+#else
+             base::FEATURE_ENABLED_BY_DEFAULT
+#endif
+);
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 #if BUILDFLAG(IS_WIN)
@@ -964,6 +979,11 @@ BASE_FEATURE(kSupportErrorsInProfilePicker, base::FEATURE_ENABLED_BY_DEFAULT);
 #if BUILDFLAG(IS_ANDROID)
 BASE_FEATURE(kSupportForcedSigninPolicy, base::FEATURE_ENABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_ANDROID)
+
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+BASE_FEATURE(kSupportSigninInterceptionInPopups,
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 #if BUILDFLAG(IS_ANDROID)
 // Killswitch for the support of AddSession in web sign-in flow.

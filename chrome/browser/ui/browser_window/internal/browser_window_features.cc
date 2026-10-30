@@ -103,6 +103,7 @@
 #include "chrome/browser/ui/tabs/tab_drag_api/desktop_tab_drag_impl/tab_drag_window_adapter_impl.h"
 #include "chrome/browser/ui/tabs/tab_drag_api/tab_drag_service_feature.h"
 #include "chrome/browser/ui/tabs/tab_group_deletion_dialog_controller.h"
+#include "chrome/browser/ui/tabs/tab_group_focus_iph_controller.h"
 #include "chrome/browser/ui/tabs/tab_list_bridge.h"
 #include "chrome/browser/ui/tabs/tab_strip_api/controllers/tab_strip_ui_controller_impl.h"
 #include "chrome/browser/ui/tabs/tab_strip_api/controllers/tab_strip_ui_controller_injector_impl.h"
@@ -116,7 +117,6 @@
 #include "chrome/browser/ui/toasts/toast_service.h"
 #include "chrome/browser/ui/toolbar/avatar_toolbar_iph_controller.h"
 #include "chrome/browser/ui/toolbar/chrome_labs/chrome_labs_utils.h"
-#include "chrome/browser/ui/ui_controller_factory.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/unload_controller.h"
 #include "chrome/browser/ui/views/animations/organizer_panel_animations.h"
@@ -947,13 +947,8 @@ void BrowserWindowFeatures::InitPostWindowConstruction(
   upgrade_notification_controller_ =
       std::make_unique<UpgradeNotificationController>(browser);
 
-  ui_controller_factory_ =
-      GetUserDataFactory().CreateInstance<UIControllerFactory>(*browser,
-                                                               browser);
-
   if (browser_view) {
     user_education_->Init(browser_view);
-    avatar_toolbar_iph_controller_->MaybeShowSignInBenefitsIPH();
   }
 
 #if BUILDFLAG(IS_WIN)
@@ -1121,6 +1116,12 @@ void BrowserWindowFeatures::InitPostWindowConstruction(
               .CreateInstance<send_tab_to_self::SendTabToSelfIphController>(
                   *browser, browser);
     }
+
+    if (base::FeatureList::IsEnabled(features::kTabGroupsFocusing)) {
+      tab_group_focus_iph_controller_ =
+          GetUserDataFactory().CreateInstance<TabGroupFocusIphController>(
+              *browser, browser);
+    }
   }
 
   // Initialize post-window dependent embedder features last.
@@ -1151,6 +1152,7 @@ void BrowserWindowFeatures::TearDownPreBrowserWindowDestruction() {
   // InitPostWindowConstruction (reverse).
 
   // TYPE_NORMAL members.
+  tab_group_focus_iph_controller_.reset();
   send_tab_to_self_iph_controller_.reset();
   vertical_tab_iph_controller_.reset();
   ttc_entrypoint_controller_.reset();
@@ -1184,7 +1186,6 @@ void BrowserWindowFeatures::TearDownPreBrowserWindowDestruction() {
   if (user_education_) {
     user_education_->TearDown();
   }
-  ui_controller_factory_.reset();
   upgrade_notification_controller_.reset();
   toast_service_.reset();
   synced_window_delegate_.reset();

@@ -57,6 +57,7 @@
 #include "testing/gmock/include/gmock/gmock-actions.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/public_buildflags.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/gfx/color_palette.h"
@@ -759,6 +760,8 @@ TEST_F(ContentSettingImageModelTest, NotificationsIconSystemPermission) {
   EXPECT_FALSE(content_setting_image_model->should_auto_open_bubble());
   EXPECT_TRUE(content_setting_image_model->should_keep_label_expanded());
   EXPECT_TRUE(content_setting_image_model->blocked_on_system_level());
+  // The quiet notification promo is not shown for system level blocks.
+  EXPECT_FALSE(content_setting_image_model->TakePromoParams(web_contents()));
 
   // Granting system permission should remove the indicator.
   AppShimRegistry::Get()->SaveNotificationPermissionStatusForApp(
@@ -814,6 +817,8 @@ TEST_F(ContentSettingImageModelTest,
   EXPECT_TRUE(content_setting_image_model->should_auto_open_bubble());
   EXPECT_TRUE(content_setting_image_model->should_keep_label_expanded());
   EXPECT_TRUE(content_setting_image_model->blocked_on_system_level());
+  // The quiet notification promo is not shown for system level blocks.
+  EXPECT_FALSE(content_setting_image_model->TakePromoParams(web_contents()));
   EXPECT_EQ(1, user_action_tester.GetActionCount(
                    "ContentSettings.Notifications.SystemPermissionIconShown"));
 
@@ -916,7 +921,7 @@ TEST_F(ContentSettingImageModelTest, StorageAccess) {
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
 
-#if BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(ENABLE_SMART_CARD)
 
 TEST_F(ContentSettingImageModelTest, SmartCard) {
   auto content_setting_image_model =
@@ -947,7 +952,7 @@ TEST_F(ContentSettingImageModelTest, SmartCard) {
   content_setting_image_model->Update(web_contents());
   EXPECT_FALSE(content_setting_image_model->is_visible());
 }
-#endif  // !BUILDFLAG(IS_CHROMEOS)
+#endif  // BUILDFLAG(ENABLE_SMART_CARD)
 
 #if BUILDFLAG(IS_WIN)
 TEST_F(ContentSettingImageModelTest, ProtectedMediaIdentifier_Allowed) {

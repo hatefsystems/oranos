@@ -6,20 +6,17 @@
 
 #import "base/auto_reset.h"
 #import "base/check_is_test.h"
-#import "base/containers/to_vector.h"
 #import "base/functional/bind.h"
 #import "base/functional/callback_helpers.h"
 #import "base/location.h"
 #import "base/logging.h"
 #import "base/metrics/histogram_functions.h"
 #import "base/metrics/histogram_macros.h"
-#import "base/strings/sys_string_conversions.h"
 #import "base/task/single_thread_task_runner.h"
+#import "components/device_signals/core/browser/pref_names.h"
 #import "components/pref_registry/pref_registry_syncable.h"
 #import "components/prefs/pref_service.h"
-#import "components/signin/ios/browser/features.h"
 #import "components/signin/public/base/consent_level.h"
-#import "components/signin/public/base/gaia_id_hash.h"
 #import "components/signin/public/base/signin_pref_names.h"
 #import "components/signin/public/base/signin_switches.h"
 #import "components/signin/public/identity_manager/account_info.h"
@@ -27,10 +24,8 @@
 #import "components/signin/public/identity_manager/primary_account_mutator.h"
 #import "components/signin/public/identity_manager/signin_constants.h"
 #import "components/signin/public/identity_manager/tribool.h"
-#import "components/sync/base/account_pref_utils.h"
 #import "components/sync/service/sync_service.h"
 #import "components/sync/service/sync_user_settings.h"
-#import "google_apis/gaia/gaia_auth_util.h"
 #import "google_apis/gaia/gaia_id.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_utils.h"
 #import "ios/chrome/browser/bookmarks/model/bookmarks_utils.h"
@@ -38,13 +33,10 @@
 #import "ios/chrome/browser/policy/model/policy_util.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
-#import "ios/chrome/browser/shared/model/profile/features.h"
 #import "ios/chrome/browser/shared/model/profile/profile_attributes_ios.h"
 #import "ios/chrome/browser/shared/model/profile/profile_attributes_storage_ios.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios_util.h"
 #import "ios/chrome/browser/shared/model/profile/profile_manager_ios.h"
-#import "ios/chrome/browser/shared/public/features/features.h"
-#import "ios/chrome/browser/shared/public/features/system_flags.h"
 #import "ios/chrome/browser/signin/model/authentication_service_observer.h"
 #import "ios/chrome/browser/signin/model/refresh_access_token_error.h"
 #import "ios/chrome/browser/signin/model/signin_util.h"
@@ -224,6 +216,8 @@ void AuthenticationService::Initialize() {
       PerformProfileInitializationIfNecessary();
   base::UmaHistogramEnumeration(
       "Signin.IOSAuthenticationServiceInitializationOutcome", outcome);
+
+  SyncDeviceSignalsConsentWithManagementState();
 }
 
 void AuthenticationService::Shutdown() {
@@ -579,6 +573,7 @@ void AuthenticationService::OnPrimaryAccountChanged(
   for (auto& observer : observer_list_) {
     observer.OnPrimaryIdentityChanged();
   }
+  SyncDeviceSignalsConsentWithManagementState();
 }
 
 void AuthenticationService::OnIdentitiesInProfileChanged() {
@@ -807,4 +802,47 @@ bool AuthenticationService::IsPersonalProfile() {
 NSArray<id<SystemIdentity>>* AuthenticationService::ActiveIdentities() {
   return GetPrimaryIdentity() ? account_manager_service_->GetAllIdentities()
                               : @[];
+}
+
+void AuthenticationService::OnExtendedAccountInfoUpdated(
+    const AccountInfo& info) {
+  if (info.GetAccountId() ==
+      identity_manager_->GetPrimaryAccountId(signin::ConsentLevel::kSignin)) {
+    SyncDeviceSignalsConsentWithManagementState();
+  }
+}
+
+void AuthenticationService::SyncDeviceSignalsConsentWithManagementState() {
+  ProfileManagerIOS* profile_manager =
+      GetApplicationContext()->GetProfileManager();
+
+  if (!profile_manager) {
+    // profile_manager can be null in unit_tests.
+    CHECK_IS_TEST();
+    return;
+  }
+
+  if (!IsPersonalProfile() || HasPrimaryIdentityManaged()) {
+    pref_service_->SetBoolean(
+        device_signals::prefs::kDeviceSignalsConsentReceived, true);
+    pref_service_->SetBoolean(
+        device_signals::prefs::kDeviceSignalsPermanentConsentReceived, true);
+    return;
+  }
+
+  if (HasPrimaryIdentity()) {
+    AccountInfo info = identity_manager_->FindExtendedAccountInfo(
+        identity_manager_->GetPrimaryAccountInfo(
+            signin::ConsentLevel::kSignin));
+    if (info.IsManaged() == signin::Tribool::kUnknown) {
+      // Early exit if the extended account info has not yet been received to
+      // avoid flipping the consent bit unnecessarily.
+      return;
+    }
+  }
+
+  pref_service_->ClearPref(
+      device_signals::prefs::kDeviceSignalsConsentReceived);
+  pref_service_->ClearPref(
+      device_signals::prefs::kDeviceSignalsPermanentConsentReceived);
 }

@@ -24,6 +24,7 @@
 #include "chrome/browser/glic/host/glic.mojom.h"
 #include "chrome/browser/glic/host/glic_web_client_access.h"
 #include "chrome/browser/glic/host/glic_web_client_handler.h"
+#include "chrome/browser/glic/host/glic_webui_contents_manager.h"
 #include "chrome/browser/glic/host/guest_util.h"
 #include "chrome/browser/glic/host/host.h"
 #include "chrome/browser/glic/public/features.h"
@@ -40,8 +41,8 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/buildflags/buildflags.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/page_transition_types.h"
-#include "ui/base/window_open_disposition.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/size.h"
@@ -89,6 +90,10 @@ ClientLoadErrorReason ToClientLoadErrorReason(
       return ClientLoadErrorReason::kClientLoadTimeout;
     case mojom::ClientLoadErrorReason::kWarmedTimeout:
       return ClientLoadErrorReason::kWarmedTimeout;
+    case mojom::ClientLoadErrorReason::kGuestOriginBlocked:
+      return ClientLoadErrorReason::kGuestOriginBlocked;
+    case mojom::ClientLoadErrorReason::kGuestApiNotAllowed:
+      return ClientLoadErrorReason::kGuestApiNotAllowed;
   }
 }
 
@@ -111,6 +116,10 @@ GlicPageHandler::GlicPageHandler(
   MarkProcessAsGlic(webui_contents->GetPrimaryMainFrame()->GetProcess());
   host_observation_.Observe(host_);
   host_->WebUIPageHandlerAdded(this);
+  if (auto* contents_manager = static_cast<GlicWebUIContentsManager*>(
+          GetContentsManagerForWebContents(webui_contents_))) {
+    contents_manager->WebUIPageHandlerAdded(this);
+  }
   subscriptions_.push_back(
       host_->instance().GetPanelState().AddObserverAndNotify(
           base::BindRepeating(&GlicPageHandler::PanelStateChanged,
@@ -124,6 +133,10 @@ GlicPageHandler::GlicPageHandler(
 
 GlicPageHandler::~GlicPageHandler() {
   VLOG(1) << "Glic [PageHandler] Destructor";
+  if (auto* contents_manager = static_cast<GlicWebUIContentsManager*>(
+          GetContentsManagerForWebContents(webui_contents_))) {
+    contents_manager->WebUIPageHandlerRemoved(this);
+  }
   host_->WebUIPageHandlerRemoved(this);
 }
 
@@ -212,6 +225,10 @@ void GlicPageHandler::NotifyWindowIntentToShow() {
   page_->IntentToShow();
 }
 
+void GlicPageHandler::WaitForLoad(mojom::Page::WaitForLoadCallback callback) {
+  page_->WaitForLoad(std::move(callback));
+}
+
 void GlicPageHandler::Zoom(mojom::ZoomAction zoom_action, ZoomSource source) {
   auto* pref_service =
       Profile::FromBrowserContext(browser_context_)->GetPrefs();
@@ -286,7 +303,7 @@ void GlicPageHandler::OpenDisabledByAdminLinkAndClosePanel() {
   std::unique_ptr<NavigateParams> params = std::make_unique<NavigateParams>(
       Profile::FromBrowserContext(browser_context_), disabled_by_admin_link_url,
       ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
-  params->disposition = WindowOpenDisposition::kNewForegroundTab;
+  params->disposition = ui::mojom::WindowOpenDisposition::kNewForegroundTab;
   glic::NavigateAsync(std::move(params), base::DoNothing());
   host().ClosePanel();
   base::RecordAction(
@@ -311,7 +328,7 @@ void GlicPageHandler::OpenLinkInPopup(const GURL& url,
   std::unique_ptr<NavigateParams> params = std::make_unique<NavigateParams>(
       Profile::FromBrowserContext(browser_context_), url,
       ui::PAGE_TRANSITION_LINK);
-  params->disposition = WindowOpenDisposition::kNewPopup;
+  params->disposition = ui::mojom::WindowOpenDisposition::kNewPopup;
   params->opened_by_another_window = true;
   params->window_features.bounds = gfx::Rect(x, y, popup_width, popup_height);
   glic::NavigateAsync(std::move(params), base::DoNothing());
@@ -324,7 +341,7 @@ void GlicPageHandler::OpenLinkInNewTab(const GURL& url) {
   std::unique_ptr<NavigateParams> params = std::make_unique<NavigateParams>(
       Profile::FromBrowserContext(browser_context_), url,
       ui::PAGE_TRANSITION_LINK);
-  params->disposition = WindowOpenDisposition::kNewForegroundTab;
+  params->disposition = ui::mojom::WindowOpenDisposition::kNewForegroundTab;
   glic::NavigateAsync(std::move(params), base::DoNothing());
 }
 
@@ -352,7 +369,7 @@ void GlicPageHandler::OpenHelpCenterTopicAndClosePanel(
   auto params = std::make_unique<NavigateParams>(
       Profile::FromBrowserContext(browser_context_), help_url,
       ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
-  params->disposition = WindowOpenDisposition::kNewForegroundTab;
+  params->disposition = ui::mojom::WindowOpenDisposition::kNewForegroundTab;
   glic::Navigate(std::move(params));
   host().ClosePanel();
 }

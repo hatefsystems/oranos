@@ -4,16 +4,21 @@
 
 #include "chrome/browser/ui/waap/initial_webui_metrics_dispatcher.h"
 
+#include <memory>
+
 #include "base/test/metrics/histogram_tester.h"
 #include "base/time/time.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_window/test/mock_browser_window_interface.h"
 #include "chrome/browser/ui/waap/initial_webui_window_metrics_manager.h"
 #include "chrome/browser/ui/waap/waap_ui_metrics_service.h"
 #include "chrome/browser/ui/waap/waap_utils.h"
+#include "chrome/browser/ui/webui/top_chrome/top_chrome_webui_profile.h"
 #include "chrome/browser/ui/webui/webui_embedding_context.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/startup_metric_utils/browser/startup_metric_utils.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/test/web_contents_tester.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/test/mock_base_window.h"
 #include "ui/base/unowned_user_data/unowned_user_data_host.h"
@@ -116,6 +121,42 @@ TEST_F(InitialWebUIMetricsDispatcherTest, StartupOnCommitDeferredUntilBound) {
       "InitialWebUI.Startup.ReloadButton.RendererProcessCreated", 1);
   histograms.ExpectTotalCount(
       "InitialWebUI.Startup.ReloadButton.RendererProcessLaunched", 1);
+}
+
+// A WebContents in the shared TopChromeWebUIProfile, which has no
+// `WaapUIMetricsService`, records startup metrics with the service of the
+// profile of its window.
+// TODO(crbug.com/548363252): Add a browser test with
+// `features::kTopChromeWebUISharedRenderer` that checks these metrics end to
+// end, once the WebUI toolbar is created in TopChromeWebUIProfile.
+TEST_F(InitialWebUIMetricsDispatcherTest,
+       StartupMetricsUseWindowProfileForTopChromeWebUIProfile) {
+  webui::ScopedTopChromeWebUIProfileForTesting scoped_top_chrome_webui_profile;
+  Profile* top_chrome_webui_profile = webui::GetTopChromeWebUIProfile();
+  ASSERT_FALSE(WaapUIMetricsService::Get(top_chrome_webui_profile));
+  std::unique_ptr<content::WebContents> contents =
+      content::WebContentsTester::CreateTestWebContents(
+          top_chrome_webui_profile, /*instance=*/nullptr);
+
+  base::HistogramTester histograms;
+  InitialWebUIWindowMetricsManager manager(&browser_window_);
+  webui::SetBrowserWindowInterface(contents.get(), &browser_window_);
+
+  auto* dispatcher =
+      InitialWebUIMetricsDispatcher::GetOrCreateForWebContents(contents.get());
+  ASSERT_TRUE(dispatcher);
+
+  base::TimeTicks start_time = base::TimeTicks::Now();
+  dispatcher->OnCommit(start_time, start_time + base::Milliseconds(10));
+  dispatcher->OnFirstPaint(start_time + kTestLatency);
+  dispatcher->OnFirstContentfulPaint(start_time + kTestLatency);
+
+  histograms.ExpectTotalCount(
+      "InitialWebUI.Startup.ReloadButton.RendererProcessCreated", 1);
+  histograms.ExpectTotalCount("InitialWebUI.Startup.ReloadButton.FirstPaint",
+                              1);
+  histograms.ExpectTotalCount(
+      "InitialWebUI.Startup.ReloadButton.FirstContentfulPaint", 1);
 }
 #endif  // !BUILDFLAG(IS_CHROMEOS)
 
@@ -314,15 +355,76 @@ TEST_F(InitialWebUIMetricsDispatcherTest,
 }
 #endif  // !BUILDFLAG(IS_CHROMEOS)
 
-TEST_F(InitialWebUIMetricsDispatcherTest, NativeDispatcherCreation) {
+#if !BUILDFLAG(IS_CHROMEOS)
+TEST_F(InitialWebUIMetricsDispatcherTest, NativeDispatcherLogsStartupMetrics) {
+  base::HistogramTester histograms;
   InitialWebUIWindowMetricsManager manager(&browser_window_);
-  InitialWebUINativeMetricsDispatcher dispatcher(profile(), &manager);
+  auto* dispatcher = manager.GetMetricsDispatcher();
+  ASSERT_TRUE(dispatcher);
+  dispatcher->OnCreated();
+  histograms.ExpectBucketCount("InitialWebUI.View.Creation", 1, 1);
 
-  base::TimeTicks now = base::TimeTicks::Now();
-  dispatcher.OnCreated();
-  dispatcher.OnCommit(now, now);
-  dispatcher.OnFirstPaint(now);
-  dispatcher.OnFirstContentfulPaint(now);
+  base::TimeTicks paint_time = base::TimeTicks::Now();
+  dispatcher->OnFirstPaint(paint_time);
+  dispatcher->OnFirstContentfulPaint(paint_time);
+
+  histograms.ExpectTotalCount("InitialWebUI.Startup.ReloadButton.FirstPaint",
+                              1);
+  histograms.ExpectTotalCount(
+      "InitialWebUI.Startup.ReloadButton.FirstContentfulPaint", 1);
+}
+#endif  // !BUILDFLAG(IS_CHROMEOS)
+
+TEST_F(InitialWebUIMetricsDispatcherTest,
+       NativeDispatcherLogsNewWindowMetrics) {
+  base::HistogramTester histograms;
+  InitialWebUIWindowMetricsManager manager(&browser_window_);
+  // The native dispatcher is always bound, so the per-window skip applies.
+  manager.SkipStartupForTesting();
+  base::TimeTicks start_time = base::TimeTicks::Now();
+  manager.SetWindowCreationInfo(waap::NewWindowCreationSource::kNewEmptyWindow,
+                                start_time);
+
+  auto* dispatcher = manager.GetMetricsDispatcher();
+  ASSERT_TRUE(dispatcher);
+  base::TimeTicks paint_time = start_time + kTestLatency;
+  dispatcher->OnFirstPaint(paint_time);
+  dispatcher->OnFirstContentfulPaint(paint_time);
+
+  histograms.ExpectUniqueTimeSample(
+      "InitialWebUI.NewWindow.AllSources.WithoutExistingWindow."
+      "ReloadButton.FirstPaint.FromConstructor2",
+      kTestLatency, 1);
+  histograms.ExpectUniqueTimeSample(
+      "InitialWebUI.NewWindow.AllSources.WithoutExistingWindow."
+      "ReloadButton.FirstContentfulPaint.FromConstructor2",
+      kTestLatency, 1);
+}
+
+// Creation of a WebUI surface is recorded once its WebContents is attached to
+// a window that has an InitialWebUIWindowMetricsManager.
+TEST_F(InitialWebUIMetricsDispatcherTest,
+       WebContentsDispatcherOnCreatedRecordsWithManager) {
+  base::HistogramTester histograms;
+  InitialWebUIWindowMetricsManager manager(&browser_window_);
+  webui::SetBrowserWindowInterface(web_contents(), &browser_window_);
+
+  InitialWebUIMetricsDispatcher::GetOrCreateForWebContents(web_contents())
+      ->OnCreated();
+
+  histograms.ExpectUniqueSample("InitialWebUI.View.Creation", 1, 1);
+}
+
+// Creation is not recorded for a WebContents whose window does not track
+// InitialWebUI metrics (e.g. not attached, or a popup without a manager).
+TEST_F(InitialWebUIMetricsDispatcherTest,
+       WebContentsDispatcherOnCreatedSkippedWithoutManager) {
+  base::HistogramTester histograms;
+
+  InitialWebUIMetricsDispatcher::GetOrCreateForWebContents(web_contents())
+      ->OnCreated();
+
+  histograms.ExpectTotalCount("InitialWebUI.View.Creation", 0);
 }
 
 }  // namespace

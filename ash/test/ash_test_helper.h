@@ -10,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "ash/public/cpp/test/test_system_tray_client.h"
 #include "ash/quick_pair/common/quick_pair_browser_delegate.h"
@@ -17,6 +18,7 @@
 #include "ash/session/test_pref_service_provider.h"
 #include "ash/session/test_session_controller_client.h"
 #include "ash/shell_delegate.h"
+#include "ash/test/login_info.h"
 #include "base/check_deref.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
@@ -25,6 +27,7 @@
 #include "chromeos/ash/components/system/fake_statistics_provider.h"
 #include "chromeos/ash/services/bluetooth_config/scoped_bluetooth_config_test_helper.h"
 #include "components/session_manager/core/session_manager.h"
+#include "components/session_manager/test/user_session_test_environment.h"
 #include "ui/aura/test/aura_test_helper.h"
 
 class BrowserWithTestWindowTest;
@@ -76,10 +79,6 @@ namespace input_method {
 class MockInputMethodManagerImpl;
 }  // namespace input_method
 
-namespace test {
-class UserSessionTestEnvironment;
-}  // namespace test
-
 // A helper class that does common initialization required for Ash. Creates a
 // root window and an ash::Shell instance with a test delegate.
 class AshTestHelper : public aura::test::AuraTestHelper {
@@ -90,8 +89,16 @@ class AshTestHelper : public aura::test::AuraTestHelper {
     InitParams& operator=(InitParams&&) = default;
     ~InitParams();
 
-    // True if the user should log in.
-    bool start_session = true;
+    // Users to be created and logged in during `SetUp()`.
+    // Users are logged in sequentially in the order they appear in `users`
+    // (i.e., `users.front()` becomes the primary user), and `users.back()`
+    // becomes the active session at the end of `SetUp()`.
+    // Initialized with a single empty `LoginInfo{}` by default. Clear this if
+    // no user session should be started during `SetUp()`. When adding multiple
+    // users, explicitly specifying a distinct `LoginInfo::account_id` for each
+    // user (after clearing the default entry) is required, as multiple users
+    // cannot share the same `AccountId`.
+    std::vector<LoginInfo> users;
 
     // True if the signin pref services should be created.
     bool create_signin_pref_service = true;
@@ -99,6 +106,14 @@ class AshTestHelper : public aura::test::AuraTestHelper {
     // If this is not set, a TestShellDelegate will be used automatically.
     std::unique_ptr<ShellDelegate> delegate;
     raw_ptr<PrefService> local_state = nullptr;
+
+    // Passed to `UserSessionTestEnvironment` created during `SetUp()`, e.g. to
+    // integrate with ProfileManager. Must not be set if
+    // `UserSessionTestEnvironment` is not created by `AshTestHelper`, i.e.,
+    // when UserManager or SessionManager is already initialized before
+    // `SetUp()`.
+    std::unique_ptr<ash::test::UserSessionTestEnvironment::Delegate>
+        user_session_test_environment_delegate;
 
     // True if a fake global `CrasAudioHandler` should be created.
     bool create_global_cras_audio_handler = true;

@@ -17,6 +17,7 @@
 #include "ui/base/unowned_user_data/scoped_unowned_user_data.h"
 
 class BrowserWindowInterface;
+class GURL;
 
 namespace contextual_search {
 class ContextualSearchSessionHandle;
@@ -28,6 +29,7 @@ class WebContents;
 
 namespace contextual_tasks {
 class ContextualTask;
+class ContextualTasksPermissionController;
 
 class ContextualTasksPanelController {
  public:
@@ -92,6 +94,11 @@ class ContextualTasksPanelController {
   // Open the panel in zero state, or reset to zero state if already open.
   virtual void OpenInZeroState() = 0;
 
+  // Opens `url` in a new foreground tab on behalf of the panel's own UI. The
+  // new tab doesn't inherit the active tab's task, so the panel stays on the
+  // current tab.
+  virtual void OpenUrlInNewTab(const GURL& url) = 0;
+
   // Moves only the active tab to a new task with a zero-state panel if other
   // tabs share its task. Returns whether the active tab was moved.
   virtual bool MoveActiveTabToNewThreadIfShared() = 0;
@@ -102,11 +109,11 @@ class ContextualTasksPanelController {
       tabs::TabInterface* tab) const = 0;
 
   // Shares `tab_handles` when starting a new thread from the tab context menu.
-  // If the side panel is already open on the active tab, attaches `tab_handles`
-  // to the current task; otherwise, opens a fresh zero-state thread and
-  // attaches both the active tab (if valid for context sharing) and
+  // If the side panel is already open in zero state on the active tab, attaches
+  // `tab_handles` to the current task; otherwise, opens a fresh zero-state
+  // thread and attaches both the active tab (if valid for context sharing) and
   // `tab_handles` as context.
-  virtual void ShareTabsWithActiveOrNewThread(
+  virtual void ShareTabsWithNewThread(
       const std::vector<tabs::TabHandle>& tab_handles) = 0;
 
   // Switches the side panel to the existing cached thread `task_id`, opens the
@@ -122,6 +129,10 @@ class ContextualTasksPanelController {
   // recently active threads.
   virtual std::vector<RecentThreadInfo> GetRecentThreads() const = 0;
 
+  // Removes `tab_handles` from every contextual task thread in this browser
+  // window and clears their tab underlines.
+  virtual void UnshareTabs(const std::vector<tabs::TabHandle>& tab_handles) = 0;
+
   // State checks.
   // Check if the panel is currently opening for ContextualTask as another
   // feature might also show panel.
@@ -132,8 +143,16 @@ class ContextualTasksPanelController {
   // or a Search Results Page / Lens SRP loaded in the side panel).
   virtual bool IsShowingResults() const = 0;
 
+  // Returns true if the active tab's side panel has results loaded or is
+  // currently trying to load results, whether the side panel is currently open
+  // or was closed and can be reopened to resume those results.
+  virtual bool HasResults() const = 0;
+
   // Returns the entry source of the currently active panel.
   virtual EntrySource GetActiveEntrySource() const = 0;
+
+  // Returns true if the onboarding or Ask Google tooltip bubble is visible.
+  virtual bool IsOnboardingTooltipVisible() const;
 
   // Context management.
   // Returns the tab handle of the auto suggested tab if the auto suggested tab
@@ -145,6 +164,9 @@ class ContextualTasksPanelController {
                              base::Uuid task_id) = 0;
   // Called when there is an AI interaction in the panel.
   virtual void OnAiInteraction() = 0;
+  // Called when a user clicks a link inside the panel. Also counts as an AI
+  // interaction.
+  virtual void OnLinkClicked() = 0;
 
   // Sets a task to be used once the side panel opens. Used to open a specific
   // task without associating a web contents (which would inherently get added
@@ -199,6 +221,7 @@ class ContextualTasksPanelController {
   // Shows the native PageInfo bubble.
   virtual void ShowPageInfoBubble(bool is_pointer_interaction) = 0;
   virtual void OnLogoPointerDown() = 0;
+  virtual ContextualTasksPermissionController* permission_controller() = 0;
 
   // Records the time to handshake complete metric for the given WebContents.
   virtual void RecordTimeToHandshakeComplete(

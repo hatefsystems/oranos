@@ -51,11 +51,8 @@ DEFINE_VARIATION_PARAM(kIPHAndroidBottomBarAddressBar,
                        "IPH_AndroidBottomBarAddressBar");
 DEFINE_VARIATION_PARAM(kIPHAndroidBottomBarEducation,
                        "IPH_AndroidBottomBarEducation");
-DEFINE_VARIATION_PARAM(kIPHAndroidBottomBarGlic, "IPH_AndroidBottomBarGlic");
-DEFINE_VARIATION_PARAM(kIPHAndroidBottomBarNewTab,
-                       "IPH_AndroidBottomBarNewTab");
-DEFINE_VARIATION_PARAM(kIPHAndroidBottomBarPromoDialog,
-                       "IPH_AndroidBottomBarPromoDialog");
+DEFINE_VARIATION_PARAM(kIPHAndroidBottomBarEducationTooltips,
+                       "IPH_AndroidBottomBarEducationTooltips");
 DEFINE_VARIATION_PARAM(kIPHAndroidTabDeclutter, "IPH_AndroidTabDeclutter");
 DEFINE_VARIATION_PARAM(kIPHAndroidVerticalTabsNewLabel,
                        "IPH_AndroidVerticalTabsNewLabel");
@@ -458,6 +455,8 @@ DEFINE_VARIATION_PARAM(kIPHGlicTrustFirstOnboardingShortcutSnoozePromoFeature,
                        "IPH_GlicTrustFirstOnboardingShortcutSnoozePromo");
 DEFINE_VARIATION_PARAM(kIPHGlicTryItFeature, "IPH_GlicTryIt");
 DEFINE_VARIATION_PARAM(kIPHHistorySearchFeature, "IPH_HistorySearch");
+DEFINE_VARIATION_PARAM(kIPHIndigoContextMenuToastFeature,
+                       "IPH_IndigoContextMenuToast");
 #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
 DEFINE_VARIATION_PARAM(kIPHExtensionsMenuFeature, "IPH_ExtensionsMenu");
 DEFINE_VARIATION_PARAM(kIPHExtensionsRequestAccessButtonFeature,
@@ -640,7 +639,6 @@ DEFINE_VARIATION_PARAM(kIPHDesktopPWAsLinkCapturingLaunchAppInTab,
         // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-DEFINE_VARIATION_PARAM(kIPHSignInBenefitsFeature, "IPH_SignInBenefits");
 DEFINE_VARIATION_PARAM(kIPHSupervisedUserProfileSigninFeature,
                        "IPH_SupervisedUserProfileSignin");
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
@@ -706,9 +704,7 @@ inline constexpr flags_ui::FeatureEntry::FeatureVariation
         VARIATION_ENTRY(kIPHAimActivationHint),
         VARIATION_ENTRY(kIPHAndroidBottomBarAddressBar),
         VARIATION_ENTRY(kIPHAndroidBottomBarEducation),
-        VARIATION_ENTRY(kIPHAndroidBottomBarGlic),
-        VARIATION_ENTRY(kIPHAndroidBottomBarNewTab),
-        VARIATION_ENTRY(kIPHAndroidBottomBarPromoDialog),
+        VARIATION_ENTRY(kIPHAndroidBottomBarEducationTooltips),
         VARIATION_ENTRY(kIPHAndroidTabDeclutter),
         VARIATION_ENTRY(kIPHAndroidVerticalTabsNewLabel),
         VARIATION_ENTRY(kIPHAndroidVerticalTabsPromoFeature),
@@ -925,6 +921,7 @@ inline constexpr flags_ui::FeatureEntry::FeatureVariation
         VARIATION_ENTRY(kIPHGMCLocalMediaCastingFeature),
         VARIATION_ENTRY(kIPHGMCSaveVideoFrameFeature),
         VARIATION_ENTRY(kIPHHistorySearchFeature),
+        VARIATION_ENTRY(kIPHIndigoContextMenuToastFeature),
         VARIATION_ENTRY(kIPHMemorySaverModeFeature),
         VARIATION_ENTRY(kIPHMultistepFilterPromoFeature),
         VARIATION_ENTRY(kIPHOmniboxAskGLensIconFeature),
@@ -1013,7 +1010,6 @@ inline constexpr flags_ui::FeatureEntry::FeatureVariation
         // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-        VARIATION_ENTRY(kIPHSignInBenefitsFeature),
         VARIATION_ENTRY(kIPHSupervisedUserProfileSigninFeature),
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 

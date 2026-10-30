@@ -63,7 +63,7 @@ class TransportServiceImpl : public TransportService {
 
   // TransportService:
   TransportChannel* GetChannel() override;
-  TransportSession* GetOrCreateSession(std::string_view session_id) override;
+  TransportSession* CreateSession(std::string_view session_id) override;
   TransportSession* GetSession(std::string_view session_id) override;
   SessionStreamRecorderFactory* GetStreamRecorderFactory() override;
 
@@ -71,9 +71,9 @@ class TransportServiceImpl : public TransportService {
   SEQUENCE_CHECKER(sequence_checker_);
 
   // Declared before `channel_` on purpose. C++ destroys members in reverse
-  // declaration order, so `channel_` -- and the factory registry it owns, which
-  // holds a raw pointer to `session_stream_recorder_factory_` -- is torn down
-  // first.
+  // declaration order, so `channel_` -- and the session registry it owns, which
+  // holds a raw observer pointer to `session_stream_recorder_factory_` -- is
+  // torn down first.
   std::unique_ptr<SessionStreamRecorderFactory>
       session_stream_recorder_factory_;
 

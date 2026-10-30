@@ -31,8 +31,8 @@
 #include "chrome/browser/password_manager/factories/password_reuse_manager_factory.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/safe_browsing/advanced_protection_status_manager.h"
-#include "chrome/browser/safe_browsing/advanced_protection_status_manager_factory.h"
+#include "chrome/browser/safe_browsing/advanced_protection/advanced_protection_status_manager.h"
+#include "chrome/browser/safe_browsing/advanced_protection/advanced_protection_status_manager_factory.h"
 #include "chrome/browser/safe_browsing/chrome_user_population_helper.h"
 #include "chrome/browser/safe_browsing/safe_browsing_metrics_collector_factory.h"
 #include "chrome/browser/safe_browsing/safe_browsing_navigation_observer_manager_factory.h"
@@ -106,8 +106,8 @@
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/page_transition_types.h"
-#include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
 #include "url/url_util.h"
@@ -211,8 +211,8 @@ void OpenUrl(content::WebContents* current_web_contents,
   content::OpenURLParams params =
       content::OpenURLParams::CreateBrowserInitiated(
           url,
-          in_new_tab ? WindowOpenDisposition::kNewForegroundTab
-                     : WindowOpenDisposition::kCurrentTab,
+          in_new_tab ? ui::mojom::WindowOpenDisposition::kNewForegroundTab
+                     : ui::mojom::WindowOpenDisposition::kCurrentTab,
           ui::PAGE_TRANSITION_LINK, referrer);
   current_web_contents->OpenURL(params, /*navigation_handle_callback=*/{});
 }
@@ -619,7 +619,8 @@ void ChromePasswordProtectionService::ShowInterstitial(
   content::OpenURLParams params =
       content::OpenURLParams::CreateBrowserInitiated(
           GURL(chrome::kChromeUIResetPasswordURL),
-          WindowOpenDisposition::kNewForegroundTab, ui::PAGE_TRANSITION_LINK);
+          ui::mojom::WindowOpenDisposition::kNewForegroundTab,
+          ui::PAGE_TRANSITION_LINK);
   std::string post_data =
       base::NumberToString(static_cast<std::underlying_type_t<PasswordType>>(
           ConvertReusedPasswordAccountTypeToPasswordType(password_type)));

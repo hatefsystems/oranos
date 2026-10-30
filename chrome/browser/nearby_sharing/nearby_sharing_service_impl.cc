@@ -25,7 +25,6 @@
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "build/chromeos_buildflags.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/nearby_sharing/certificates/common.h"
 #include "chrome/browser/nearby_sharing/certificates/nearby_share_certificate_manager_impl.h"
@@ -1067,15 +1066,6 @@ void NearbySharingServiceImpl::SetArcTransferCleanupCallback(
   if (!is_transferring_ && arc_transfer_cleanup_callback_.is_null()) {
     arc_transfer_cleanup_callback_ = std::move(callback);
   }
-}
-
-NearbyNotificationDelegate* NearbySharingServiceImpl::GetNotificationDelegate(
-    const std::string& notification_id) {
-  if (!nearby_notification_manager_) {
-    return nullptr;
-  }
-
-  return nearby_notification_manager_->GetNotificationDelegate(notification_id);
 }
 
 void NearbySharingServiceImpl::RecordFastInitiationNotificationUsage(

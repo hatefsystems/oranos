@@ -168,11 +168,13 @@ class PageHandler : public DevToolsDomainHandler,
                            std::optional<int> every_nth_frame,
                            std::optional<int> max_frames_in_flight,
                            std::optional<bool> send_last_frame) override;
-  Response StartScreenRecording(std::optional<bool> audio,
-                                std::optional<int> max_width,
-                                std::optional<int> max_height,
-                                std::optional<int> frame_rate,
-                                std::string* out_stream) override;
+  void StartScreenRecording(
+      std::optional<bool> audio,
+      std::optional<int> max_width,
+      std::optional<int> max_height,
+      std::optional<int> frame_rate,
+      std::optional<std::string> capture_area,
+      std::unique_ptr<StartScreenRecordingCallback> callback) override;
   void StopScreenRecording(
       std::unique_ptr<StopScreenRecordingCallback> callback) override;
   void OnMediaRecorderFlushed();
@@ -210,9 +212,6 @@ class PageHandler : public DevToolsDomainHandler,
                                const Binary& data) override;
 
   Response SetPrerenderingAllowed(bool is_allowed) override;
-  void GetAnnotatedPageContent(
-      std::optional<bool> include_actionable_information,
-      std::unique_ptr<GetAnnotatedPageContentCallback> callback) override;
 
   Response AddScriptToEvaluateOnNewDocument(
       const std::string& source,

@@ -316,6 +316,7 @@ ci.thin_tester(
         ],
         mixins = [
             "chromeos-generic-vm",
+            "no_ssd",
         ],
     ),
     targets_settings = targets.settings(
@@ -521,6 +522,7 @@ ci.builder(
         mixins = [
             "x86-64",
             "linux-jammy",
+            "no_ssd",
         ],
         per_test_modifications = {
             "angle_unittests": targets.mixin(
@@ -529,12 +531,8 @@ ci.builder(
                 ],
             ),
             "browser_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 swarming = targets.swarming(
-                    shards = 200,
+                    shards = 270,
                 ),
             ),
             "content_browsertests": targets.mixin(
@@ -543,12 +541,8 @@ ci.builder(
                 ),
             ),
             "interactive_ui_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 swarming = targets.swarming(
-                    shards = 24,
+                    shards = 28,
                 ),
             ),
             "net_unittests": targets.mixin(
@@ -560,10 +554,6 @@ ci.builder(
                 reason = "pthreadpool is not built for ChromeOS currently.",
             ),
             "sync_integration_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 swarming = targets.swarming(
                     shards = 12,
                 ),
@@ -662,10 +652,6 @@ ci.builder(
                 enable_rts_filtering = True,
             ),
             "browser_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 swarming = targets.swarming(
                     dimensions = {
                         "kvm": "1",
@@ -691,10 +677,6 @@ ci.builder(
                 ),
             ),
             "interactive_ui_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 swarming = targets.swarming(
                     shards = 5,
                 ),
@@ -703,10 +685,6 @@ ci.builder(
                 reason = "pthreadpool is not built for ChromeOS currently.",
             ),
             "sync_integration_tests": targets.mixin(
-                args = [
-                    # TODO(crbug.com/542347163): Re-enable when the runtime regression is fixed.
-                    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
-                ],
                 swarming = targets.swarming(
                     shards = 2,
                 ),
@@ -716,6 +694,8 @@ ci.builder(
                     shards = 2,
                 ),
             ),
+            # TODO(crbug.com/579035594): Remove once e4 failures are fixed.
+            "wayland_client_perftests": "e2-standard-8",
         },
     ),
     # See crbug.com/1345687. This builder need higher memory.

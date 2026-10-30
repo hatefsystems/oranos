@@ -114,7 +114,7 @@ class ReadAnythingControllerBrowserTest : public InProcessBrowserTest {
   }
 
   void SetUp() override {
-    ReadAnythingController::SetFreezeDistillationOnCreationForTesting(true);
+    ReadAnythingController::SetFreezeEmptyStateOnCreationForTesting(true);
     InProcessBrowserTest::SetUp();
   }
 
@@ -127,7 +127,7 @@ class ReadAnythingControllerBrowserTest : public InProcessBrowserTest {
   }
 
   void TearDown() override {
-    ReadAnythingController::SetFreezeDistillationOnCreationForTesting(false);
+    ReadAnythingController::SetFreezeEmptyStateOnCreationForTesting(false);
     InProcessBrowserTest::TearDown();
   }
 
@@ -510,6 +510,32 @@ IN_PROC_BROWSER_TEST_F(ReadAnythingControllerBrowserTest,
       .WillOnce([&run_loop]() { run_loop.Quit(); });
   controller->OnSidePanelWillHide(SidePanelEntryHideReason::kBackgrounded);
   run_loop.Run();
+
+  controller->RemoveObserver(&observer);
+}
+
+IN_PROC_BROWSER_TEST_F(ReadAnythingControllerBrowserTest,
+                       CloseSidePanelUI_WhileLoading_DoesNotKeepCloseReason) {
+  tabs::TabInterface* tab = browser()->GetTabStripModel()->GetActiveTab();
+  ASSERT_TRUE(tab);
+  auto* controller = ReadAnythingController::From(tab);
+  ASSERT_TRUE(controller);
+  auto* side_panel_ui = SidePanelUI::From(browser());
+
+  // Ask to close the side panel before it finishes loading. It can't close
+  // yet, so the close is dropped and the side panel opens anyway.
+  ShowSidePanelUI(controller, SidePanelOpenTrigger::kAppMenu);
+  CloseSidePanelUI(controller, ReadAnythingCloseReason::kClosedByUser);
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return side_panel_ui->IsSidePanelEntryShowing(
+        SidePanelEntryKey(SidePanelEntryId::kReadAnything));
+  }));
+
+  // The dropped close's reason isn't reported for the next close.
+  testing::NiceMock<MockReadAnythingLifecycleObserver> observer;
+  controller->AddObserver(&observer);
+  EXPECT_CALL(observer, OnWillClose(ReadAnythingCloseReason::kTabSwitched));
+  controller->OnSidePanelWillHide(SidePanelEntryHideReason::kBackgrounded);
 
   controller->RemoveObserver(&observer);
 }

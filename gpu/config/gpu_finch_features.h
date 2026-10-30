@@ -196,6 +196,7 @@ GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kGpuPersistentCache);
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kGpuPersistentCacheMetadata);
 GPU_CONFIG_EXPORT extern const base::FeatureParam<int>
     kGpuPersistentCacheMetadataPreloadCount;
+GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kGpuPersistentCacheAsyncInitialize);
 
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kConditionallySkipGpuChannelFlush);
 
@@ -216,7 +217,6 @@ GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kWebGPUEnableRangeAnalysisForRobustness);
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kWebGPUAndroidOpenGLES);
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kWebGPUUseSpirv14);
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kWebGPUUseHLSL2021);
-GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kWebGPUUseSpirvReconvergenceMode);
 #if BUILDFLAG(IS_WIN)
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kWebGPUQualcommWindows);
 #endif
@@ -285,6 +285,8 @@ GPU_CONFIG_EXPORT extern const base::FeatureParam<bool>
     kSendGPUChannelEarlyTopChromeOnly;
 
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kVulkanImaginationMSAA);
+
+GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kWrappedSkiaBackingExclusiveAccess);
 
 }  // namespace features
 

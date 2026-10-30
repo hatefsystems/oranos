@@ -16,6 +16,7 @@
 #import "ios/chrome/browser/assistant/coordinator/assistant_container_commands.h"
 #import "ios/chrome/browser/assistant/ui/assistant_container_delegate.h"
 #import "ios/chrome/browser/assistant/ui/assistant_container_detent.h"
+#import "ios/chrome/browser/cobrowse/shared/metrics/assistant_aim_metrics_constants.h"
 #import "ios/chrome/browser/cobrowse/shared/metrics/assistant_aim_metrics_recorder.h"
 #import "ios/chrome/browser/cobrowse/ui/assistant_aim_view_controller.h"
 #import "ios/chrome/browser/metrics/model/activity_reporter.h"
@@ -67,6 +68,7 @@
 @property(nonatomic, assign) std::vector<AssistantContainerDetent> detents;
 @property(nonatomic, assign) std::optional<AssistantContainerDetent>
     lastAnimatedDetent;
+@property(nonatomic, assign) std::optional<NSInteger> mediumDetentPercentage;
 @end
 
 @implementation FakeAssistantContainerCommands
@@ -104,6 +106,10 @@
 
 - (void)setAssistantContainerMediumDetentHeight:
     (std::optional<NSInteger>)height {
+}
+
+- (void)setAssistantContainerMediumDetentPercentage:(NSInteger)percentage {
+  _mediumDetentPercentage = percentage;
 }
 
 - (void)setAssistantContainerGrabberHidden:(BOOL)hidden
@@ -441,18 +447,26 @@ TEST_F(AssistantAIMCoordinatorTest,
 // prevents the alert from showing on subsequent keyboard notifications.
 TEST_F(AssistantAIMCoordinatorTest,
        TabSharingConsentAlert_AcceptSetsPrefAndPreventsSubsequentAlert) {
+  id mock_recorder = OCMClassMock([AssistantAIMMetricsRecorder class]);
+  [coordinator_ setValue:mock_recorder forKey:@"metricsRecorder"];
   id mock_view = OCMClassMock([UIView class]);
   OCMStub([mock_view isFirstResponder]).andReturn(YES);
   id mock_view_controller = OCMClassMock([AssistantAIMViewController class]);
   OCMStub([mock_view_controller view]).andReturn(mock_view);
   [coordinator_ setValue:mock_view_controller forKey:@"viewController"];
 
+  OCMExpect([mock_recorder
+      recordFRENoticeAction:AssistantAimFRENoticeAction::kShown]);
   [static_cast<id<AssistantAIMViewControllerDelegate>>(coordinator_)
       assistantAIMViewControllerDidShowKeyboard:mock_view_controller];
   ASSERT_NE(nil,
             [coordinator_ valueForKey:@"tabSharingConsentAlertCoordinator"]);
+  EXPECT_OCMOCK_VERIFY(mock_recorder);
 
+  OCMExpect([mock_recorder
+      recordFRENoticeAction:AssistantAimFRENoticeAction::kAccepted]);
   [coordinator_ didAcceptTabSharingConsent];
+  EXPECT_OCMOCK_VERIFY(mock_recorder);
 
   PrefService* prefs = profile_->GetPrefs();
   EXPECT_TRUE(prefs->GetBoolean(prefs::kCobrowseTabSharingConsentAccepted));
@@ -460,11 +474,16 @@ TEST_F(AssistantAIMCoordinatorTest,
             [coordinator_ valueForKey:@"tabSharingConsentAlertCoordinator"]);
 
   // Subsequent keyboard notifications should not present the alert again.
+  OCMReject([mock_recorder
+      recordFRENoticeAction:AssistantAimFRENoticeAction::kShown]);
   [static_cast<id<AssistantAIMViewControllerDelegate>>(coordinator_)
       assistantAIMViewControllerDidShowKeyboard:mock_view_controller];
   EXPECT_EQ(nil,
             [coordinator_ valueForKey:@"tabSharingConsentAlertCoordinator"]);
+  EXPECT_OCMOCK_VERIFY(mock_recorder);
 
+  [coordinator_ setValue:nil forKey:@"metricsRecorder"];
+  [mock_recorder stopMocking];
   [mock_view stopMocking];
   [mock_view_controller stopMocking];
 }
@@ -484,6 +503,8 @@ TEST_F(AssistantAIMCoordinatorTest,
   FakeAssistantContainerCommands* fake_container_handler =
       [[FakeAssistantContainerCommands alloc] init];
   [coordinator_ setValue:fake_container_handler forKey:@"containerHandler"];
+  id mock_recorder = OCMClassMock([AssistantAIMMetricsRecorder class]);
+  [coordinator_ setValue:mock_recorder forKey:@"metricsRecorder"];
 
   id mock_view = OCMClassMock([UIView class]);
   OCMStub([mock_view isFirstResponder]).andReturn(YES);
@@ -491,12 +512,18 @@ TEST_F(AssistantAIMCoordinatorTest,
   OCMStub([mock_view_controller view]).andReturn(mock_view);
   [coordinator_ setValue:mock_view_controller forKey:@"viewController"];
 
+  OCMExpect([mock_recorder
+      recordFRENoticeAction:AssistantAimFRENoticeAction::kShown]);
   [static_cast<id<AssistantAIMViewControllerDelegate>>(coordinator_)
       assistantAIMViewControllerDidShowKeyboard:mock_view_controller];
   ASSERT_NE(nil,
             [coordinator_ valueForKey:@"tabSharingConsentAlertCoordinator"]);
+  EXPECT_OCMOCK_VERIFY(mock_recorder);
 
+  OCMExpect([mock_recorder
+      recordFRENoticeAction:AssistantAimFRENoticeAction::kLearnMoreTapped]);
   [coordinator_ didTapTabSharingConsentLearnMore];
+  EXPECT_OCMOCK_VERIFY(mock_recorder);
 
   PrefService* prefs = profile_->GetPrefs();
   EXPECT_FALSE(prefs->GetBoolean(prefs::kCobrowseTabSharingConsentAccepted));
@@ -511,11 +538,35 @@ TEST_F(AssistantAIMCoordinatorTest,
             url_loader->last_params.disposition);
 
   // Showing the keyboard again should re-present the consent alert.
+  OCMExpect([mock_recorder
+      recordFRENoticeAction:AssistantAimFRENoticeAction::kShown]);
   [static_cast<id<AssistantAIMViewControllerDelegate>>(coordinator_)
       assistantAIMViewControllerDidShowKeyboard:mock_view_controller];
   EXPECT_NE(nil,
             [coordinator_ valueForKey:@"tabSharingConsentAlertCoordinator"]);
+  EXPECT_OCMOCK_VERIFY(mock_recorder);
 
+  [coordinator_ setValue:nil forKey:@"metricsRecorder"];
+  [mock_recorder stopMocking];
   [mock_view stopMocking];
+  [mock_view_controller stopMocking];
+}
+
+// Tests that showing the AIM container configures the default 60% medium
+// detent height on `AssistantContainerCommands`.
+TEST_F(AssistantAIMCoordinatorTest,
+       SetVisible_ConfiguresDefaultMediumDetentPercentage) {
+  FakeAssistantContainerCommands* fake_container_handler =
+      [[FakeAssistantContainerCommands alloc] init];
+  [coordinator_ setValue:fake_container_handler forKey:@"containerHandler"];
+
+  id mock_view_controller = OCMClassMock([AssistantAIMViewController class]);
+  [coordinator_ setValue:mock_view_controller forKey:@"viewController"];
+
+  [coordinator_ setVisible:YES];
+
+  ASSERT_TRUE(fake_container_handler.mediumDetentPercentage.has_value());
+  EXPECT_EQ(60, fake_container_handler.mediumDetentPercentage.value());
+
   [mock_view_controller stopMocking];
 }

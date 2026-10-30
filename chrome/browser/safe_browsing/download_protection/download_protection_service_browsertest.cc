@@ -28,7 +28,7 @@
 #include "content/public/test/download_test_observer.h"
 #include "crypto/sha2.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/base/window_open_disposition.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 
 #if BUILDFLAG(IS_MAC)
 #include <memory>
@@ -40,8 +40,9 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/common/safe_browsing/archive_analyzer_results.h"
-#include "components/safe_browsing/content/common/file_type_policies_test_util.h"
-#include "components/safe_browsing/content/common/proto/download_file_types.pb.h"
+#include "components/safe_browsing/content/common/file_type_policies/file_type_policies_test_util.h"
+#include "components/safe_browsing/content/common/file_type_policies/proto/download_file_types.pb.h"
+#include "components/safe_browsing/core/common/features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #endif
 
@@ -75,7 +76,7 @@ class DownloadProtectionServiceBrowserTest : public InProcessBrowserTest {
     // This call will block until the navigation completes, but will not wait
     // for the download to finish.
     ui_test_utils::NavigateToURLWithDisposition(
-        browser(), url, WindowOpenDisposition::kCurrentTab,
+        browser(), url, ui::mojom::WindowOpenDisposition::kCurrentTab,
         ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
 
     observer.WaitForFinished();
@@ -201,8 +202,20 @@ using ::testing::IsSupersetOf;
 using ::testing::Property;
 using ::testing::ResultOf;
 
-IN_PROC_BROWSER_TEST_F(DownloadProtectionServiceBrowserTest,
-                       VerifyDmgInspection) {
+class DownloadProtectionDmgBrowserTest
+    : public DownloadProtectionServiceBrowserTest,
+      public testing::WithParamInterface<bool> {
+ public:
+  DownloadProtectionDmgBrowserTest() {
+    dmg_feature_list_.InitWithFeatureState(kSafeBrowsingRustDmgParser,
+                                           GetParam());
+  }
+
+ private:
+  base::test::ScopedFeatureList dmg_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_P(DownloadProtectionDmgBrowserTest, VerifyDmgInspection) {
   embedded_test_server()->ServeFilesFromDirectory(GetTestDataDirectory());
   ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -273,8 +286,7 @@ IN_PROC_BROWSER_TEST_F(DownloadProtectionServiceBrowserTest,
   EXPECT_EQ(1842u, request.detached_code_signature(0).contents().size());
 }
 
-IN_PROC_BROWSER_TEST_F(DownloadProtectionServiceBrowserTest,
-                       CorruptDmgInspection) {
+IN_PROC_BROWSER_TEST_P(DownloadProtectionDmgBrowserTest, CorruptDmgInspection) {
   embedded_test_server()->ServeFilesFromDirectory(GetTestDataDirectory());
   ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -302,7 +314,7 @@ IN_PROC_BROWSER_TEST_F(DownloadProtectionServiceBrowserTest,
   EXPECT_FALSE(request.has_udif_code_signature());
 }
 
-IN_PROC_BROWSER_TEST_F(DownloadProtectionServiceBrowserTest,
+IN_PROC_BROWSER_TEST_P(DownloadProtectionDmgBrowserTest,
                        VerifySignedDmgInspection) {
   embedded_test_server()->ServeFilesFromDirectory(GetTestDataDirectory());
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -339,7 +351,7 @@ IN_PROC_BROWSER_TEST_F(DownloadProtectionServiceBrowserTest,
   EXPECT_EQ(expected_signature, request.udif_code_signature());
 }
 
-IN_PROC_BROWSER_TEST_F(DownloadProtectionServiceBrowserTest,
+IN_PROC_BROWSER_TEST_P(DownloadProtectionDmgBrowserTest,
                        SniffDmgWithoutDmgExtension) {
   base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
@@ -375,6 +387,13 @@ IN_PROC_BROWSER_TEST_F(DownloadProtectionServiceBrowserTest,
   EXPECT_GT(request.archived_binary_size(), 0);
   EXPECT_EQ(1, request.detached_code_signature_size());
 }
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         DownloadProtectionDmgBrowserTest,
+                         testing::Bool(),
+                         [](const testing::TestParamInfo<bool>& info) {
+                           return info.param ? "Rust" : "Cpp";
+                         });
 
 IN_PROC_BROWSER_TEST_F(DownloadProtectionServiceBrowserTest,
                        SniffNonDmgWithoutDmgExtension) {

@@ -86,8 +86,6 @@
 #include "third_party/blink/renderer/platform/network/mime/content_type.h"
 #include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
-#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_std.h"
 #include "third_party/perfetto/include/perfetto/tracing/track_event_args.h"
 
 namespace blink {
@@ -463,8 +461,8 @@ class TokenPreloadScanner::StartTagScanner {
     } else if (!integrity_attr_set_ &&
                Match(attribute_name, html_names::kIntegrityAttr)) {
       integrity_attr_set_ = true;
-      SubresourceIntegrity::ParseIntegrityAttribute(
-          attribute_value, integrity_metadata_, nullptr);
+      SubresourceIntegrity::ParseIntegrityAttribute(attribute_value,
+                                                    integrity_metadata_);
     } else if (Match(attribute_name, html_names::kTypeAttr)) {
       type_attribute_value_ = attribute_value;
     } else if (Match(attribute_name, html_names::kLanguageAttr)) {
@@ -588,8 +586,8 @@ class TokenPreloadScanner::StartTagScanner {
     } else if (!integrity_attr_set_ &&
                Match(attribute_name, html_names::kIntegrityAttr)) {
       integrity_attr_set_ = true;
-      SubresourceIntegrity::ParseIntegrityAttribute(
-          attribute_value, integrity_metadata_, nullptr);
+      SubresourceIntegrity::ParseIntegrityAttribute(attribute_value,
+                                                    integrity_metadata_);
     } else if (Match(attribute_name, html_names::kImagesrcsetAttr) &&
                srcset_attribute_value_.IsNull()) {
       srcset_attribute_value_ = attribute_value;
@@ -679,12 +677,13 @@ class TokenPreloadScanner::StartTagScanner {
       ProcessLinkAttribute(attribute_name, attribute_value);
     } else if (Match(tag_impl_, html_names::kInputTag)) {
       ProcessInputAttribute(attribute_name, attribute_value);
-    } else if (Match(tag_impl_, html_names::kSourceTag))
+    } else if (Match(tag_impl_, html_names::kSourceTag)) {
       ProcessSourceAttribute(attribute_name, attribute_value);
-    else if (Match(tag_impl_, html_names::kVideoTag))
+    } else if (Match(tag_impl_, html_names::kVideoTag)) {
       ProcessVideoAttribute(attribute_name, attribute_value);
-    else if (Match(tag_impl_, html_names::kStyleTag))
+    } else if (Match(tag_impl_, html_names::kStyleTag)) {
       ProcessStyleAttribute(attribute_name, attribute_value);
+    }
   }
 
   bool IsLazyLoadImageDeferable(

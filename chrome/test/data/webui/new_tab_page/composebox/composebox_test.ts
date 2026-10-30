@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {AimButtonMode, ComposeboxElement, NtpComposeboxElement, SubmitButtonIconType} from 'chrome://new-tab-page/lazy_load.js';
+import type {ComposeboxElement, NtpComposeboxElement} from 'chrome://new-tab-page/lazy_load.js';
+import {AimButtonMode, SubmitButtonIconType} from 'chrome://new-tab-page/lazy_load.js';
 import {$$, InputSource, QueryActionOverride, SearchboxTutorial} from 'chrome://new-tab-page/new_tab_page.js';
 import {GlifAnimationState} from 'chrome://resources/cr_components/composebox/common.js';
 import type {ComposeboxAimButtonElement} from 'chrome://resources/cr_components/composebox/composebox_aim_button.js';
@@ -12,17 +13,20 @@ import type {ContextualEntrypointAndMenuElement} from 'chrome://resources/cr_com
 import type {ComposeboxFileCarouselElement} from 'chrome://resources/cr_components/composebox/file_carousel.js';
 import {WindowProxy as CrWindowProxy} from 'chrome://resources/cr_components/composebox/window_proxy.js';
 import type {SearchAnimatedGlowElement} from 'chrome://resources/cr_components/search/animated_glow.js';
+import {GlowMode} from 'chrome://resources/cr_components/search/constants.js';
 import {createAutocompleteResultForTesting, createSearchMatchForTesting} from 'chrome://resources/cr_components/searchbox/searchbox_browser_proxy.js';
 import type {CrIconElement} from 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {SuggestInventory} from 'chrome://resources/mojo/components/omnibox/browser/fusebox_action.mojom-webui.js';
 import type {SelectedFileInfo} from 'chrome://resources/mojo/components/omnibox/browser/searchbox.mojom-webui.js';
 import {assertDeepEquals, assertEquals, assertFalse, assertNotEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
-import {MockTimer} from 'chrome://webui-test/mock_timer.js';
+import {MockInputState} from 'chrome://webui-test/cr_components/searchbox/searchbox_test_utils.js';
 import {TestMock} from 'chrome://webui-test/test_mock.js';
 import {eventToPromise, microtasksFinished} from 'chrome://webui-test/test_util.js';
 
-import {ADD_FILE_CONTEXT_FN, createComposeboxElement, createFuseboxAction, getSubmitContainer, getSubmitIcon, MockInputState, setupComposeboxTest} from './test_support.js';
+import {createFuseboxAction} from '../test_support.js';
+
+import {ADD_FILE_CONTEXT_FN, createComposeboxElement, getSubmitContainer, getSubmitIcon, setupComposeboxTest} from './test_support.js';
 
 suite('NewTabPageComposeboxTest', () => {
   const testProxy = setupComposeboxTest();
@@ -38,6 +42,27 @@ suite('NewTabPageComposeboxTest', () => {
                                      'search-animated-glow');
         assertTrue(!!animatedGlow);
         assertFalse(animatedGlow.darkThemeColorsEnabled);
+      });
+
+  test(
+      'updates search-animated-glow glowMode based on willFulfillInAim',
+      async () => {
+        createComposeboxElement(testProxy);
+        await microtasksFinished();
+
+        const animatedGlow = testProxy.element.shadowRoot
+                                 .querySelector<SearchAnimatedGlowElement>(
+                                     'search-animated-glow');
+        assertTrue(!!animatedGlow);
+        assertTrue(testProxy.element.willFulfillInAim);
+        assertTrue(testProxy.element.hasAttribute('will-fulfill-in-aim'));
+        assertEquals(GlowMode.OUTER_GLOW, animatedGlow.glowMode);
+
+        testProxy.element.willFulfillInAim = false;
+        await microtasksFinished();
+
+        assertFalse(testProxy.element.hasAttribute('will-fulfill-in-aim'));
+        assertEquals(GlowMode.NONE, animatedGlow.glowMode);
       });
 
   test('ntp composebox uses configured forward submit icon', async () => {
@@ -1089,7 +1114,7 @@ suite('NewTabPageComposeboxTest', () => {
   });
 
   test('handleFuseboxAction applies and resets action state', async () => {
-    const composebox = new NtpComposeboxElement();
+    const composebox = document.createElement('ntp-composebox');
     assertTrue(composebox.shouldHandleSuggestionFuseboxActions());
     const inputStateRequested =
         testProxy.searchboxHandler.whenCalled('getInputState');
@@ -1147,7 +1172,7 @@ suite('NewTabPageComposeboxTest', () => {
   test(
       'handleFuseboxAction triggers imageInput click for kInputSourceGallery',
       async () => {
-        const composebox = new NtpComposeboxElement();
+        const composebox = document.createElement('ntp-composebox');
         document.body.appendChild(composebox);
         await microtasksFinished();
 
@@ -1175,7 +1200,7 @@ suite('NewTabPageComposeboxTest', () => {
   test(
       'handleFuseboxAction triggers fileInput click for kInputSourceFilePicker',
       async () => {
-        const composebox = new NtpComposeboxElement();
+        const composebox = document.createElement('ntp-composebox');
         document.body.appendChild(composebox);
         await microtasksFinished();
 
@@ -1203,7 +1228,7 @@ suite('NewTabPageComposeboxTest', () => {
   test(
       'getFileInputsElement returns element or null when disabled',
       async () => {
-        const composebox = new NtpComposeboxElement();
+        const composebox = document.createElement('ntp-composebox');
         composebox.contextMenuEnabled = true;
         document.body.appendChild(composebox);
         await microtasksFinished();
@@ -1217,7 +1242,7 @@ suite('NewTabPageComposeboxTest', () => {
   test(
       'handleFuseboxAction opens tab picker for kInputSourceTabPicker',
       async () => {
-        const composebox = new NtpComposeboxElement();
+        const composebox = document.createElement('ntp-composebox');
         composebox.contextMenuEnabled = true;
         document.body.appendChild(composebox);
         await microtasksFinished();
@@ -1237,7 +1262,7 @@ suite('NewTabPageComposeboxTest', () => {
   test(
       'handleFuseboxAction triggers voice search for kInputSourceVoice',
       async () => {
-        const composebox = new NtpComposeboxElement();
+        const composebox = document.createElement('ntp-composebox');
         document.body.appendChild(composebox);
         await microtasksFinished();
 
@@ -1261,7 +1286,7 @@ suite('NewTabPageComposeboxTest', () => {
   test(
       'hint action sets the placeholder and survives input state updates',
       async () => {
-        const composebox = new NtpComposeboxElement();
+        const composebox = document.createElement('ntp-composebox');
         document.body.appendChild(composebox);
         await microtasksFinished();
         await composebox.updateComplete;
@@ -1303,7 +1328,7 @@ suite('NewTabPageComposeboxTest', () => {
                   searchboxTutorial}, energyEnabled=${
                   energyEffectAnimationEnabled}`,
               async () => {
-                const composebox = new NtpComposeboxElement();
+                const composebox = document.createElement('ntp-composebox');
                 composebox.energyEffectAnimationEnabled =
                     energyEffectAnimationEnabled;
                 document.body.appendChild(composebox);
@@ -1346,7 +1371,7 @@ suite('NewTabPageComposeboxTest', () => {
     });
 
     async function createComposebox(): Promise<NtpComposeboxElement> {
-      const composebox = new NtpComposeboxElement();
+      const composebox = document.createElement('ntp-composebox');
       document.body.appendChild(composebox);
       await testProxy.searchboxHandler.whenCalled('getInputState');
       await microtasksFinished();
@@ -1583,178 +1608,4 @@ suite('NewTabPageComposeboxTest', () => {
       assertEquals(0, testProxy.element.selectedMatchIndex);
     });
   });
-});
-
-// ==========================================================
-// RESIZE OBSERVER SUITE
-// ==========================================================
-// TODO(crbug.com/535685540): Remove this suite and its tests from here once
-// `cr-composebox` element is no longer used.
-suite('NewTabPageComposeboxResizeObserverTest', () => {
-  const testProxy = setupComposeboxTest();
-  // Keep this aligned with DEBOUNCE_TIMEOUT_MS in composebox.ts.
-  const RESIZE_DEBOUNCE_TIMEOUT_MS = 20;
-  let originalResizeObserver: typeof ResizeObserver;
-  let mockTimer: MockTimer;
-
-  class MockResizeObserver implements ResizeObserver {
-    static instances: MockResizeObserver[] = [];
-    observedTargets: Element[] = [];
-    disconnected = false;
-
-    constructor(private callback: ResizeObserverCallback) {
-      MockResizeObserver.instances.push(this);
-    }
-
-    disconnect() {
-      this.disconnected = true;
-    }
-
-    observe(target: Element, _options?: ResizeObserverOptions) {
-      this.observedTargets.push(target);
-    }
-
-    takeRecords(): ResizeObserverEntry[] {
-      return [];
-    }
-
-    unobserve(_target: Element) {}
-
-    trigger() {
-      this.callback([], this);
-    }
-  }
-
-  function getObserversForTarget(target: Element): MockResizeObserver[] {
-    return MockResizeObserver.instances.filter(
-        observer => observer.observedTargets.includes(target));
-  }
-
-  function getActiveObserversForTarget(target: Element): MockResizeObserver[] {
-    return getObserversForTarget(target).filter(
-        observer => !observer.disconnected);
-  }
-
-  async function flushComposebox() {
-    await testProxy.element.updateComplete;
-    await testProxy.element.getInputElement().updateComplete;
-    await microtasksFinished();
-  }
-
-  setup(() => {
-    originalResizeObserver = window.ResizeObserver;
-    window.ResizeObserver =
-        MockResizeObserver as unknown as typeof ResizeObserver;
-    MockResizeObserver.instances = [];
-    mockTimer = new MockTimer();
-  });
-
-  teardown(() => {
-    window.ResizeObserver = originalResizeObserver;
-    mockTimer.uninstall();
-  });
-
-  test(
-      'observeResize emits composebox resize events for host and dropdown',
-      async () => {
-        testProxy.element = new ComposeboxElement();
-        Object.assign(testProxy.element, {observeResize: true});
-        document.body.appendChild(testProxy.element);
-        await flushComposebox();
-
-        const hostObserver = getActiveObserversForTarget(testProxy.element);
-        const dropdownObserver =
-            getActiveObserversForTarget(testProxy.element.$.matches);
-        assertEquals(1, hostObserver.length);
-        assertEquals(1, dropdownObserver.length);
-
-        const hostResizeEvent = eventToPromise<CustomEvent<{height: number}>>(
-            'composebox-resize', testProxy.element);
-        hostObserver[0]!.trigger();
-        // Advance the debounce used by setupResizeObservers_().
-        mockTimer.tick(RESIZE_DEBOUNCE_TIMEOUT_MS);
-        await microtasksFinished();
-        const hostEvent = await hostResizeEvent;
-        assertTrue(hostEvent.detail.height !== undefined);
-
-        const dropdownResizeEvent =
-            eventToPromise<CustomEvent<{dropdownHeight: number}>>(
-                'composebox-resize', testProxy.element);
-        dropdownObserver[0]!.trigger();
-        mockTimer.tick(RESIZE_DEBOUNCE_TIMEOUT_MS);
-        await microtasksFinished();
-        const dropdownEvent = await dropdownResizeEvent;
-        assertTrue(dropdownEvent.detail.dropdownHeight !== undefined);
-      });
-
-  test('observeResize false skips public resize observers', async () => {
-    testProxy.element = new ComposeboxElement();
-    Object.assign(testProxy.element, {observeResize: false});
-    document.body.appendChild(testProxy.element);
-    await flushComposebox();
-
-    const inputWrapper =
-        testProxy.element.getInputElement()
-            .shadowRoot.querySelector<HTMLElement>('#inputWrapper');
-    assertTrue(!!inputWrapper);
-
-    assertEquals(0, getActiveObserversForTarget(testProxy.element).length);
-    assertEquals(
-        0, getActiveObserversForTarget(testProxy.element.$.matches).length);
-    assertEquals(1, getActiveObserversForTarget(inputWrapper).length);
-  });
-
-  test('observeResize changes resync public resize observers', async () => {
-    testProxy.element = new ComposeboxElement();
-    Object.assign(testProxy.element, {observeResize: false});
-    document.body.appendChild(testProxy.element);
-    await flushComposebox();
-
-    assertEquals(0, getActiveObserversForTarget(testProxy.element).length);
-    assertEquals(
-        0, getActiveObserversForTarget(testProxy.element.$.matches).length);
-
-    testProxy.element.observeResize = true;
-    await flushComposebox();
-
-    assertEquals(1, getActiveObserversForTarget(testProxy.element).length);
-    assertEquals(
-        1, getActiveObserversForTarget(testProxy.element.$.matches).length);
-
-    const composeboxObservers = [
-      ...getObserversForTarget(testProxy.element),
-      ...getObserversForTarget(testProxy.element.$.matches),
-    ];
-
-    testProxy.element.observeResize = false;
-    await flushComposebox();
-
-    assertEquals(0, getActiveObserversForTarget(testProxy.element).length);
-    assertEquals(
-        0, getActiveObserversForTarget(testProxy.element.$.matches).length);
-    assertTrue(composeboxObservers.every(observer => observer.disconnected));
-  });
-
-  // TODO(crbug.com/570702014): Smart Tab Sharing is desktop-only.
-  // <if expr="not is_android">
-  test(
-      'smartTabSharingActive causes hasTabs true and input has has-tabs class',
-      async () => {
-        testProxy.searchboxHandler.setPromiseResolveFor(
-            'getSmartTabSharingActive', {active: true});
-        createComposeboxElement(testProxy, {
-          searchboxNextEnabled: true,
-          smartTabSharingActive: true,
-          smartTabSharingVisible: true,
-        });
-        await microtasksFinished();
-        await testProxy.element.updateComplete;
-
-        assertTrue(testProxy.element.hasTabs());
-        assertFalse(testProxy.element.hasAttribute('should-remain-folded_'));
-
-        const inputElement = testProxy.element.getInputElement();
-        assertTrue(inputElement.classList.contains('has-tabs'));
-      });
-  // </if>
 });

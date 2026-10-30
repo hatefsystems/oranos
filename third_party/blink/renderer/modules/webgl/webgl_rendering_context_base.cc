@@ -1760,7 +1760,7 @@ void WebGLRenderingContextBase::MarkContextChanged(
   }
 }
 
-scoped_refptr<CanvasResource>
+scoped_refptr<ExportedCanvasResource>
 WebGLRenderingContextBase::GetResourceForPushFrame(
     bool& should_call_push_frame) {
   should_call_push_frame = false;
@@ -1794,7 +1794,7 @@ WebGLRenderingContextBase::GetResourceForPushFrame(
     Host()->DiscardResources();
   }
 
-  scoped_refptr<CanvasResource> resource =
+  scoped_refptr<ExportedCanvasResource> resource =
       CopyRenderingResultsFromDrawingBufferToResource(kBackBuffer);
   if (resource) {
     should_call_push_frame = true;
@@ -2074,8 +2074,7 @@ WebGLRenderingContextBase::PaintRenderingResultsToSnapshot(
     // call.
     must_paint_to_canvas_ = false;
 
-    auto resource = GetDrawingBuffer()->ExportLowLatencyCanvasResource();
-    return resource ? resource->Bitmap() : nullptr;
+    return GetDrawingBuffer()->ExportLowLatencyBitmap();
   }
 
   if (resource_provider_.get() &&
@@ -2176,7 +2175,7 @@ WebGLRenderingContextBase::PaintRenderingResultsToSnapshot(
   return snapshot;
 }
 
-scoped_refptr<CanvasResource>
+scoped_refptr<ExportedCanvasResource>
 WebGLRenderingContextBase::PaintRenderingResultsToResource(
     SourceDrawingBuffer source_buffer,
     FlushReason reason) {
@@ -2280,7 +2279,7 @@ WebGLRenderingContextBase::GetSharedImageResourceProvider() {
   return resource_provider_.get();
 }
 
-scoped_refptr<CanvasResource>
+scoped_refptr<ExportedCanvasResource>
 WebGLRenderingContextBase::CopyRenderingResultsFromDrawingBufferToResource(
     SourceDrawingBuffer source_buffer) {
   TRACE_EVENT0("blink",
@@ -2306,7 +2305,7 @@ WebGLRenderingContextBase::CopyRenderingResultsFromDrawingBufferToResource(
   }
 
   bool copy_succeeded = false;
-  scoped_refptr<CanvasResource> resource;
+  scoped_refptr<ExportedCanvasResource> resource;
   if (!resource_provider->IsSoftware()) {
     copy_succeeded = CopyRenderingResultsFromDrawingBufferAccelerated(
         resource_provider, source_buffer);

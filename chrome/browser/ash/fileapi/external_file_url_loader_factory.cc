@@ -15,7 +15,6 @@
 #include "chrome/browser/ash/file_manager/fileapi_util.h"
 #include "chrome/browser/ash/fileapi/external_file_resolver.h"
 #include "chrome/browser/ash/fileapi/external_file_url_util.h"
-#include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_host.h"
@@ -104,7 +103,7 @@ class FileSystemReaderDataPipeProducer {
       const int bytes_to_read = base::checked_cast<int>(
           std::min<int64_t>(read_buffer_->size(), remaining_bytes_));
       const int read_size = stream_reader_->Read(
-          read_buffer_.get(), bytes_to_read,
+          read_buffer_, bytes_to_read,
           base::BindOnce(
               &FileSystemReaderDataPipeProducer::OnPendingReadComplete,
               weak_ptr_factory_.GetWeakPtr()));

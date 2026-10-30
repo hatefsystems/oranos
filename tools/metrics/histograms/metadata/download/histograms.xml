@@ -218,17 +218,6 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram name="Download.Blocked.ContentType.Automotive"
-    enum="DownloadContentType" expires_after="2025-07-01">
-  <owner>twellington@chromium.org</owner>
-  <owner>clhager@google.com</owner>
-  <summary>
-    Records the content type of downloads that have been blocked on automotive,
-    as Chrome on automotive blocks any downloads that cannot be viewed natively
-    in Chrome.
-  </summary>
-</histogram>
-
 <histogram name="Download.Bubble.ProcessedCommand2" enum="DownloadCommand"
     expires_after="2027-02-01">
   <owner>yawfrempong@google.com</owner>
@@ -435,7 +424,8 @@ chromium-metrics-reviews@google.com.
     (in DownloadHistory::LoadHistoryDownloads), {Window}. Unlike
     Download.History.DownloadCount, this excludes rows that are removed instead
     of being loaded (e.g. overwritten downloads removed by
-    kDeleteOverwrittenDownloads). Used to evaluate the impact of limiting the
+    kDeleteOverwrittenDownloads, or old completed downloads removed by
+    kRemoveOldDownloadsFromHistory). Used to evaluate the impact of limiting the
     number and age of downloads kept in history.
   </summary>
   <token key="Window" variants="DownloadHistoryWindow"/>

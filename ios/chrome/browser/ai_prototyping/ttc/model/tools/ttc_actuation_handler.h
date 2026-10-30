@@ -7,38 +7,42 @@
 
 #import <Foundation/Foundation.h>
 
-#import <map>
-#import <optional>
-#import <string>
+#import <memory>
+#import <string_view>
+#import <vector>
 
 #import "base/functional/callback.h"
 #import "base/memory/raw_ptr.h"
 #import "base/memory/weak_ptr.h"
 #import "base/sequence_checker.h"
-#import "components/sessions/core/session_id.h"
 #import "components/ttc/app/public/tool_types.h"
+#import "ios/chrome/browser/ai_prototyping/ttc/model/ttc_journal.h"
 #import "ios/chrome/browser/intelligence/actor/public/actor_types.h"
-#import "ios/web/public/web_state_id.h"
 
 @class TtcTaskInterventionHandler;
-class TTCJournal;
-class WebStateList;
 
 namespace actor {
 class ActorService;
 }  // namespace actor
 
+namespace optimization_guide::proto {
+class Action;
+}  // namespace optimization_guide::proto
+
+namespace web {
+class WebState;
+}  // namespace web
+
 struct TtcActuationRequest;
 
-// The handler for TTC actuations, bridging incoming actuation
-// requests to the Chromium Actor Service orchestration layer.
+// The handler for TTC actuations, bridging incoming actuation requests to the
+// Chromium Actor Service orchestration layer.
 class TtcActuationHandler {
  public:
   using ActuationCallback = ttc::ToolResponseCallback;
 
-  TtcActuationHandler(actor::ActorService* actor_service,
-                      WebStateList* web_state_list,
-                      SessionID browser_id);
+  // Constructs an actuation handler backed by `actor_service`.
+  explicit TtcActuationHandler(actor::ActorService* actor_service);
   TtcActuationHandler(const TtcActuationHandler&) = delete;
   TtcActuationHandler& operator=(const TtcActuationHandler&) = delete;
   ~TtcActuationHandler();
@@ -47,58 +51,63 @@ class TtcActuationHandler {
   TTCJournal* journal() const;
   void set_journal(TTCJournal* journal);
 
-  // Disconnects active references, cancels in-flight tasks with `kShutdown`,
-  // and fails pending actuation callbacks with `kExecutorDestroyed`.
+  // Disconnects active references, cancels any active task with `kShutdown`,
+  // and fails any pending actuation callback with `kExecutorDestroyed`.
   void Disconnect();
 
-  // Creates a new Actor task titled `title` associated with the currently
-  // active WebState in the browser, and binds that WebState to the task.
-  // Returns the allocated `ActorTaskId`, or a null `ActorTaskId` if there is no
-  // active WebState, if the active WebState is off-the-record, or if
-  // ActorService is unavailable.
-  actor::ActorTaskId CreateTask(const std::string& title);
-
-  // Validates `tool_request` via `TtcToolValidator` and dispatches the
-  // resulting actuation request under `task_id`.
+  // Validates `tool_request` via `TtcToolValidator`, dispatches the resulting
+  // actuation request on `active_web_state`, and invokes `callback` (which must
+  // be non-null) with the execution result, or `kTabWentAway` if
+  // `active_web_state` is null or off-the-record.
   void ProcessToolCall(const ttc::ToolRequest& tool_request,
-                       actor::ActorTaskId task_id,
+                       web::WebState* active_web_state,
                        ActuationCallback callback);
 
-  // Dispatches `request` for execution under `task_id`. The underlying Actor
-  // task remains active to allow subsequent actuation requests until explicitly
-  // stopped or disconnected.
+  // Dispatches `request` for execution on `active_web_state`, lazily creating
+  // the session's Actor task if needed, and invokes `callback` (which must be
+  // non-null) upon completion, or with `kTabWentAway` if `active_web_state` is
+  // null or off-the-record. The underlying Actor task remains active to allow
+  // subsequent actuation requests until explicitly stopped or disconnected.
   void DispatchActuationRequest(const TtcActuationRequest& request,
-                                actor::ActorTaskId task_id,
+                                web::WebState* active_web_state,
                                 ActuationCallback callback);
 
-  // Stops the task identified by `task_id` with the specified `reason` and
-  // releases its tab binding. If an actuation request is currently in progress
-  // for `task_id`, its callback is invoked with `kTaskWentAway`.
-  void StopTask(actor::ActorTaskId task_id,
-                actor::ActorTaskStoppedReason reason =
+  // Stops the active Actor task (if any) with the specified `reason`. If an
+  // actuation request is currently in progress, its callback is invoked with
+  // `kTaskWentAway`.
+  void StopTask(actor::ActorTaskStoppedReason reason =
                     actor::ActorTaskStoppedReason::kTaskComplete);
 
  private:
   // Handles completion of `ActorService::PerformActions`.
-  void OnPerformActionsFinished(actor::ActorTaskId task_id,
-                                actor::PerformActionsResult result);
+  void OnPerformActionsFinished(actor::PerformActionsResult result);
+
+  // Logs an `ActuationDispatchRejected` error entry to `journal_` (using
+  // `reason` if non-empty, or `base::ToString(code)` otherwise) and invokes
+  // `callback` with `code`.
+  void FailWithError(ActuationCallback callback,
+                     actor::mojom::ActionResultCode code,
+                     std::string_view reason = {});
+
+  // Begins an `ActuationExecute` async journal entry for `actions`, or returns
+  // `nullptr` if `journal_` is null.
+  std::unique_ptr<TTCJournal::PendingAsyncEntry> BeginActuationAsyncEntry(
+      const std::vector<optimization_guide::proto::Action>& actions);
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  // The ActorService used to execute tasks.
+  // The `ActorService` instance used to create tasks and perform actions.
   raw_ptr<actor::ActorService> actor_service_ = nullptr;
 
-  // The WebStateList associated with the active browser.
-  raw_ptr<WebStateList> web_state_list_ = nullptr;
+  // The `ActorTaskId` owned by this handler for the current session, or a null
+  // `ActorTaskId` when no task is active.
+  actor::ActorTaskId task_id_{};
 
-  // The SessionID of the browser window.
-  std::optional<SessionID> browser_id_;
+  // Active actuation callback awaiting completion, if any.
+  ActuationCallback active_callback_;
 
-  // Map from active Actor task IDs to their controlled WebState IDs.
-  std::map<actor::ActorTaskId, web::WebStateID> task_to_web_state_id_map_;
-
-  // Active actuation callbacks awaiting completion, keyed by task ID.
-  std::map<actor::ActorTaskId, ActuationCallback> active_callbacks_;
+  // Active async journal entry for the in-flight actuation, if any.
+  std::unique_ptr<TTCJournal::PendingAsyncEntry> active_async_entry_;
 
   // Intervention delegate used for Actor tasks created by this handler.
   TtcTaskInterventionHandler* intervention_delegate_ = nil;

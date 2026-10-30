@@ -80,6 +80,12 @@ BASE_FEATURE(kEnableContextualTasksPinButtonOnSrp,
 // toolbar buttons for the new right-hand Search in Chrome (SiC) side panel.
 BASE_FEATURE(kContextualTasksPinningV2, base::FEATURE_DISABLED_BY_DEFAULT);
 
+// Routes the unpinned Contextual Tasks ephemeral toolbar button through
+// PinnedToolbarActions::ShowActionEphemerallyInToolbar in Pinning V2 instead of
+// the separate ContextualTasksButton view.
+BASE_FEATURE(kContextualTasksEphemeralPinButtonRefactor,
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // Shows an active indicator (blue icon and underline pill) on the permanent
 // pinned contextual tasks toolbar button when the active tab has an ongoing
 // thread/session.
@@ -97,6 +103,11 @@ bool ShouldShowCloseSidePanelInPinnedButtonContextMenu() {
          kContextualTasksPinnedButtonContextMenuCloseSidePanel.Get();
 }
 
+const base::FeatureParam<bool>
+    kContextualTasksPinnedButtonActiveIndicatorCircleHighlight(
+        &kContextualTasksPinnedButtonActiveIndicator,
+        "ContextualTasksPinnedButtonActiveIndicatorCircleHighlight",
+        false);
 // Keeps the ephemeral contextual tasks button visible even when the permanent
 // button is pinned in the toolbar.
 BASE_FEATURE(kEphemeralPinningVisibleWhenPermanentlyPinned,
@@ -143,8 +154,8 @@ int GetContextualTasksEphemeralButtonAutoDismissTimeMinutes() {
   return kContextualTasksEphemeralButtonAutoDismissTimeMinutes.Get();
 }
 
-// Unifies the logo (Spark or Super G) used for both the SIC (Contextual
-// Tasks) permanent toolbar pin button and ephemeral toolbar button.
+// Unifies the logo (Spark, Super G, or Gray Super G) used for both the SIC
+// (Contextual Tasks) permanent toolbar pin button and ephemeral toolbar button.
 BASE_FEATURE(kContextualTasksUnifyPinButtonLogos,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
@@ -152,6 +163,7 @@ constexpr base::FeatureParam<UnifyPinButtonLogoOption>::Option
     kContextualTasksUnifyPinButtonLogoOptions[] = {
         {UnifyPinButtonLogoOption::kSpark, "spark"},
         {UnifyPinButtonLogoOption::kSuperG, "super-g"},
+        {UnifyPinButtonLogoOption::kGraySuperG, "gray-super-g"},
 };
 
 const base::FeatureParam<UnifyPinButtonLogoOption>
@@ -171,6 +183,12 @@ bool ShouldUseSuperGIconForPinButtons() {
   return base::FeatureList::IsEnabled(kContextualTasksUnifyPinButtonLogos) &&
          kContextualTasksUnifyPinButtonLogoOption.Get() ==
              UnifyPinButtonLogoOption::kSuperG;
+}
+
+bool ShouldUseGraySuperGIconForPinButtons() {
+  return base::FeatureList::IsEnabled(kContextualTasksUnifyPinButtonLogos) &&
+         kContextualTasksUnifyPinButtonLogoOption.Get() ==
+             UnifyPinButtonLogoOption::kGraySuperG;
 }
 
 // Enables relevant context determination for contextual tasks.
@@ -358,6 +376,9 @@ BASE_FEATURE(kContextualSearchContextualCuesHandleShopping,
 BASE_FEATURE(kContextualTasksRearchitecture, base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kContextualTasksSidePanelRearchitecture,
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kContextualTasksSidePanelRearchitectureExpandToFullTab,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kContextualTasksEnableStickyConversation,
@@ -555,6 +576,12 @@ const base::FeatureParam<bool> kContextualTasksContextSmartTabSharing(
     &kContextualTasksContext,
     "ContextualTasksContextSmartTabSharing",
     false);
+
+const base::FeatureParam<bool>
+    kContextualTasksContextSmartTabSharingRearchitecture(
+        &kContextualTasksContext,
+        "ContextualTasksContextSmartTabSharingRearchitecture",
+        false);
 
 const base::FeatureParam<bool> kContextualTasksContextToggleOffAfterSubmit(
     &kContextualTasksContext,
@@ -892,9 +919,20 @@ bool IsContextualTasksPinningV2Enabled() {
   return base::FeatureList::IsEnabled(kContextualTasksPinningV2);
 }
 
+bool IsContextualTasksEphemeralPinButtonRefactorEnabled() {
+  return IsContextualTasksPinningV2Enabled() &&
+         base::FeatureList::IsEnabled(
+             kContextualTasksEphemeralPinButtonRefactor);
+}
+
 bool IsContextualTasksPinnedButtonActiveIndicatorEnabled() {
   return base::FeatureList::IsEnabled(
       kContextualTasksPinnedButtonActiveIndicator);
+}
+
+bool IsContextualTasksPinnedButtonActiveIndicatorCircleHighlightEnabled() {
+  return IsContextualTasksPinnedButtonActiveIndicatorEnabled() &&
+         kContextualTasksPinnedButtonActiveIndicatorCircleHighlight.Get();
 }
 
 bool IsContextualTasksPinButtonOnSrpEnabled() {
@@ -1122,6 +1160,12 @@ bool IsContextualTasksSidePanelRearchitectureEnabled() {
   return base::FeatureList::IsEnabled(kContextualTasksSidePanelRearchitecture);
 }
 
+bool IsContextualTasksSidePanelRearchitectureExpandToFullTabEnabled() {
+  return IsContextualTasksSidePanelRearchitectureEnabled() &&
+         base::FeatureList::IsEnabled(
+             kContextualTasksSidePanelRearchitectureExpandToFullTab);
+}
+
 bool IsContextualTasksClobberActiveTabEnabled() {
   return base::FeatureList::IsEnabled(kContextualTasksClobberActiveTab);
 }
@@ -1234,6 +1278,12 @@ const char kContextualTasksPinningV2Description[] =
     "Consolidates the pinning and ephemeral toolbar buttons for the new "
     "right-hand Search in Chrome (SiC) side panel.";
 
+const char kContextualTasksEphemeralPinButtonRefactorName[] =
+    "Contextual Tasks Ephemeral Pin Button Refactor";
+const char kContextualTasksEphemeralPinButtonRefactorDescription[] =
+    "Routes the unpinned Contextual Tasks ephemeral toolbar button through "
+    "PinnedToolbarActions in Pinning V2 instead of ContextualTasksButton.";
+
 const char kContextualTasksPinnedButtonActiveIndicatorName[] =
     "Contextual Tasks Pinned Button Active Indicator";
 const char kContextualTasksPinnedButtonActiveIndicatorDescription[] =
@@ -1283,6 +1333,13 @@ const char kContextualTasksTabBasedSuggestionsDescription[] =
     "Enables sending attached tab context tokens to Search for tab-based "
     "query suggestions.";
 
+const char kContextualTasksSidePanelTabStateName[] =
+    "Contextual Tasks Side Panel Tab State";
+const char kContextualTasksSidePanelTabStateDescription[] =
+    "Enables tab-specific contextual tasks side panel state. Clicking links in "
+    "the side panel opens a new tab instead of focusing an existing tab with "
+    "the same URL.";
+
 const char kContextualTasksBypassDismissedCapName[] =
     "Contextual Tasks Bypass Dismissed Cap";
 const char kContextualTasksBypassDismissedCapDescription[] =
@@ -1311,8 +1368,9 @@ const char kContextualTasksEphemeralButtonAutoDismissDescription[] =
 const char kContextualTasksUnifyPinButtonLogosName[] =
     "Unify SIC Pin Button Logos";
 const char kContextualTasksUnifyPinButtonLogosDescription[] =
-    "Unifies the logo (Spark or Super G) used across the Contextual Tasks "
-    "(Search in Chrome) permanent toolbar and ephemeral pin buttons.";
+    "Unifies the logo (Spark, Super G, or Gray Super G) used across the "
+    "Contextual Tasks (Search in Chrome) permanent toolbar and ephemeral pin "
+    "buttons.";
 
 const char kABASearchJourneysName[] = "ABA Search Journeys";
 const char kABASearchJourneysDescription[] =

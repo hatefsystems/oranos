@@ -40,7 +40,6 @@
 #import "ios/chrome/browser/fullscreen/ui_bundled/test/test_fullscreen_controller.h"
 #import "ios/chrome/browser/intelligence/bwg/model/fake_gemini_service.h"
 #import "ios/chrome/browser/intelligence/bwg/model/gemini_browser_agent.h"
-#import "ios/chrome/browser/intelligence/bwg/model/gemini_configuration.h"
 #import "ios/chrome/browser/intelligence/bwg/model/gemini_service_factory.h"
 #import "ios/chrome/browser/intelligence/bwg/model/gemini_tab_helper.h"
 #import "ios/chrome/browser/intelligence/bwg/utils/gemini_constants.h"
@@ -325,7 +324,7 @@ class AppBarMediatorTest : public PlatformTest,
 
     // Lens is eligible without any tab, so disable it by default to let tests
     // control its availability with `overrideLensAvailabilityForTesting`.
-    regular_profile_->GetTestingPrefService()->SetInteger(
+    regular_profile_->GetPrefs()->SetInteger(
         lens::prefs::kLensOverlaySettings,
         static_cast<int>(
             lens::prefs::LensOverlaySettingsPolicyValue::kDisabled));
@@ -360,8 +359,7 @@ class AppBarMediatorTest : public PlatformTest,
                       regularActionFactory:regular_action_factory_
                     incognitoActionFactory:incognito_action_factory_
                                    profile:regular_profile_.get()
-                               prefService:regular_profile_
-                                               ->GetTestingPrefService()
+                               prefService:regular_profile_->GetPrefs()
                         templateURLService:search_engines_test_environment_
                                                .template_url_service()
                      authenticationService:auth_service_
@@ -486,11 +484,6 @@ class AppBarMediatorTest : public PlatformTest,
     }
   }
 
-  // Wrapper for `InvokeFloaty`.
-  void InvokeFloaty(GeminiBrowserAgent* agent, GeminiConfiguration* config) {
-    agent->InvokeFloaty(config);
-  }
-
   // Sets whether AI Mode is eligible.
   void SetAimEligible(bool eligible) {
     ON_CALL(*aim_eligibility_service_, IsAimEligible())
@@ -500,7 +493,7 @@ class AppBarMediatorTest : public PlatformTest,
   // Stores `state` as the assistant button state chosen by the user.
   void SetPreferredAssistantButtonState(
       AppBarAssistantButtonPreferredState state) {
-    regular_profile_->GetTestingPrefService()->SetInteger(
+    regular_profile_->GetPrefs()->SetInteger(
         prefs::kAppBarAssistantButtonPreferredState, static_cast<int>(state));
   }
 
@@ -564,8 +557,7 @@ class AppBarMediatorTest : public PlatformTest,
                       regularActionFactory:regular_action_factory
                     incognitoActionFactory:incognito_action_factory
                                    profile:regular_profile_.get()
-                               prefService:regular_profile_
-                                               ->GetTestingPrefService()
+                               prefService:regular_profile_->GetPrefs()
                         templateURLService:search_engines_test_environment_
                                                .template_url_service()
                      authenticationService:auth_service_
@@ -595,7 +587,7 @@ class AppBarMediatorTest : public PlatformTest,
   // `SharedURLLoaderFactory` to prevent background network requests.
   std::unique_ptr<MockAimEligibilityService> CreateMockAimEligibilityService() {
     return std::make_unique<MockAimEligibilityService>(
-        *regular_profile_->GetTestingPrefService(),
+        *regular_profile_->GetPrefs(),
         search_engines_test_environment_.template_url_service(),
         /*url_loader_factory=*/nullptr,
         IdentityManagerFactory::GetForProfile(regular_profile_.get()));
@@ -1078,11 +1070,7 @@ TEST_P(AppBarMediatorTest, TestAssistantButtonHighlighted_GeminiAvailable) {
                                         avatar:nil
                                       signedIn:NO]);
 
-  if (migration_enabled) {
-    agent->SetContainerInvoked(true);
-  } else {
-    InvokeFloaty(agent, [[GeminiConfiguration alloc] init]);
-  }
+  agent->SetContainerInvoked(true);
 
   EXPECT_OCMOCK_VERIFY(consumer_);
 
@@ -1093,11 +1081,7 @@ TEST_P(AppBarMediatorTest, TestAssistantButtonHighlighted_GeminiAvailable) {
                                         avatar:nil
                                       signedIn:NO]);
 
-  if (migration_enabled) {
-    agent->SetContainerInvoked(false);
-  } else {
-    agent->DismissFloaty();
-  }
+  agent->SetContainerInvoked(false);
 
   EXPECT_OCMOCK_VERIFY(consumer_);
 }
@@ -1243,7 +1227,7 @@ TEST_F(AppBarMediatorTest, TestNoFallback_WhenLocalEnterprisePolicyDisabled) {
   SetLocationEligible(true);
   SignInWithTriboolCapability(signin::Tribool::kUnknown);
 
-  regular_profile_->GetTestingPrefService()->SetInteger(
+  regular_profile_->GetPrefs()->SetInteger(
       prefs::kGenAiEnabledByPolicy,
       static_cast<int>(gemini::GenAiDefaultSettingsPolicy::kNotAllowed));
 
@@ -1531,8 +1515,7 @@ TEST_F(AppBarMediatorTest, TestAssistantButtonStateAIM_DisabledByPolicyLens) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeatures({kGeminiKillSwitch}, {kPageActionMenu});
 
-  regular_profile_->GetTestingPrefService()->SetInteger(
-      omnibox::kAIModeSettings, 1);
+  regular_profile_->GetPrefs()->SetInteger(omnibox::kAIModeSettings, 1);
   mediator_.overrideLensAvailabilityForTesting = YES;
 
   OCMExpect([consumer_ setAssistantButtonState:AppBarAssistantButtonState::kLens
@@ -1551,8 +1534,7 @@ TEST_F(AppBarMediatorTest,
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeatures({kGeminiKillSwitch}, {kPageActionMenu});
 
-  regular_profile_->GetTestingPrefService()->SetInteger(
-      omnibox::kAIModeSettings, 1);
+  regular_profile_->GetPrefs()->SetInteger(omnibox::kAIModeSettings, 1);
   mediator_.overrideLensAvailabilityForTesting = NO;
   SetLocationEligible(false);
 
@@ -1734,8 +1716,7 @@ TEST_F(AppBarMediatorTest, TestAssistantButtonStateLensWhenIneligibleSignedIn) {
                     regularActionFactory:regular_action_factory
                   incognitoActionFactory:incognito_action_factory
                                  profile:regular_profile_.get()
-                             prefService:regular_profile_
-                                             ->GetTestingPrefService()
+                             prefService:regular_profile_->GetPrefs()
                       templateURLService:search_engines_test_environment_
                                              .template_url_service()
                    authenticationService:auth_service_
@@ -1897,7 +1878,7 @@ TEST_F(AppBarMediatorTest, TestAssistantButtonStateAccountWhenPolicyDisabled) {
   SetLocationEligible(true);
 
   // Set policy to disabled.
-  regular_profile_->GetTestingPrefService()->SetInteger(
+  regular_profile_->GetPrefs()->SetInteger(
       prefs::kGeminiEnabledByPolicy,
       static_cast<int>(gemini::SettingsPolicy::kNotAllowed));
 
@@ -1917,7 +1898,7 @@ TEST_F(AppBarMediatorTest, TestAssistantButtonStateAccountGenAiPolicy) {
   SetLocationEligible(true);
 
   // Disable GenAi using the GenAiDefaultSettings enterprise policy.
-  regular_profile_->GetTestingPrefService()->SetInteger(
+  regular_profile_->GetPrefs()->SetInteger(
       prefs::kGenAiEnabledByPolicy,
       static_cast<int>(gemini::GenAiDefaultSettingsPolicy::kNotAllowed));
 
@@ -2002,8 +1983,7 @@ TEST_F(AppBarMediatorTest, TestGeminiEligibilityChangeUpdatesAssistantButton) {
                     regularActionFactory:regular_action_factory
                   incognitoActionFactory:incognito_action_factory
                                  profile:regular_profile_.get()
-                             prefService:regular_profile_
-                                             ->GetTestingPrefService()
+                             prefService:regular_profile_->GetPrefs()
                       templateURLService:search_engines_test_environment_
                                              .template_url_service()
                    authenticationService:auth_service_
@@ -2085,8 +2065,7 @@ TEST_F(AppBarMediatorTest, TestAimEligibilityChangeUpdatesAssistantButton) {
                     regularActionFactory:regular_action_factory
                   incognitoActionFactory:incognito_action_factory
                                  profile:regular_profile_.get()
-                             prefService:regular_profile_
-                                             ->GetTestingPrefService()
+                             prefService:regular_profile_->GetPrefs()
                       templateURLService:search_engines_test_environment_
                                              .template_url_service()
                    authenticationService:auth_service_
@@ -2162,7 +2141,7 @@ TEST_F(AppBarMediatorTest,
   SetLocationEligible(true);
 
   // Ensure GeminiSettings enterprise policy allows Gemini.
-  regular_profile_->GetTestingPrefService()->SetInteger(
+  regular_profile_->GetPrefs()->SetInteger(
       prefs::kGeminiEnabledByPolicy,
       static_cast<int>(gemini::SettingsPolicy::kAllowed));
 
@@ -2181,7 +2160,7 @@ TEST_F(AppBarMediatorTest, TestAssistantButtonState_HiddenWhenPolicyDisabled) {
   SetLocationEligible(true);
 
   // Disable Gemini using the GeminiSettings enterprise policy.
-  regular_profile_->GetTestingPrefService()->SetInteger(
+  regular_profile_->GetPrefs()->SetInteger(
       prefs::kGeminiEnabledByPolicy,
       static_cast<int>(gemini::SettingsPolicy::kNotAllowed));
 
@@ -2205,7 +2184,7 @@ TEST_F(AppBarMediatorTest,
   SetLocationEligible(true);
 
   // Disable GenAi using the GenAiDefaultSettings enterprise policy.
-  regular_profile_->GetTestingPrefService()->SetInteger(
+  regular_profile_->GetPrefs()->SetInteger(
       prefs::kGenAiEnabledByPolicy,
       static_cast<int>(gemini::GenAiDefaultSettingsPolicy::kNotAllowed));
 
@@ -2236,7 +2215,7 @@ TEST_F(AppBarMediatorTest,
   SetLocationEligible(true);
 
   // Disable Gemini using the GeminiSettings enterprise policy.
-  regular_profile_->GetTestingPrefService()->SetInteger(
+  regular_profile_->GetPrefs()->SetInteger(
       prefs::kGeminiEnabledByPolicy,
       static_cast<int>(gemini::SettingsPolicy::kNotAllowed));
 
@@ -2263,7 +2242,7 @@ TEST_F(AppBarMediatorTest,
   SetLocationEligible(true);
 
   // Disable GenAi using the GenAiDefaultSettings enterprise policy.
-  regular_profile_->GetTestingPrefService()->SetInteger(
+  regular_profile_->GetPrefs()->SetInteger(
       prefs::kGenAiEnabledByPolicy,
       static_cast<int>(gemini::GenAiDefaultSettingsPolicy::kNotAllowed));
 
@@ -2288,7 +2267,7 @@ TEST_F(AppBarMediatorTest, TestAssistantButtonStateOnLoadMetric) {
 // recording.
 TEST_F(AppBarMediatorTest, TestAssistantButtonStateOnLoadMetric_Lens) {
   // Disable Gemini via policy.
-  regular_profile_->GetTestingPrefService()->SetInteger(
+  regular_profile_->GetPrefs()->SetInteger(
       prefs::kGeminiEnabledByPolicy,
       static_cast<int>(gemini::SettingsPolicy::kNotAllowed));
 
@@ -2323,8 +2302,7 @@ TEST_F(AppBarMediatorTest, TestAssistantButtonStateOnLoadMetric_Lens) {
                     regularActionFactory:regular_action_factory
                   incognitoActionFactory:incognito_action_factory
                                  profile:regular_profile_.get()
-                             prefService:regular_profile_
-                                             ->GetTestingPrefService()
+                             prefService:regular_profile_->GetPrefs()
                       templateURLService:search_engines_test_environment_
                                              .template_url_service()
                    authenticationService:auth_service_
@@ -2363,7 +2341,7 @@ TEST_F(AppBarMediatorTest, TestAssistantButtonStateOnLoadMetric_Lens) {
 // SetUp's recording.
 TEST_F(AppBarMediatorTest, TestAssistantButtonStateOnLoadMetric_Account) {
   // Disable Gemini via policy.
-  regular_profile_->GetTestingPrefService()->SetInteger(
+  regular_profile_->GetPrefs()->SetInteger(
       prefs::kGeminiEnabledByPolicy,
       static_cast<int>(gemini::SettingsPolicy::kNotAllowed));
 
@@ -2398,8 +2376,7 @@ TEST_F(AppBarMediatorTest, TestAssistantButtonStateOnLoadMetric_Account) {
                     regularActionFactory:regular_action_factory
                   incognitoActionFactory:incognito_action_factory
                                  profile:regular_profile_.get()
-                             prefService:regular_profile_
-                                             ->GetTestingPrefService()
+                             prefService:regular_profile_->GetPrefs()
                       templateURLService:search_engines_test_environment_
                                              .template_url_service()
                    authenticationService:auth_service_
@@ -2438,7 +2415,7 @@ TEST_F(AppBarMediatorTest, TestAssistantButtonStateOnLoadMetric_Account) {
 // Tests the AIM state on-load metric.
 TEST_F(AppBarMediatorTest, TestAssistantButtonStateOnLoadMetric_AIM) {
   // Disable Gemini via policy.
-  regular_profile_->GetTestingPrefService()->SetInteger(
+  regular_profile_->GetPrefs()->SetInteger(
       prefs::kGeminiEnabledByPolicy,
       static_cast<int>(gemini::SettingsPolicy::kNotAllowed));
 
@@ -2480,8 +2457,7 @@ TEST_F(AppBarMediatorTest, TestAssistantButtonStateOnLoadMetric_AIM) {
                     regularActionFactory:regular_action_factory
                   incognitoActionFactory:incognito_action_factory
                                  profile:regular_profile_.get()
-                             prefService:regular_profile_
-                                             ->GetTestingPrefService()
+                             prefService:regular_profile_->GetPrefs()
                       templateURLService:search_engines_test_environment_
                                              .template_url_service()
                    authenticationService:auth_service_
@@ -2525,7 +2501,7 @@ TEST_F(AppBarMediatorTest,
        TestAssistantButtonStateOnLoadMetric_AIM_DeferredUntilCallback) {
   base::test::ScopedFeatureList feature_list(kAppBarAssistantCustomization);
   // Disable Gemini via policy.
-  regular_profile_->GetTestingPrefService()->SetInteger(
+  regular_profile_->GetPrefs()->SetInteger(
       prefs::kGeminiEnabledByPolicy,
       static_cast<int>(gemini::SettingsPolicy::kNotAllowed));
 
@@ -2576,8 +2552,7 @@ TEST_F(AppBarMediatorTest,
                     regularActionFactory:regular_action_factory
                   incognitoActionFactory:incognito_action_factory
                                  profile:regular_profile_.get()
-                             prefService:regular_profile_
-                                             ->GetTestingPrefService()
+                             prefService:regular_profile_->GetPrefs()
                       templateURLService:search_engines_test_environment_
                                              .template_url_service()
                    authenticationService:auth_service_
@@ -2650,7 +2625,7 @@ TEST_F(AppBarMediatorTest,
 TEST_F(AppBarMediatorTest,
        TestAssistantButtonStateOnLoadMetric_AIM_CachedInPrefs) {
   // Disable Gemini via policy.
-  regular_profile_->GetTestingPrefService()->SetInteger(
+  regular_profile_->GetPrefs()->SetInteger(
       prefs::kGeminiEnabledByPolicy,
       static_cast<int>(gemini::SettingsPolicy::kNotAllowed));
 
@@ -2659,7 +2634,7 @@ TEST_F(AppBarMediatorTest,
   response.set_is_eligible(true);
   std::string response_string;
   response.SerializeToString(&response_string);
-  regular_profile_->GetTestingPrefService()->SetString(
+  regular_profile_->GetPrefs()->SetString(
       "aim_eligibility_service.aim_eligibility_response",
       base::Base64Encode(response_string));
 
@@ -2703,8 +2678,7 @@ TEST_F(AppBarMediatorTest,
                     regularActionFactory:regular_action_factory
                   incognitoActionFactory:incognito_action_factory
                                  profile:regular_profile_.get()
-                             prefService:regular_profile_
-                                             ->GetTestingPrefService()
+                             prefService:regular_profile_->GetPrefs()
                       templateURLService:search_engines_test_environment_
                                              .template_url_service()
                    authenticationService:auth_service_
@@ -2773,7 +2747,7 @@ TEST_F(AppBarMediatorTest, TestAssistantButtonStatePriority_AIMOverLens) {
 
   // Keep location eligible for AIM, but disable Gemini via policy.
   SetLocationEligible(true);
-  regular_profile_->GetTestingPrefService()->SetInteger(
+  regular_profile_->GetPrefs()->SetInteger(
       prefs::kGeminiEnabledByPolicy,
       static_cast<int>(gemini::SettingsPolicy::kNotAllowed));
 
@@ -2843,7 +2817,7 @@ TEST_F(AppBarMediatorTest,
   [mediator_ updateAssistantButton];
   EXPECT_OCMOCK_VERIFY(consumer_);
   EXPECT_EQ(static_cast<int>(AppBarAssistantButtonPreferredState::kLens),
-            regular_profile_->GetTestingPrefService()->GetInteger(
+            regular_profile_->GetPrefs()->GetInteger(
                 prefs::kAppBarAssistantButtonPreferredState));
 
   mediator_.overrideLensAvailabilityForTesting = YES;
@@ -2903,7 +2877,7 @@ TEST_F(AppBarMediatorTest, TestAssistantButtonCustomization_LensWithoutTab) {
   base::test::ScopedFeatureList feature_list(kAppBarAssistantCustomization);
   SetLocationEligible(true);
   mediator_.overrideLensAvailabilityForTesting = NO;
-  regular_profile_->GetTestingPrefService()->SetInteger(
+  regular_profile_->GetPrefs()->SetInteger(
       lens::prefs::kLensOverlaySettings,
       static_cast<int>(lens::prefs::LensOverlaySettingsPolicyValue::kEnabled));
   SetPreferredAssistantButtonState(AppBarAssistantButtonPreferredState::kLens);
@@ -3095,7 +3069,7 @@ TEST_F(AppBarMediatorTest, TestAssistantButtonCustomization_SelectMenuEntry) {
   [lens_action performWithSender:nil target:nil];
   EXPECT_OCMOCK_VERIFY(consumer_);
   EXPECT_EQ(static_cast<int>(AppBarAssistantButtonPreferredState::kLens),
-            regular_profile_->GetTestingPrefService()->GetInteger(
+            regular_profile_->GetPrefs()->GetInteger(
                 prefs::kAppBarAssistantButtonPreferredState));
 }
 
@@ -3161,7 +3135,7 @@ TEST_F(AppBarMediatorTest, TestAssistantButtonPreferredStateOnLoadMetric_Ask) {
 TEST_F(AppBarMediatorTest,
        TestAssistantButtonPreferredStateOnLoadMetric_InvalidPreference) {
   base::test::ScopedFeatureList feature_list(kAppBarAssistantCustomization);
-  regular_profile_->GetTestingPrefService()->SetInteger(
+  regular_profile_->GetPrefs()->SetInteger(
       prefs::kAppBarAssistantButtonPreferredState,
       kInvalidAssistantButtonState);
   base::HistogramTester histogram_tester;

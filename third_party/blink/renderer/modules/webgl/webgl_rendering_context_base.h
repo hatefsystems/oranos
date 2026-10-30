@@ -720,7 +720,7 @@ class MODULES_EXPORT WebGLRenderingContextBase
   scoped_refptr<StaticBitmapImage> PaintRenderingResultsToSnapshot(
       SourceDrawingBuffer source_buffer) override;
   void ClearMarkedCanvasDirty() override { marked_canvas_dirty_ = false; }
-  scoped_refptr<CanvasResource> PaintRenderingResultsToResource(
+  scoped_refptr<ExportedCanvasResource> PaintRenderingResultsToResource(
       SourceDrawingBuffer source_buffer,
       FlushReason reason) override;
 
@@ -738,7 +738,7 @@ class MODULES_EXPORT WebGLRenderingContextBase
 
   cc::Layer* CcLayer() const override;
   void Stop() override;
-  scoped_refptr<CanvasResource> GetResourceForPushFrame(
+  scoped_refptr<ExportedCanvasResource> GetResourceForPushFrame(
       bool& should_call_push_frame) override;
 
   // DrawingBuffer::Client implementation.
@@ -1965,15 +1965,13 @@ class MODULES_EXPORT WebGLRenderingContextBase
                                 Platform::WebGLContextType,
                                 Platform::WebGLContextInfo*);
 
-  scoped_refptr<ExternalCanvasResource> ExportLowLatencyCanvasResource(
-      SourceDrawingBuffer source_buffer);
-
   CanvasNon2DResourceProvider* GetSharedImageResourceProvider();
 
   // Attempts to copy the most recent rendering results from the drawing buffer
   // into a CanvasResource. Returns the resource if the copy succeeded;
   // otherwise returns nullptr.
-  scoped_refptr<CanvasResource> CopyRenderingResultsFromDrawingBufferToResource(
+  scoped_refptr<ExportedCanvasResource>
+  CopyRenderingResultsFromDrawingBufferToResource(
       SourceDrawingBuffer source_buffer);
   void TexImageHelperMediaVideoFrame(
       TexImageParams,

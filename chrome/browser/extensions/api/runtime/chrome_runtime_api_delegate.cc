@@ -47,8 +47,8 @@
 #include "extensions/common/manifest_handlers/options_page_info.h"
 #include "extensions/common/mojom/view_type.mojom.h"
 #include "net/base/backoff_entry.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/page_transition_types.h"
-#include "ui/base/window_open_disposition.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chromeos/components/kiosk/kiosk_utils.h"
@@ -62,6 +62,11 @@
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/devtools/devtools_window.h"
+#endif
+
+#if !BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/ui/waap/initial_webui_window_metrics_manager.h"
+#include "chrome/browser/ui/waap/waap_utils.h"
 #endif
 
 namespace {
@@ -285,7 +290,7 @@ void ChromeRuntimeAPIDelegate::OpenURL(const GURL& uninstall_url) {
 
   NavigateParams params(profile, uninstall_url,
                         ui::PAGE_TRANSITION_CLIENT_REDIRECT);
-  params.disposition = WindowOpenDisposition::kNewForegroundTab;
+  params.disposition = ui::mojom::WindowOpenDisposition::kNewForegroundTab;
   params.user_gesture = false;
   Navigate(&params);
 
@@ -450,8 +455,13 @@ void ChromeRuntimeAPIDelegate::OpenOptionsPage(
 #else
     // Other platforms create windows synchronously. Fallthrough and open
     // the options page afterwards.
+    const base::TimeTicks now = base::TimeTicks::Now();
     browser = CreateBrowserWindow(std::move(params));
     CHECK(browser);
+    if (auto* manager = InitialWebUIWindowMetricsManager::From(browser)) {
+      manager->SetWindowCreationInfo(waap::NewWindowCreationSource::kExtension,
+                                     now);
+    }
 #endif
   }
   std::move(callback).Run(

@@ -21,6 +21,12 @@ Expression `monitorEvents()`
 has side effect: true, expected: true
 Expression `unmonitorEvents()`
 has side effect: true, expected: true
+Expression `document.getElementById('foo')`
+has side effect: false, expected: false
+Expression `documentFragment.getElementById('foo')`
+has side effect: false, expected: false
+Expression `shadowRoot.getElementById('foo')`
+has side effect: false, expected: false
 Expression `document.getElementsByTagName('div')`
 has side effect: false, expected: false
 Expression `document.getElementsByTagNameNS(namespace, 'div')`
@@ -38,6 +44,12 @@ has side effect: false, expected: false
 Expression `domTokenList.contains({})`
 has side effect: false, expected: false
 Expression `domTokenList.contains()`
+has side effect: false, expected: false
+Expression `bodyStyle.getPropertyValue('display')`
+has side effect: false, expected: false
+Expression `bodyStyle.getPropertyPriority('display')`
+has side effect: false, expected: false
+Expression `global_getComputedStyle(div).getPropertyValue('display')`
 has side effect: false, expected: false
 Expression `div.getAttributeNames()`
 has side effect: false, expected: false
@@ -158,6 +170,8 @@ has side effect: false, expected: false
 Expression `namedNodeMap.attr1`
 has side effect: false, expected: false
 Expression `div.getBoundingClientRect()`
+has side effect: false, expected: false
+Expression `div.getBoundingClientRect().toJSON()`
 has side effect: false, expected: false
 Expression `global_getComputedStyle(div)`
 has side effect: false, expected: false

@@ -29,6 +29,7 @@
 #include "skia/ext/legacy_display_globals.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/web_graphics_shared_image_interface_provider.h"
+#include "third_party/blink/renderer/platform/graphics/accelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_2d_resource_provider.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_image_provider.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource.h"
@@ -561,7 +562,7 @@ void CanvasNon2DResourceProvider::EndExternalWrite(
   resource()->EndExternalWrite(external_write_sync_token);
 }
 
-scoped_refptr<CanvasResource>
+scoped_refptr<ExportedCanvasResource>
 CanvasNon2DResourceProvider::DoExternalOverdrawAndProduceResource(
     base::FunctionRef<void(cc::PaintCanvas&)> draw_callback) {
   cached_snapshot_.reset();
@@ -570,7 +571,7 @@ CanvasNon2DResourceProvider::DoExternalOverdrawAndProduceResource(
     return nullptr;
   }
 
-  scoped_refptr<CanvasResource> software_resource;
+  scoped_refptr<CanvasResourceSharedImage> software_resource;
   if (IsSoftware()) {
     software_resource = NewOrRecycledResource();
     if (!software_resource) {
@@ -589,10 +590,12 @@ CanvasNon2DResourceProvider::DoExternalOverdrawAndProduceResource(
     static_cast<CanvasResourceSharedImage*>(software_resource.get())
         ->UploadSoftwareRenderingResults(GetSkSurface());
 
-    return software_resource;
+    return base::MakeRefCounted<ExportedCanvasResource>(
+        std::move(software_resource));
   }
 
-  return resource_;
+  return resource_ ? base::MakeRefCounted<ExportedCanvasResource>(resource_)
+                   : nullptr;
 }
 
 scoped_refptr<StaticBitmapImage>
@@ -636,12 +639,13 @@ void CanvasNon2DResourceProvider::EnsureResourceReadyForDraw() {
   }
 }
 
-scoped_refptr<CanvasResource>
+scoped_refptr<ExportedCanvasResource>
 CanvasNon2DResourceProvider::ProduceCanvasResource() {
   TRACE_EVENT0("blink", "CanvasNon2DResourceProvider::ProduceCanvasResource");
   if (IsSoftware()) {
     DCHECK(GetSkSurface());
-    scoped_refptr<CanvasResource> output_resource = NewOrRecycledResource();
+    scoped_refptr<CanvasResourceSharedImage> output_resource =
+        NewOrRecycledResource();
     if (!output_resource) {
       return nullptr;
     }
@@ -651,14 +655,15 @@ CanvasNon2DResourceProvider::ProduceCanvasResource() {
     static_cast<CanvasResourceSharedImage*>(output_resource.get())
         ->UploadSoftwareRenderingResults(GetSkSurface());
 
-    return output_resource;
+    return base::MakeRefCounted<ExportedCanvasResource>(output_resource);
   }
 
   if (IsGpuContextLost()) {
     return nullptr;
   }
 
-  return resource_;
+  return resource_ ? base::MakeRefCounted<ExportedCanvasResource>(resource_)
+                   : nullptr;
 }
 
 scoped_refptr<StaticBitmapImage> CanvasNon2DResourceProvider::Snapshot(
@@ -698,7 +703,33 @@ scoped_refptr<StaticBitmapImage> CanvasNon2DResourceProvider::Snapshot(
   }
 
   if (!cached_snapshot_) {
-    cached_snapshot_ = resource_->Bitmap();
+    // The |release_callback| keeps a ref on this resource to ensure the backing
+    // shared image is kept alive until the lifetime of the image.
+    // Note that the code in CanvasResourceProvider::RecycleResource also uses
+    // the ref-count on the resource as a proxy for a read lock to allow
+    // recycling the resource once all refs have been released.
+    auto release_callback = base::BindOnce(
+        [](scoped_refptr<CanvasResourceSharedImage>&& resource,
+           const gpu::SyncToken& sync_token, bool lost_resource) {
+          CHECK(resource);
+
+          resource->WaitSyncToken(sync_token);
+          if (lost_resource) {
+            resource->NotifyResourceLost();
+          }
+
+          CanvasResource::DropRefOnOwningThread(std::move(resource));
+        },
+        resource_);
+
+    const auto& client_shared_image = resource_->GetSharedImage();
+
+    cached_snapshot_ =
+        AcceleratedStaticBitmapImage::CreateFromCanvasSharedImage(
+            client_shared_image, resource_->sync_token(),
+            client_shared_image->alpha_type(), resource_->hdr_metadata_,
+            resource_->context_provider_wrapper_, resource_->owning_thread_ref_,
+            resource_->owning_thread_task_runner_, std::move(release_callback));
 
     // We'll record its content_id to be used by the FlushForImageListener.
     // This will be needed in EnsureResourceReadyForDraw(), but we are doing it
@@ -799,7 +830,8 @@ void CanvasNon2DResourceProvider::FlushRecording(
 base::ByteSize CanvasNon2DResourceProvider::EstimatedSizeInBytes() const {
   base::ByteSize result;
   if (resource_) {
-    result += resource_->EstimatedSizeInBytes() * num_inflight_resources_;
+    result += resource_->GetSharedImage()->EstimatedSizeInBytes() *
+              num_inflight_resources_;
   }
   return result;
 }

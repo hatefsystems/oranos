@@ -36,7 +36,16 @@ BASE_DECLARE_FEATURE(kUnthrottledTabProcessReporting);
 BASE_DECLARE_FEATURE(kBatterySaverModeAvailable);
 
 // Flags to control HaTS surveys about Chrome performance.
+BASE_DECLARE_FEATURE(kPerformanceControlsPerformanceSurvey);
+BASE_DECLARE_FEATURE(kPerformanceControlsBatteryPerformanceSurvey);
+BASE_DECLARE_FEATURE(kPerformanceControlsMemorySaverOptOutSurvey);
+BASE_DECLARE_FEATURE(kPerformanceControlsBatterySaverOptOutSurvey);
 BASE_DECLARE_FEATURE(kPerformanceControlsPPMSurvey);
+
+// Defines the time delta to look back when checking if a device has used
+// battery.
+BASE_DECLARE_FEATURE_PARAM(base::TimeDelta,
+                           kPerformanceControlsBatterySurveyLookback);
 
 // Defines the minimum and maximum delay before showing the PPM survey. It will
 // be shown the next time the user opens the New Tab Page after a random time in
@@ -124,6 +133,11 @@ extern const base::FeatureParam<bool> kInheritParentPriority;
 extern const base::FeatureParam<bool> kRenderedOutOfViewIsNotVisible;
 
 extern const base::FeatureParam<bool> kRendererHighInitialPriority;
+
+// When enabled, a subframe is not visible if its parent frame is not visible.
+// This covers frames whose viewport intersection is never reported, e.g. frames
+// inside a `display:none` frame.
+BASE_DECLARE_FEATURE(kSubframeNotVisibleIfParentNotVisible);
 
 // Boosts the priority of loading pages: kUserBlocking in the active tab, and
 // kUserVisible in background tabs. Original version, which boosts every

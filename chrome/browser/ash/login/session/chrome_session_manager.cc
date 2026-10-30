@@ -64,7 +64,6 @@
 #include "components/signin/public/identity_manager/accounts_mutator.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/primary_account_mutator.h"
-#include "components/sync/base/features.h"
 #include "components/user_manager/common_types.h"
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/user_manager.h"
@@ -134,13 +133,24 @@ void StartAutoLaunchKioskSession(
 }
 
 // Starts the login/oobe screen.
-void StartLoginOobeSession(PrefService& local_state) {
+// `local_state`, `metrics_service`, `application_locale_storage`, and
+// `browser_policy_connector_ash` must be non-null and must outlive the
+// LoginDisplayHost created by ShowLoginWizard().
+// `shared_url_loader_factory` must be non-null.
+void StartLoginOobeSession(
+    PrefService* local_state,
+    ::metrics::MetricsService* metrics_service,
+    ApplicationLocaleStorage* application_locale_storage,
+    scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory,
+    policy::BrowserPolicyConnectorAsh* browser_policy_connector_ash) {
   // State will be defined once out-of-box/login branching is complete.
-  ShowLoginWizard(OOBE_SCREEN_UNKNOWN);
+  ShowLoginWizard(local_state, metrics_service, application_locale_storage,
+                  std::move(shared_url_loader_factory),
+                  browser_policy_connector_ash, OOBE_SCREEN_UNKNOWN);
 
   // Reset reboot after update flag when login screen is shown.
   if (!ash::InstallAttributes::Get()->IsEnterpriseManaged()) {
-    local_state.ClearPref(ash::prefs::kRebootAfterUpdate);
+    local_state->ClearPref(prefs::kRebootAfterUpdate);
   }
 }
 
@@ -180,8 +190,6 @@ void UpsertStubUserToAccountManager(const user_manager::User& user,
   // 3. Set it as the Primary Account.
   const signin::ConsentLevel consent_level = [&]() {
     if (identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync) ||
-        !base::FeatureList::IsEnabled(
-            syncer::kReplaceSyncPromosWithSignInPromos) ||
         base::FeatureList::IsEnabled(
             ::switches::kUndoChromeOsUseConsentLevelSignin)) {
       return signin::ConsentLevel::kSync;
@@ -508,7 +516,10 @@ void ChromeSessionManager::Initialize(
       return;
     }
     VLOG(1) << "Starting Chrome with login/oobe screen.";
-    StartLoginOobeSession(local_state_.get());
+    StartLoginOobeSession(&local_state_.get(), metrics_service,
+                          application_locale_storage,
+                          std::move(shared_url_loader_factory),
+                          &browser_policy_connector_ash_.get());
   } else {
     VLOG(1) << "Starting Chrome with a user session.";
     StartUserSession(std::move(shared_url_loader_factory), user_manager_,

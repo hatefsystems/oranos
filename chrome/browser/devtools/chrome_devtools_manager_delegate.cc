@@ -66,9 +66,9 @@
 #include "extensions/browser/view_type_utils.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/mojom/view_type.mojom.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/base/window_open_disposition.h"
 #include "ui/gfx/switches.h"
 #include "ui/views/controls/webview/webview.h"
 
@@ -449,7 +449,7 @@ scoped_refptr<DevToolsAgentHost> ChromeDevToolsManagerDelegate::CreateNewTarget(
     return nullptr;
   }
   NavigateParams params(profile, url, ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
-  params.disposition = WindowOpenDisposition::kNewForegroundTab;
+  params.disposition = ui::mojom::WindowOpenDisposition::kNewForegroundTab;
   Navigate(&params);
   if (!params.navigated_or_inserted_contents)
     return nullptr;
@@ -589,7 +589,7 @@ void ChromeDevToolsManagerDelegate::SetActiveWebSocketConnections(
   } else if (count > 0 && !infobar_) {
     auto delegate = std::make_unique<DevToolsRemoteServerInfobarDelegate>();
     delegate->AddObserver(this);
-    infobar_ = GlobalConfirmInfoBar::Show(std::move(delegate));
+    infobar_ = GlobalConfirmInfoBar::Show(std::move(delegate))->GetWeakPtr();
   }
 }
 

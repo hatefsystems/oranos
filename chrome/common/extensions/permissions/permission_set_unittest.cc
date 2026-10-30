@@ -782,7 +782,9 @@ TEST(PermissionsTest, PermissionMessages) {
   skip.insert(APIPermissionID::kGcm);
   skip.insert(APIPermissionID::kIdle);
   skip.insert(APIPermissionID::kImeWindowEnabled);
+#if BUILDFLAG(IS_CHROMEOS)
   skip.insert(APIPermissionID::kLoginState);
+#endif
   skip.insert(APIPermissionID::kOffscreen);
   skip.insert(APIPermissionID::kOverrideEscFullscreen);
 #if BUILDFLAG(ENABLE_PLATFORM_APPS)
@@ -861,7 +863,9 @@ TEST(PermissionsTest, PermissionMessages) {
 #if BUILDFLAG(ENABLE_PLATFORM_APPS)
   skip.insert(APIPermissionID::kArcAppsPrivate);
 #endif
+#if BUILDFLAG(IS_CHROMEOS)
   skip.insert(APIPermissionID::kAutoTestPrivate);
+#endif
   skip.insert(APIPermissionID::kBrailleDisplayPrivate);
   skip.insert(APIPermissionID::kCecPrivate);
   skip.insert(APIPermissionID::kChromeosInfoPrivate);

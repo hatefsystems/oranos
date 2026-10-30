@@ -47,6 +47,7 @@
 #include "chrome/browser/finds/core/finds_tab_helper.h"
 #include "chrome/browser/finds/finds_service_factory.h"
 #include "chrome/browser/flags/android/chrome_feature_list.h"
+#include "chrome/browser/glic/glic_gemini_web_warming_observer.h"
 #include "chrome/browser/glic/glic_marketing_page_tab_helper.h"
 #include "chrome/browser/glic/host/glic_drag_and_drop_util.h"
 #include "chrome/browser/glic/public/features.h"
@@ -303,14 +304,6 @@ TabFeatures::TabFeatures(content::WebContents* web_contents, Profile* profile) {
   }
   InitializePageLoadMetricsForWebContents(web_contents);
 
-  sync_sessions_router_ =
-      std::make_unique<sync_sessions::SyncSessionsRouterTabHelper>(
-          web_contents,
-          sync_sessions::SyncSessionsWebContentsRouterFactory::GetForProfile(
-              profile),
-          ChromeTranslateClient::FromWebContents(web_contents),
-          favicon::ContentFaviconDriver::FromWebContents(web_contents));
-
   http_auth_cache_status_ = std::make_unique<HttpAuthCacheStatus>(web_contents);
 
   security_state_event_observer_ =
@@ -444,6 +437,11 @@ TabFeatures::TabFeatures(content::WebContents* web_contents, Profile* profile) {
     glic_marketing_page_tab_helper_ =
         std::make_unique<glic::GlicMarketingPageTabHelper>(web_contents);
   }
+  if (glic::GlicEnabling::IsProfileEligible(profile) &&
+      base::FeatureList::IsEnabled(features::kGlicWarmOnGeminiWeb)) {
+    glic_gemini_web_warming_observer_ =
+        std::make_unique<glic::GlicGeminiWebWarmingObserver>(tab);
+  }
 
 #if BUILDFLAG(ENABLE_WEBUI_NTP)
   if (base::FeatureList::IsEnabled(ntp_features::kNtpCustomizeWebUiAndroid)) {
@@ -511,9 +509,7 @@ TabFeatures::TabFeatures(content::WebContents* web_contents, Profile* profile) {
       enterprise_connectors::IsReferrerChainNeededForEnterprise(profile));
   if (g_browser_process->safe_browsing_service()) {
     safe_browsing::AsyncCheckTracker::CreateForWebContents(
-        web_contents, g_browser_process->safe_browsing_service()->ui_manager(),
-        safe_browsing::AsyncCheckTracker::
-            IsPlatformEligibleForSyncCheckerCheckAllowlist());
+        web_contents, g_browser_process->safe_browsing_service()->ui_manager());
   }
   if (autofill::ContentAutofillClient::FromWebContents(web_contents)) {
     // Attach password reuse detection client when Autofill is present.
@@ -643,6 +639,14 @@ TabFeatures::TabFeatures(content::WebContents* web_contents, Profile* profile) {
         GetUserDataFactory().CreateInstance<SupervisedUserNavigationObserver>(
             *tab, *tab, web_contents);
   }
+
+  sync_sessions_router_ =
+      std::make_unique<sync_sessions::SyncSessionsRouterTabHelper>(
+          web_contents,
+          sync_sessions::SyncSessionsWebContentsRouterFactory::GetForProfile(
+              profile),
+          ChromeTranslateClient::FromWebContents(web_contents),
+          favicon::ContentFaviconDriver::FromWebContents(web_contents));
 
   offline_page_tab_helper_ =
       GetUserDataFactory().CreateInstance<offline_pages::OfflinePageTabHelper>(

@@ -451,6 +451,7 @@ void OmniboxViewViews::Update() {
     // If the text is unchanged, we still need to re-emphasize the text, as the
     // security state may be different from before the Update.
     EmphasizeURLComponents();
+    InstallPlaceholderText();
   }
 }
 
@@ -803,6 +804,7 @@ bool OmniboxViewViews::HandOffContextMenuToWebUI(
     select_all_on_mouse_release_ = false;
     is_mouse_pressed_ = false;
     filter_drag_events_for_unelision_ = false;
+    ElideAfterPress();
     if (GetWidget() && GetWidget()->GetRootView()) {
       GetWidget()->GetRootView()->SetMouseAndGestureHandler(nullptr);
     }
@@ -1439,6 +1441,18 @@ bool OmniboxViewViews::OnMousePressed(const ui::MouseEvent& event) {
   is_mouse_pressed_ = true;
   is_user_initiated_focus_ = true;
 
+  // In Full WebUI mode the textfield never takes focus, so `OnFocus()` never
+  // stops eliding its text, and tail-elided text can't scroll: a drag past the
+  // ellipsis would select to the end of the URL without showing where. Stop
+  // eliding for the duration of the press, as `OnFocus()` does in classic
+  // mode, so the text scrolls to follow the drag. `ElideAfterPress()` elides
+  // it again once the press is over. This must precede
+  // `views::Textfield::OnMousePressed()`, which places the caret, so that the
+  // press lands on the unelided layout.
+  if (IsFullWebUIOmniboxReady() && event.IsOnlyLeftMouseButton()) {
+    StopEliding();
+  }
+
   // A single click starts a new click gesture. Later clicks of a multi-click
   // gesture (e.g. a double-click) inherit whether the first click requested
   // zero-prefix suggestions.
@@ -1631,6 +1645,12 @@ void OmniboxViewViews::OnMouseReleased(const ui::MouseEvent& event) {
     TextChanged();
   }
 
+  // The press is over, so the text no longer needs to scroll to follow a drag
+  // (see `OnMousePressed()`). In Full WebUI mode the WebUI popup opens over the
+  // textfield below and takes over the selection, so elide the text again,
+  // back to how the textfield shows it while the popup is closed.
+  ElideAfterPress();
+
   if (IsFullWebUIOmniboxReady()) {
     // In Full WebUI mode, the native textfield maintains `FocusBehavior::NEVER`
     // so `views::Textfield::OnMouseReleased()` does not acquire Views focus.
@@ -1670,11 +1690,13 @@ void OmniboxViewViews::OnMouseCaptureLost() {
   // popup presenter is held open. If mouse capture is interrupted mid-drag
   // (e.g. by an OS window switch, Alt+Tab, or modal dialog),
   // `OnMouseReleased()` is never dispatched. Reset transient mouse drag state
-  // here to prevent staying stuck in drag-selection painting mode.
+  // here to prevent staying stuck in drag-selection painting mode, or with the
+  // text unelided and scrolled.
   if (IsFullWebUIOmnibox()) {
     is_mouse_pressed_ = false;
     select_all_on_mouse_release_ = false;
     filter_drag_events_for_unelision_ = false;
+    ElideAfterPress();
   }
 
   views::Textfield::OnMouseCaptureLost();
@@ -1825,14 +1847,7 @@ void OmniboxViewViews::OnFocus() {
     UpdateAccessibleTextSelection();
   }
 
-  GetRenderText()->SetElideBehavior(gfx::NO_ELIDE);
-
-#if BUILDFLAG(SUPPORTS_AX_TEXT_OFFSETS)
-  // The text offsets are no longer valid when the elide behavior changes, even
-  // if the accessible value is technically still the same. Therefore we are
-  // forcing the update.
-  UpdateAccessibleTextOffsetsIfNeeded();
-#endif  // BUILDFLAG(SUPPORTS_AX_TEXT_OFFSETS)
+  StopEliding();
 
   if (location_bar_view_) {
     location_bar_view_->OnOmniboxFocused();
@@ -1974,6 +1989,29 @@ void OmniboxViewViews::OnBlur() {
 
   ClearAccessibilityLabel();
   InstallPlaceholderText();
+}
+
+void OmniboxViewViews::StopEliding() {
+  GetRenderText()->SetElideBehavior(gfx::NO_ELIDE);
+
+#if BUILDFLAG(SUPPORTS_AX_TEXT_OFFSETS)
+  // The text offsets are no longer valid when the elide behavior changes, even
+  // if the accessible value is technically still the same. Therefore we are
+  // forcing the update.
+  UpdateAccessibleTextOffsetsIfNeeded();
+#endif  // BUILDFLAG(SUPPORTS_AX_TEXT_OFFSETS)
+}
+
+void OmniboxViewViews::ElideAfterPress() {
+  // A focused textfield stays unelided, as `OnFocus()` left it. An unfocused
+  // one should show the elided URL, whether a press unelided it or `OnBlur()`
+  // skipped eliding it because a WebUI popup was open.
+  if (HasFocus() || GetRenderText()->elide_behavior() != gfx::NO_ELIDE) {
+    return;
+  }
+  ElideAndResetScrollPosition();
+  // `gfx::RenderText` changes don't repaint the view by themselves.
+  SchedulePaint();
 }
 
 void OmniboxViewViews::ElideAndResetScrollPosition() {
@@ -2327,22 +2365,11 @@ bool OmniboxViewViews::HandleKeyEvent(views::Textfield* textfield,
 
     case ui::VKEY_SPACE: {
       if (aim_page_action_icon_has_fake_focus_) {
-        if (base::FeatureList::IsEnabled(
-                omnibox::kAiModeSpaceDoesNotActivate)) {
-          // Pressing space should add a space to user input, cause AIM button
-          // to lose focus, and move focus back to first suggestion.
-          ApplyFocusRingToAimButton(false);
-          controller()->edit_model()->SetCaretVisibility(true);
-          return false;  // Fallthrough to insert space
-        } else {
-          controller()->edit_model()->OpenSelection(
-              OmniboxPopupSelection(
-                  OmniboxPopupSelection::kNoMatch,
-                  OmniboxPopupSelection::LineState::kFocusedButtonAim),
-              event.time_stamp(), WindowOpenDisposition::kCurrentTab,
-              /*via_keyboard=*/true);
-          return true;
-        }
+        // Pressing space should add a space to user input, cause AIM button
+        // to lose focus, and move focus back to first suggestion.
+        ApplyFocusRingToAimButton(false);
+        controller()->edit_model()->SetCaretVisibility(true);
+        return false;  // Fallthrough to insert space
       }
 
       if (controller()->IsPopupOpen() && !control && !alt && !shift) {

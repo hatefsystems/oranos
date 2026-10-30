@@ -261,6 +261,10 @@ public final class ProductionSupportedFlagList {
                 "When enabled, datalist popups are suppressed when the field is outside the"
                         + " container view's visible bounds."),
         Flag.baseFeature(
+                AndroidAutofillFeatures.ANDROID_AUTOFILL_INCLUDE_SELECT_OPTION_VALUES_NAME,
+                "When enabled, select elements include both option display texts and option"
+                        + " values in ViewStructure.setAutofillOptions."),
+        Flag.baseFeature(
                 AutofillFeatures.AUTOFILL_ACCEPT_DOM_MUTATION_AFTER_AUTOFILL_SUBMISSION,
                 "Accepts DOM_MUTATION_AFTER_AUTOFILL submissions detected on password forms."),
         Flag.baseFeature(
@@ -449,13 +453,6 @@ public final class ProductionSupportedFlagList {
         Flag.baseFeature(
                 BlinkFeatures.WEB_RTC_USE_MEDIA_THREAD_TYPES,
                 "Use media thread types (presentation, audio processing) for WebRTC."),
-        Flag.baseFeature(
-                "WebRtcEncodedTransformsPerStreamCreation",
-                "Allows creating WebRTC Encoded Transforms without the "
-                        + "encodedInsertableStreams RTCPeerConnection Parameter."),
-        Flag.baseFeature(
-                "WebRtcEncodedTransformDirectCallback",
-                "Directly invoke WebRTC Encoded Transform callbacks in a worker."),
         Flag.baseFeature("WebRtcPqcForDtls", "Enable Post-Quantum Cryptography in WebRTC"),
         Flag.baseFeature(
                 ContentSwitches.DISABLE_DOMAIN_BLOCKING_FOR3DAP_IS,
@@ -480,7 +477,6 @@ public final class ProductionSupportedFlagList {
                 "When enabled, reduces SubresourceResponseStarted IPC by sending"
                         + " subresource notifications only if the user has allowed"
                         + " HTTPS-related exceptions."),
-        Flag.baseFeature("CanvasColorCache"),
         Flag.baseFeature(
                 SafeBrowsingFeatures.HASH_PREFIX_REAL_TIME_LOOKUPS,
                 "When enabled, Safe Browsing checks will happen in real time"),
@@ -536,6 +532,7 @@ public final class ProductionSupportedFlagList {
                 NetFeatures.CACHE_CERT_VERIFICATION,
                 "Enables caching of certificate verification results"),
         Flag.baseFeature("MojoFixGeometricBufferGrowth"),
+        Flag.baseFeature("MojoFixGeometricBufferGrowth2"),
         Flag.baseFeature(
                 "FixDataPipeTrapBug",
                 "Used to disable a specific bug fix for a long-standing bug that may"
@@ -558,10 +555,6 @@ public final class ProductionSupportedFlagList {
                 UiAndroidFeatures.AVOID_PER_CONTEXT_COLOR_PROVIDERS,
                 "Avoids per-context ColorProviders for contexts without dynamic color support."),
         Flag.baseFeature(
-                UiAndroidFeatures.DEPRECATED_EXTERNAL_PICKER_FUNCTION,
-                "Deprecates old external file picker function."),
-        Flag.baseFeature("ThreadGroupSemaphore"),
-        Flag.baseFeature(
                 AwFeatures.WEBVIEW_RENDER_DOCUMENT,
                 "If enabled, same-site navigations will change RenderFrameHosts"),
         Flag.baseFeature(
@@ -576,16 +569,13 @@ public final class ProductionSupportedFlagList {
         Flag.baseFeature(
                 UiEventsFeatures.COMPENSATE_GESTURE_DETECTOR_TIMEOUTS,
                 "Componesate for event processing delay for calculating gesture timeouts."),
-        Flag.baseFeature("ReduceCpuUtilization2"),
         Flag.baseFeature(
                 "ReduceMojoURLLoaderFactoryCloning",
                 "Minimizes Mojo URLLoaderFactory cloning overhead during navigation and worker"
                         + " startup."),
-        Flag.baseFeature("NetworkServiceCookiesHighPriorityTaskRunner"),
         Flag.baseFeature("AvoidScheduleWorkDuringNativeEventProcessing"),
         Flag.baseFeature("AvoidEntryCreationForNoStore"),
         Flag.baseFeature("ChangeGeneratedCodeCacheSize"),
-        Flag.baseFeature("RaiseDisplayCriticalThreadPriority"),
         Flag.baseFeature("BatchNativeEventsInMessagePumpEpoll"),
         Flag.baseFeature(
                 VizFeatures.ON_BEGIN_FRAME_THROTTLE_VIDEO,
@@ -662,11 +652,6 @@ public final class ProductionSupportedFlagList {
                 "SymphoniaVorbisDecoding",
                 "Enables use of the SymphoniaAudioDecoder for decoding Vorbis audio files."),
         Flag.baseFeature(
-                "AudioInputConfirmReadsViaShmem",
-                "Enables an audio input optimization that uses shared memory instead of"
-                        + " socket messages for audio IPC read confirmations."),
-        Flag.baseFeature("UseRustJsonParser"),
-        Flag.baseFeature(
                 "UpdateScrollPredictorInputMapping",
                 "Updates the scroll predictor's input mapping and behavior. When enabled: 1. It"
                     + " uses `sample_time` (VSync time - 5ms) as the boundary for a frame's events"
@@ -677,7 +662,6 @@ public final class ProductionSupportedFlagList {
         Flag.baseFeature("V8ConcurrentSparkplug"),
         Flag.baseFeature("V8Flag_homomorphic_ic"),
         Flag.baseFeature("V8Flag_intl_date_time_pattern_generator_cache_eviction"),
-        Flag.baseFeature("V8Flag_incremental_marking_always_user_visible"),
         Flag.baseFeature("V8Flag_large_page_pool"),
         Flag.baseFeature("V8Flag_late_heap_limit_check"),
         Flag.baseFeature("V8Flag_managed_zone_memory"),
@@ -701,14 +685,10 @@ public final class ProductionSupportedFlagList {
         Flag.baseFeature("V8MemoryPoolReleaseOnMallocFailures"),
         Flag.baseFeature("V8PreconfigureOldGen"),
         Flag.baseFeature("V8ScavengerHigherCapacity"),
-        Flag.baseFeature("V8IncrementalMarkingStartUserVisible"),
         Flag.baseFeature(
                 "PMProcessPriorityPolicy",
                 "Controls whether the priority of renderers is controlled by the performance "
                         + "manager."),
-        Flag.baseFeature(
-                "RunPerformanceManagerOnMainThreadSync",
-                "Controls whether the performance manager runs on the main thread."),
         Flag.baseFeature(
                 BlinkFeatures.BACKGROUND_RESOURCE_FETCH,
                 "Process resource requests in a background thread inside Blink."),
@@ -755,9 +735,6 @@ public final class ProductionSupportedFlagList {
                 "MojoChannelAssociatedSendUsesRunOrPostTask",
                 "Enables optimization for sending messages on channel-associated interfaces"),
         Flag.baseFeature(
-                "MojoChannelAssociatedCrashesOnSendError",
-                "Enable a CHECK to verify if there are Mojo send errors in the field"),
-        Flag.baseFeature(
                 "MojoBindingsInlineSLS",
                 "Enable small value optimization for current Mojo dispatch context storage"),
         Flag.baseFeature(
@@ -787,7 +764,6 @@ public final class ProductionSupportedFlagList {
         Flag.baseFeature(
                 BlinkFeatures.BACK_FORWARD_CACHE_SEND_NOT_RESTORED_REASONS,
                 "Expose NotRestoredReasons via PerformanceNavigationTiming API."),
-        Flag.baseFeature("SkipUnnecessaryThreadHopsForParseHeaders"),
         Flag.commandLine(
                 AwSwitches.WEBVIEW_FORCE_DISABLE3PCS,
                 "Force disables 3rd party cookies for all apps."),
@@ -807,7 +783,6 @@ public final class ProductionSupportedFlagList {
                 "Schedule DOM Timers with high precision only if their deadline is <4ms."),
         Flag.baseFeature(
                 "InputStreamOptimizations", "Enables optimizations to input stream handling."),
-        Flag.baseFeature("WebViewOptimizeXrwNavigationFlow"),
         Flag.baseFeature(
                 "EnableHangWatcher", "Controls whether hooks for hang detection are active"),
         Flag.baseFeature("EnsureExistingRendererAlive"),
@@ -893,7 +868,6 @@ public final class ProductionSupportedFlagList {
                 "Enables Write-Ahead Logging (WAL) mode for the SQLite database used by the"
                         + " Chromium components that WebView relies on"),
         Flag.baseFeature("ServiceWorkerAvoidMainThreadForInitialization"),
-        Flag.baseFeature("DirectCompositorThreadIpc"),
         Flag.baseFeature(
                 BlinkFeatures.BF_CACHE_OPEN_BROADCAST_CHANNEL,
                 "Start putting pages with broadcast channel into bfcache."),
@@ -908,7 +882,6 @@ public final class ProductionSupportedFlagList {
                 "WebViewIgnoreDuplicateNavs",
                 "Ignore duplicate navigations, keeping the older navigations instead."),
         Flag.baseFeature("OverrideAPIKeyFeature"),
-        Flag.baseFeature("CacheStylusSettings", "Cache stylus related settings."),
         Flag.baseFeature("Prerender2FallbackPrefetchSpecRules"),
         Flag.baseFeature(
                 "LCPTimingPredictorPrerender2",
@@ -916,12 +889,6 @@ public final class ProductionSupportedFlagList {
                         + " finished."),
         Flag.baseFeature(
                 BlinkFeatures.PRERENDER2_MEMORY_CONTROLS, "Controls memory limits for Prerender2."),
-        Flag.baseFeature(
-                "SelectParserRelaxation",
-                "Enables new HTML parser behavior for the <select> element."),
-        Flag.baseFeature(
-                "CSSReadingFlow",
-                "Enables new CSS reading-flow property for focus navigation in visual order."),
         Flag.baseFeature(
                 "SimpleCachePrioritizedCaching",
                 "When enabled, main frame navigation resources will be prioritized in Simple"
@@ -963,7 +930,6 @@ public final class ProductionSupportedFlagList {
         Flag.baseFeature(
                 GpuFeatures.WEB_GPU_ENABLE_RANGE_ANALYSIS_FOR_ROBUSTNESS,
                 "Use range analysis to remove unnecessary bounds checks"),
-        Flag.baseFeature("RunBeforeUnloadClosureOnStackInvestigation"),
         Flag.baseFeature(BlinkFeatures.FENCED_FRAMES, "Enable Fenced Frames HTML Element."),
         Flag.baseFeature(
                 BlinkFeatures.FENCED_FRAMES_API_CHANGES,
@@ -989,7 +955,6 @@ public final class ProductionSupportedFlagList {
                 NetworkServiceFeatures.INCREASE_COOKIE_ACCESS_CACHE_SIZE,
                 "When enabled, keep more cookies in the cache to be able to skip redundant access"
                         + " notifications."),
-        Flag.baseFeature("ProgressiveAccessibility"),
         Flag.baseFeature("PreloadingNoSamePageFragmentAnchorTracking"),
         Flag.baseFeature(
                 NetFeatures.RESTRICT_ABUSE_PORTS_ON_LOCALHOST,
@@ -1155,9 +1120,6 @@ public final class ProductionSupportedFlagList {
                 "IgnoreQuicCryptoConfigMemoryPressure",
                 "If true, ignore memory pressure for all network isolation partitions in the Quic"
                         + " session cache."),
-        Flag.baseFeature(
-                "WebViewPersistentMetricsInNoBackupDir",
-                "Migrate the persistent metrics file to the nobackupfiles directory."),
         Flag.baseFeature(
                 "ConnectionKeepAliveForHttp2",
                 "When enabled, WebView#preconnect will use a ConnectionKeepAliveConfig for"
@@ -1549,6 +1511,20 @@ public final class ProductionSupportedFlagList {
                 "AndroidSurfaceControlHdrOverlays",
                 "Enable the use of overlays on devices which support them for HDR content"
                         + " playback."),
+        Flag.baseFeature(
+                ContentFeatures.CASE_INSENSITIVE_MHTML_MUST_DOWNLOAD,
+                "When enabled, MHTML responses with mixed-case MIME types (e.g."
+                        + " \"Multipart/Related\") for URLs other than file: and content: are"
+                        + " treated as downloads, matching lowercase MHTML MIME types."),
+        Flag.baseFeature(
+                "PropagateStrictEchMode",
+                "Enables propagating strict ECH (Encrypted Client Hello) mode on Android."),
+        Flag.baseFeature(
+                BlinkFeatures.XML_PARSING_RUST,
+                "Enables the Rust based XML parser for all XML parsing."),
+        Flag.baseFeature(
+                "V8Flag_code_cache_source_hash_sha256",
+                "Auto-generated flag for V8Flag_code_cache_source_hash_sha256."),
         // Add new commandline switches and features above. The final entry should have a
         // trailing comma for cleaner diffs.
     };

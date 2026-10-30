@@ -458,6 +458,9 @@ void CanvasRenderingContext2D::ScrollPathIntoViewInternal(const Path& path) {
 
 sk_sp<PaintFilter> CanvasRenderingContext2D::StateGetFilter() {
   HTMLCanvasElement* const element = canvas();
+  if (GetState().HasCSSFilterWithUrl() && element->GetDocument().GetFrame()) {
+    element->GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kCanvas);
+  }
   return GetState().GetFilter(element, element->Size(), this);
 }
 
@@ -699,14 +702,6 @@ void CanvasRenderingContext2D::UpdateFilterReferences(
 void CanvasRenderingContext2D::ResourceContentChanged(SVGResource*) {
   ClearFilterReferences();
   GetState().ClearResolvedFilter();
-}
-
-bool CanvasRenderingContext2D::OriginClean() const {
-  return Host()->OriginClean();
-}
-
-void CanvasRenderingContext2D::SetOriginTainted() {
-  Host()->SetOriginTainted();
 }
 
 int CanvasRenderingContext2D::Width() const {
@@ -1116,9 +1111,7 @@ void CanvasRenderingContext2D::CreateBacking() {
     CreateSoftwareSurface();
   }
   if (HasBacking()) {
-    ConfigureRecorder(
-        canvas()->Size(),
-        GetSharedImageProvider() && GetSharedImageProvider()->IsGraphite());
+    ConfigureRecorder(canvas()->Size(), IsGraphite());
   }
 }
 

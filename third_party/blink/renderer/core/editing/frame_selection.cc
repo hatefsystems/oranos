@@ -568,7 +568,7 @@ void FrameSelection::UpdateTextOverflowOfSelectionFocus(const Element& element,
     return;
   }
   LayoutObject* style_owner =
-      focus_node->GetLayoutObject()->ContainingBlockForTextOverflow();
+      focus_node->GetLayoutObject()->ContainerForTextOverflow();
   if (!style_owner || style_owner->ContainsSelectionFocus() == focused) {
     return;
   }
@@ -753,6 +753,18 @@ bool FrameSelection::SelectionHasFocus() const {
   if (focused_element->IsTextControl() &&
       focused_element->ContainsIncludingHostElements(*current)) {
     return true;
+  }
+
+  // A selection inside a text control belongs to that control and loses
+  // focus with it. Disabled controls are excluded: they can never hold
+  // focus, so their selection is an ordinary document selection.
+  if (RuntimeEnabledFeatures::
+          HideUnfocusedReadonlyTextControlSelectionEnabled() &&
+      !IsEditable(*current)) {
+    const TextControlElement* text_control = EnclosingTextControl(current);
+    if (text_control && !text_control->IsDisabledFormControl()) {
+      return false;
+    }
   }
 
   // Selection has focus if it contains the focused element.

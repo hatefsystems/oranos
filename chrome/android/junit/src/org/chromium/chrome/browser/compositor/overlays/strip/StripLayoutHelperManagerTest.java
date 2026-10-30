@@ -142,7 +142,6 @@ import org.chromium.ui.dragdrop.DragAndDropDelegate;
 import org.chromium.ui.resources.ResourceManager;
 
 import java.lang.ref.WeakReference;
-import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -1278,17 +1277,10 @@ public class StripLayoutHelperManagerTest {
                         false,
                         /* alertState= */ TabAlert.NONE);
 
-        // Inject the strip tab into the helper via reflection.
-        Field tabsField = StripLayoutHelper.class.getDeclaredField("mStripTabs");
-        tabsField.setAccessible(true);
-        tabsField.set(standardHelper, new StripLayoutTab[] {stripTab});
+        standardHelper.setStripLayoutTabsForTesting(new StripLayoutTab[] {stripTab});
 
-        // Get the internal observer via reflection.
-        Field observerField =
-                StripLayoutHelperManager.class.getDeclaredField("mTabModelSelectorTabObserver");
-        observerField.setAccessible(true);
         TabModelSelectorTabObserver observer =
-                (TabModelSelectorTabObserver) observerField.get(mStripLayoutHelperManager);
+                mStripLayoutHelperManager.getTabModelSelectorTabObserverForTesting();
 
         // Verify initial state.
         assertFalse("Tab should not be loading initially.", stripTab.isLoading());
@@ -1353,15 +1345,10 @@ public class StripLayoutHelperManagerTest {
                         false,
                         /* alertState= */ TabAlert.NONE);
 
-        Field tabsField = StripLayoutHelper.class.getDeclaredField("mStripTabs");
-        tabsField.setAccessible(true);
-        tabsField.set(standardHelper, new StripLayoutTab[] {stripTab});
+        standardHelper.setStripLayoutTabsForTesting(new StripLayoutTab[] {stripTab});
 
-        Field observerField =
-                StripLayoutHelperManager.class.getDeclaredField("mTabModelSelectorTabObserver");
-        observerField.setAccessible(true);
         TabModelSelectorTabObserver observer =
-                (TabModelSelectorTabObserver) observerField.get(mStripLayoutHelperManager);
+                mStripLayoutHelperManager.getTabModelSelectorTabObserverForTesting();
 
         // 1. Test onLoadProgressChanged at 1.0f stops loading.
         observer.onLoadStarted(tab, true);
@@ -1622,21 +1609,23 @@ public class StripLayoutHelperManagerTest {
         mStripLayoutHelperManager.getUpdatedSceneOverlayTree(
                 new RectF(), new RectF(), mResourceManager);
 
-        // Compare the native compositor new tab button's bounds (converted from dp to px) against
-        // the WebUI inputView's location and dimensions, as well as the origin and size forwarded
-        // to EventForwarder and the native WebUI host.
-        var newTabButton = mStripLayoutHelperManager.getNewTabButton();
+        // Compare the native compositor new tab button's touch target bounds (converted from dp to
+        // px) against the WebUI inputView's location and dimensions, as well as the origin and size
+        // forwarded to EventForwarder and the native WebUI host.
+        RectF touchTarget = mStripLayoutHelperManager.getNewTabButton().getTouchTargetBounds();
         var metrics = inputView.getResources().getDisplayMetrics();
-        int expectedXPx = ViewUtils.dpToPx(metrics, newTabButton.getDrawX());
-        int expectedYPx = ViewUtils.dpToPx(metrics, newTabButton.getDrawY());
-        int expectedWidthPx = ViewUtils.dpToPx(metrics, newTabButton.getWidth());
-        int expectedHeightPx = ViewUtils.dpToPx(metrics, newTabButton.getHeight());
+        int expectedXPx = ViewUtils.dpToPx(metrics, touchTarget.left);
+        int expectedYPx = ViewUtils.dpToPx(metrics, touchTarget.top);
+        int expectedWidthPx = ViewUtils.dpToPx(metrics, touchTarget.width());
+        int expectedHeightPx = ViewUtils.dpToPx(metrics, touchTarget.height());
+        int stripHeightPx = ViewUtils.dpToPx(metrics, mStripLayoutHelperManager.getHeight());
+        int expectedInputHeightPx = Math.min(expectedHeightPx, stripHeightPx - expectedYPx);
 
         assertEquals(View.VISIBLE, inputView.getVisibility());
         assertEquals(expectedXPx, inputView.getTranslationX(), 0f);
         assertEquals(expectedYPx, inputView.getTranslationY(), 0f);
         assertEquals(expectedWidthPx, inputView.getLayoutParams().width);
-        assertEquals(expectedHeightPx, inputView.getLayoutParams().height);
+        assertEquals(expectedInputHeightPx, inputView.getLayoutParams().height);
         verify(mEventForwarder).setContainerViewOriginInCompositorSurface(expectedXPx, expectedYPx);
         verify(mNtbWebUiCoordinatorJniMock).resize(1L, expectedWidthPx, expectedHeightPx);
 

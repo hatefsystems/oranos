@@ -23,6 +23,7 @@
 #include "chrome/browser/ui/side_panel/side_panel_entry_id.h"
 #include "chrome/browser/ui/tabs/vertical_tab_strip_state_controller.h"
 #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
+#include "chrome/browser/ui/views/contextual_tasks/contextual_tasks_ephemeral_button_controller.h"
 #include "chrome/common/pref_names.h"
 #include "components/contextual_tasks/public/features.h"
 #include "components/feature_engagement/public/feature_constants.h"
@@ -82,11 +83,23 @@ EphemeralButtonShape GetEphemeralButtonShape(BrowserWindowInterface* browser) {
              : EphemeralButtonShape::kFlatEdgeLeft;
 }
 
-void RecordEphemeralButtonShown() {
+void RecordEphemeralButtonShown(bool is_panel_open) {
   base::RecordAction(
       base::UserMetricsAction("ContextualTasks.EphemeralToolbarButton.Shown"));
   base::UmaHistogramBoolean("ContextualTasks.EphemeralToolbarButton.Shown",
                             true);
+  if (is_panel_open) {
+    base::RecordAction(base::UserMetricsAction(
+        "ContextualTasks.EphemeralToolbarButton.Shown.ActivePanelOpen"));
+    base::UmaHistogramBoolean(
+        "ContextualTasks.EphemeralToolbarButton.Shown.ActivePanelOpen", true);
+  } else {
+    base::RecordAction(base::UserMetricsAction(
+        "ContextualTasks.EphemeralToolbarButton.Shown.ActivePanelCollapsed"));
+    base::UmaHistogramBoolean(
+        "ContextualTasks.EphemeralToolbarButton.Shown.ActivePanelCollapsed",
+        true);
+  }
 }
 
 void HandleEphemeralButtonPressed(BrowserWindowInterface* browser,
@@ -140,11 +153,18 @@ void HandleEphemeralButtonPressed(BrowserWindowInterface* browser,
   base::RecordAction(base::UserMetricsAction(sub_action));
   base::UmaHistogramBoolean(sub_action, true);
 
+  if (auto* const ephemeral_controller =
+          ContextualTasksEphemeralButtonController::From(browser)) {
+    ephemeral_controller->RecordToolbarButtonOpenClick(
+        /*is_permanent_button=*/is_pinned);
+  }
   if (!is_pinned && on_ephemeral_open) {
     std::move(on_ephemeral_open).Run();
   }
 
-  if (kShowEntryPoint.Get() == EntryPointOption::kToolbarEphemeralBranded) {
+  if (kShowEntryPoint.Get() == EntryPointOption::kToolbarEphemeralBranded ||
+      (IsContextualTasksEphemeralPinButtonRefactorEnabled() &&
+       controller->GetCurrentTask().has_value())) {
     controller->Show(
         /*transition_from_tab=*/false,
         is_pinned ? omnibox::ChromeAimEntryPoint::

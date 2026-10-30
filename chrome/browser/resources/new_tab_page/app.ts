@@ -3,32 +3,25 @@
 // found in the LICENSE file.
 
 import './logo.js';
-import './ntp_composebox.js';
 import './ntp_searchbox.js';
 import './left_hand_side.js';
 import '/strings.m.js';
-import 'chrome://new-tab-page/shared/customize_buttons/customize_buttons.js';
-import 'chrome://resources/cr_components/composebox/composebox_voice_search.js';
-import 'chrome://resources/cr_components/search/animated_glow.js';
 
 import {SearchboxBrowserProxy} from '//resources/cr_components/searchbox/searchbox_browser_proxy.js';
 import {ColorChangeUpdater} from 'chrome://resources/cr_components/color_change_listener/colors_css_updater.js';
-import {GlifAnimationState} from 'chrome://resources/cr_components/composebox/common.js';
+import {GlifAnimationState, VoiceSearchAction as ComposeVoiceSearchAction} from 'chrome://resources/cr_components/composebox/common.js';
 import type {ComposeboxState} from 'chrome://resources/cr_components/composebox/common.js';
-import {VoiceSearchAction as ComposeVoiceSearchAction} from 'chrome://resources/cr_components/composebox/composebox_mixin.js';
 import type {ComposeboxVoiceSearchElement, VoicePermissionPromptState} from 'chrome://resources/cr_components/composebox/composebox_voice_search.js';
 import {HelpBubbleMixinLit} from 'chrome://resources/cr_components/help_bubble/help_bubble_mixin_lit.js';
 import type {SearchAnimatedGlowElement} from 'chrome://resources/cr_components/search/animated_glow.js';
 import type {CrToastElement} from 'chrome://resources/cr_elements/cr_toast/cr_toast.js';
 import {assert, assertNotReached} from 'chrome://resources/js/assert.js';
 import type {ClickInfo} from 'chrome://resources/js/browser_command.mojom-webui.js';
-import {Command} from 'chrome://resources/js/browser_command.mojom-webui.js';
-import {BrowserCommandProxy} from 'chrome://resources/js/browser_command/browser_command_proxy.js';
+import {browserProxyFactory as browserCommandProxyFactory, Command} from 'chrome://resources/js/browser_command.mojom-webui.js';
 import {hexColorToSkColor, skColorToRgba} from 'chrome://resources/js/color_utils.js';
 import {EventTracker} from 'chrome://resources/js/event_tracker.js';
 import {FocusOutlineManager} from 'chrome://resources/js/focus_outline_manager.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import {getTrustedScriptURL} from 'chrome://resources/js/static_types.js';
 import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 import type {PropertyValues} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 import type {FuseboxAction} from 'chrome://resources/mojo/components/omnibox/browser/fusebox_action.mojom-webui.js';
@@ -38,27 +31,24 @@ import {ModelMode, ToolMode} from 'chrome://resources/mojo/components/omnibox/co
 import type {SkColor} from 'chrome://resources/mojo/skia/public/mojom/skcolor.mojom-webui.js';
 
 import type {ActionChipClickDetail} from './action_chips/action_chips.js';
-import {ActionChipsRetrievalState} from './action_chips/action_chips.js';
+import {ActionChipsRetrievalState} from './action_chips/action_chips_proxy.js';
 import {getCss} from './app.css.js';
 import {getHtml} from './app.html.js';
 import {BackgroundManager} from './background_manager.js';
-import type {CustomizeButtonsDocumentCallbackRouter, CustomizeButtonsHandlerRemote} from './customize_buttons.mojom-webui.js';
-import {SidePanelOpenTrigger} from './customize_buttons.mojom-webui.js';
-import {CustomizeButtonsProxy} from './customize_buttons_proxy.js';
+import type {CustomizeButtonsDocumentCallbackRouter, CustomizeButtonsHandlerInterface} from './customize_buttons.mojom-webui.js';
+import {browserProxyFactory as customizeButtonsProxyFactory, SidePanelOpenTrigger} from './customize_buttons.mojom-webui.js';
 import {CustomizeChromeSection} from './customize_chrome.mojom-webui.js';
 import {CustomizeDialogPage} from './customize_dialog_types.js';
 import type {IframeElement} from './iframe.js';
 import type {LogoElement} from './logo.js';
-import {recordBoolean, recordDuration, recordEnumeration, recordLinearValue, recordLoadDuration, recordSparseValueWithPersistentHash} from './metrics_utils.js';
+import {recordBoolean, recordDuration, recordEnumeration, recordLinearValue, recordLoadDuration, recordSparseValueWithPersistentHash, recordVoiceAction, VoiceAction} from './metrics_utils.js';
 import {ParentTrustedDocumentProxy} from './modules/microsoft_auth_frame_connector.js';
-import type {PageCallbackRouter, PageHandlerRemote, Theme} from './new_tab_page.mojom-webui.js';
-import {NtpBackgroundImageSource} from './new_tab_page.mojom-webui.js';
-import {NewTabPageProxy} from './new_tab_page_proxy.js';
+import type {PageCallbackRouter, PageHandlerInterface, Theme} from './new_tab_page.mojom-webui.js';
+import {browserProxyFactory as newTabPageProxyFactory, NtpBackgroundImageSource} from './new_tab_page.mojom-webui.js';
 import type {NtpComposeboxElement} from './ntp_composebox.js';
 import {ShowNtpPromosResult} from './ntp_promo.mojom-webui.js';
 import type {NtpSearchboxElement} from './ntp_searchbox.js';
 import {$$} from './utils.js';
-import {Action as VoiceAction, recordVoiceAction} from './voice_search_overlay.js';
 import {WindowProxy} from './window_proxy.js';
 
 enum ModuleLoadStatus {
@@ -157,14 +147,6 @@ function recordCustomizeChromeOpen(element: NtpCustomizeChromeEntryPoint) {
   recordEnumeration(
       'NewTabPage.CustomizeChromeOpened', element,
       NtpCustomizeChromeEntryPoint.MAX_VALUE + 1);
-}
-
-// Adds a <script> tag that holds the lazy loaded code.
-function ensureLazyLoaded() {
-  const script = document.createElement('script');
-  script.type = 'module';
-  script.src = getTrustedScriptURL`./lazy_load.js`;
-  document.body.appendChild(script);
 }
 
 function recordShowBrowserPromosResult(result: ShowNtpPromosResult) {
@@ -518,10 +500,10 @@ export class AppElement extends AppElementBase {
   private accessor modulesLoadedStatus_: ModuleLoadStatus =
       ModuleLoadStatus.MODULE_LOAD_IN_PROGRESS;
   private callbackRouter_: PageCallbackRouter;
-  private pageHandler_: PageHandlerRemote;
+  private pageHandler_: PageHandlerInterface;
   private customizeButtonsCallbackRouter_:
       CustomizeButtonsDocumentCallbackRouter;
-  private customizeButtonsHandler_: CustomizeButtonsHandlerRemote;
+  private customizeButtonsHandler_: CustomizeButtonsHandlerInterface;
   private backgroundManager_: BackgroundManager;
   private connectMicrosoftAuthToParentDocumentListenerId_: number|null = null;
   private setThemeListenerId_: number|null = null;
@@ -540,13 +522,14 @@ export class AppElement extends AppElementBase {
   constructor() {
     performance.mark('app-creation-start');
     super();
-    this.callbackRouter_ = NewTabPageProxy.getInstance().callbackRouter;
+    this.callbackRouter_ = newTabPageProxyFactory.getInstance().callbackRouter;
     this.searchboxCallbackRouter_ =
         SearchboxBrowserProxy.getInstance().callbackRouter;
-    this.pageHandler_ = NewTabPageProxy.getInstance().handler;
+    this.pageHandler_ = newTabPageProxyFactory.getInstance().handler;
     this.customizeButtonsCallbackRouter_ =
-        CustomizeButtonsProxy.getInstance().callbackRouter;
-    this.customizeButtonsHandler_ = CustomizeButtonsProxy.getInstance().handler;
+        customizeButtonsProxyFactory.getInstance().callbackRouter;
+    this.customizeButtonsHandler_ =
+        customizeButtonsProxyFactory.getInstance().handler;
     this.backgroundManager_ = BackgroundManager.getInstance();
     this.shouldPrintPerformance_ =
         new URLSearchParams(location.search).has('print_perf');
@@ -838,8 +821,12 @@ export class AppElement extends AppElementBase {
   override firstUpdated() {
     this.pageHandler_.onAppRendered(WindowProxy.getInstance().now());
     // Let the browser breathe and then render remaining elements.
-    WindowProxy.getInstance().waitForLazyRender().then(() => {
-      ensureLazyLoaded();
+    WindowProxy.getInstance().waitForLazyRender().then(async () => {
+      // Wait for lazy_load.js to execute so that custom elements inside
+      // `this.lazyRender_` (<ntp-customize-buttons>, <ntp-action-chips>,
+      // <cr-most-visited>, <ntp-modules>, etc.) are registered and upgrade
+      // synchronously when inserted into the DOM.
+      await WindowProxy.getInstance().ensureLazyLoaded();
       this.lazyRender_ = true;
     });
     this.printPerformance_();
@@ -1090,6 +1077,9 @@ export class AppElement extends AppElementBase {
   }
 
   private async ensureComposeboxOpen_() {
+    // <ntp-composebox> may be defined in lazy_load.js, which may not have been
+    // loaded yet if the composebox is opened right after the NTP loads.
+    await WindowProxy.getInstance().ensureLazyLoaded();
     if (!this.showComposebox_) {
       this.showComposebox_ = true;
       if (this.composeboxOutsideClickEnabled_) {
@@ -1177,13 +1167,21 @@ export class AppElement extends AppElementBase {
   }
 
   protected onOpenVoiceSearch_() {
-    this.showVoiceSearchOverlay_ = true;
-    this.voiceSearchActivatedByKeyboard_ = false;
+    this.openVoiceSearch_(/*activatedByKeyboard=*/ false);
     // When the experiment is enabled, voice search metrics are logged directly
     // by the shared component instead of NTP to prevent duplicate emissions.
     if (!this.voiceSearchCoherenceAnySearchboxExperimentEnabled_) {
       recordVoiceAction(VoiceAction.ACTIVATE);
     }
+  }
+
+  private async openVoiceSearch_(activatedByKeyboard: boolean) {
+    // <ntp-voice-search-overlay> and <cr-composebox-voice-search> may be
+    // defined in lazy_load.js, which may not have been loaded yet if voice
+    // search is opened right after the NTP loads.
+    await WindowProxy.getInstance().ensureLazyLoaded();
+    this.voiceSearchActivatedByKeyboard_ = activatedByKeyboard;
+    this.showVoiceSearchOverlay_ = true;
   }
 
   protected onComposeVoiceSearchAction_(
@@ -1203,7 +1201,10 @@ export class AppElement extends AppElementBase {
     }
   }
 
-  protected onOpenLensSearch_() {
+  protected async onOpenLensSearch_() {
+    // <ntp-lens-upload-dialog> is defined in lazy_load.js, which may not have
+    // been loaded yet if Lens search is opened right after the NTP loads.
+    await WindowProxy.getInstance().ensureLazyLoaded();
     this.showLensUploadDialog_ = true;
   }
 
@@ -1271,6 +1272,7 @@ export class AppElement extends AppElementBase {
 
   protected onVoicePermissionChanged_(
       e: CustomEvent<VoicePermissionPromptState>) {
+    e.preventDefault();
     if (e.detail.isOpened) {
       this.voiceSearchListening_ = false;
     } else {
@@ -1393,8 +1395,7 @@ export class AppElement extends AppElementBase {
       }
     }
     if (ctrlKeyPressed && e.code === 'Period' && e.shiftKey) {
-      this.showVoiceSearchOverlay_ = true;
-      this.voiceSearchActivatedByKeyboard_ = true;
+      this.openVoiceSearch_(/*activatedByKeyboard=*/ true);
       if (!this.voiceSearchCoherenceAnySearchboxExperimentEnabled_) {
         recordVoiceAction(VoiceAction.ACTIVATE_KEYBOARD);
       }
@@ -1511,8 +1512,9 @@ export class AppElement extends AppElementBase {
         messageData.commandId :
         Command.kUnknownCommand;
 
-    BrowserCommandProxy.getInstance().handler.canExecuteCommand(commandId).then(
-        ({canExecute}) => {
+    browserCommandProxyFactory.getInstance()
+        .handler.canExecuteCommand(commandId)
+        .then(({canExecute}) => {
           const response = {
             messageType: messageData.messageType,
             [messageData.commandId]: canExecute,
@@ -1540,7 +1542,7 @@ export class AppElement extends AppElementBase {
         commandData.commandId :
         Command.kUnknownCommand;
 
-    BrowserCommandProxy.getInstance()
+    browserCommandProxyFactory.getInstance()
         .handler.executeCommand(commandId, commandData.clickInfo)
         .then(({commandExecuted}) => {
           WindowProxy.getInstance().postMessage(

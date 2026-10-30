@@ -119,8 +119,10 @@ class ReadAloudPlaybackController
 
   // Invoked by `audio_renderer` when a word becomes audible.
   void OnWordBoundaryReached(uint32_t start_character_offset,
-                             uint32_t end_character_offset,
-                             base::TimeDelta audio_timestamp);
+                             uint32_t end_character_offset);
+
+  // Invoked by `audio_renderer` once all buffered audio finishes playing out.
+  void OnAudioEndOfStream();
 
   // Maximum duration a Play request will remain deferred before timing out.
   static constexpr base::TimeDelta kClassicPlayOnReadyTimeout =

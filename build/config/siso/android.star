@@ -62,7 +62,7 @@ def __step_config(ctx, step_config):
         {
             "name": "android/write_build_config",
             "command_prefix": platform.python_bin + " ../../build/android/gyp/write_build_config.py",
-            "handler": "android_write_build_config",
+            "handler": "android_write_build_config" if remote_run else None,
             "remote": remote_run,
             "restat_content": True,
             "timeout": "2m",
@@ -209,10 +209,6 @@ def __step_config(ctx, step_config):
                 "*.pak",
                 "*.sql",
             ],
-            # *.dex and intermediate.dex.jar files are intermediate files used in incremental builds.
-            # Fo remote actions, let's ignore them, assuming remote cache hits compensate.
-            "ignore_extra_input_pattern": ".*\\.dex(\\.jar)?",
-            "ignore_extra_output_pattern": ".*\\.dex(\\.jar)?",
             "remote": remote_run,
             "restat_content": True,
             "platform_ref": "large",
@@ -416,11 +412,6 @@ def __android_compile_java_handler(ctx, cmd):
     #   --enable-errorprone
     #   @gen/chrome/android/chrome_test_java.sources
 
-    out = cmd.outputs[0]
-    outputs = [
-        out + ".md5.stamp",
-    ]
-
     inputs = []
     for i, arg in enumerate(cmd.args):
         for k in ["--classpath=", "--processorpath="]:
@@ -435,20 +426,11 @@ def __android_compile_java_handler(ctx, cmd):
 
     ctx.actions.fix(
         inputs = cmd.inputs + inputs,
-        outputs = cmd.outputs + outputs,
     )
 
 def __android_dex_handler(ctx, cmd):
-    out = cmd.outputs[0]
     inputs = []
-
-    # Add __dex.desugardeps to the outputs.
-    outputs = [
-        out + ".md5.stamp",
-    ]
-    for i, arg in enumerate(cmd.args):
-        if arg == "--desugar-dependencies":
-            outputs.append(ctx.fs.canonpath(cmd.args[i + 1]))
+    for arg in cmd.args:
         for k in ["--class-inputs=", "--bootclasspath=", "--classpath=", "--class-inputs-filearg=", "--dex-inputs-filearg=", "--dex-inputs="]:
             if arg.startswith(k):
                 arg = arg.removeprefix(k)
@@ -458,11 +440,8 @@ def __android_dex_handler(ctx, cmd):
                     f = ctx.fs.canonpath(f)
                     inputs.append(f)
 
-    # TODO: dex.py takes --incremental-dir to reuse the .dex produced in a previous build.
-    # Should remote dex action also take this?
     ctx.actions.fix(
         inputs = cmd.inputs + inputs,
-        outputs = cmd.outputs + outputs,
     )
 
 def __android_trace_event_bytecode_rewriter(ctx, cmd):

@@ -98,7 +98,7 @@ class EslintTsTest(unittest.TestCase):
     eslint_ts.main(args)
 
   def testSuccess(self):
-    self._run_test(["no_violations.ts"])
+    self._run_test(["no_violations.ts", "lazy_load.ts"])
     actual_contents = self._read_file(
       os.path.join(self._out_dir, "eslint.config.mjs")
     )
@@ -325,7 +325,8 @@ class EslintTsTest(unittest.TestCase):
     _EXPECTED_MISSING_TAG_NAME_REGISTRATION_ERROR = "Tag/class name pair registration to HTMLElementTagNameMap interface missing for %(domName)s ↔ %(className)s"
     _EXPECTED_MISSING_CUSTOM_EVENT_TYPE_PARAMETER_ERROR = "Missing CustomEvent type parameter for %(type)s '%(name)s' (use CustomEvent<void> or CustomEvent<SomeType>)"
     _EXPECTED_INVALID_DOLLAR_SIGN_PROPERTY_ERROR = "Optional or nullable property '%(propertyName)s' is not allowed on the '$' interface of '%(className)s'. Elements accessed via '$' are expected to always exist in the DOM"
-    _EXPECTED_NO_RE_EXPORT_ERROR = "Re-exporting '%(exportName)s' from a file containing a CrLitElement subclass/mixin definition is not allowed. Import directly from the original source file instead"
+    _EXPECTED_NO_CONSTRUCTOR_PARAMS_ERROR = "Constructor in CrLitElement subclass %(className)s must not accept parameters"
+    _EXPECTED_NO_NEW_CR_LIT_ELEMENT_ERROR = "Do not instantiate CrLitElement subclass '%(className)s' using 'new'. Use document.createElement() or an HTML template instead"
 
     super_call_required_methods = [
       'connectedCallback',
@@ -450,10 +451,15 @@ class EslintTsTest(unittest.TestCase):
         'className': 'TestError14ElementFoo',
       },
       # Case 1.15
-      _EXPECTED_NO_RE_EXPORT_ERROR % {'exportName': 'nothing'},
-      _EXPECTED_NO_RE_EXPORT_ERROR % {'exportName': 'PropertyValues'},
-      _EXPECTED_NO_RE_EXPORT_ERROR % {'exportName': 'css'},
-      _EXPECTED_NO_RE_EXPORT_ERROR % {'exportName': 'CSSResultGroup'},
+      _EXPECTED_NO_CONSTRUCTOR_PARAMS_ERROR
+      % {
+        'className': 'TestError15Element',
+      },
+      # Case 1.16
+      _EXPECTED_NO_NEW_CR_LIT_ELEMENT_ERROR
+      % {
+        'className': 'TestError15Element',
+      },
     ]
     for e in errors:
       self.assertTrue(
@@ -535,6 +541,10 @@ class EslintTsTest(unittest.TestCase):
         'expectedOrder': '[is, styles, render, properties, constructor, connectedCallback, disconnectedCallback, willUpdate, firstUpdated, updated]',
         'actualOrder': '',
       },
+      _EXPECTED_NO_CONSTRUCTOR_PARAMS_ERROR
+      % {
+        'className': 'TestNoError3Element',
+      },
       _EXPECTED_INCORRECT_CLASS_NAME_SUFFIX_ERROR
       % {
         'className': 'TestNoError3Element',
@@ -560,8 +570,19 @@ class EslintTsTest(unittest.TestCase):
         'className': 'TestNoError4Element',
       },
       # Case 2.5
-      _EXPECTED_NO_RE_EXPORT_ERROR % {'exportName': 'localConst'},
-      _EXPECTED_NO_RE_EXPORT_ERROR % {'exportName': 'LocalInterface'},
+      _EXPECTED_NO_CONSTRUCTOR_PARAMS_ERROR
+      % {
+        'className': 'TestNoError5Mixin',
+      },
+      # Case 2.6
+      _EXPECTED_NO_NEW_CR_LIT_ELEMENT_ERROR
+      % {
+        'className': 'TestNoError2Element',
+      },
+      _EXPECTED_NO_NEW_CR_LIT_ELEMENT_ERROR
+      % {
+        'className': 'TestNoError3Element',
+      },
     ]
     for e in non_errors:
       self.assertFalse(
@@ -909,7 +930,15 @@ class EslintTsTest(unittest.TestCase):
 
     _NO_FALSE_BINDING_ERROR = "Incorrect assignment to boolean attribute expression '?%(attributeName)s=' using '${false}'. Use property binding '.%(propertyName)s=\"${false}\"' instead"
 
-    _PROPERTY_TYPE_MISMATCH_ERROR = "Property type mismatch: %(propertyName)s is declared as %(declaredType)s reactive property but is typed as %(tsType)s"
+    _CAMEL_CASE_ATTRIBUTE_ERROR = "Attribute '%(attributeName)s' uses camelCase. Use either '.%(propertyName)s=\"${...}\"' or '%(dashCaseName)s' instead"
+
+    _INVALID_BOOLEAN_ATTRIBUTE_EXPRESSION_ERROR = "Invalid boolean attribute expression: '?%(attributeName)s=' syntax only works with '${...}' rvalues. Use just '%(dashCaseName)s' if always `true` or '?%(dashCaseName)s=\"${...}\"' for a dynamic binding"
+
+    _NO_STATIC_TRUE_BOOLEAN_ERROR = "Boolean attribute '%(attributeName)s' does not need to be set to '=\"true\"'. Use either '%(dashCaseName)s' or '.%(propertyName)s=\"${true}\"' instead"
+
+    _INVALID_PROPERTY_EXPRESSION_ERROR = "Invalid property expression: '.%(propertyName)s=' only works with '${...}' rvalues. Use attribute expression '%(dashCaseName)s=\"...\"' for a static value, or '.%(propertyName)s=\"${...}\"' for a dynamic binding"
+
+    _PROPERTY_TYPE_MISMATCH_ERROR = "Property type mismatch: '%(propertyName)s' is declared as '%(declaredType)s' reactive property but is typed as '%(tsType)s'"
 
     _BINDING_TYPE_MISMATCH_ERROR = "Type mismatch in property binding: Property '%(propertyName)s' on element '%(tagName)s' expects type '%(expectedType)s', but was provided '%(providedType)s'"
 
@@ -1031,6 +1060,58 @@ class EslintTsTest(unittest.TestCase):
         'expectedType': 'string',
         'providedType': 'boolean',
       },
+      _CAMEL_CASE_ATTRIBUTE_ERROR
+      % {
+        'attributeName': '?fooBoolean',
+        'propertyName': 'fooBoolean',
+        'dashCaseName': '?foo-boolean',
+      },
+      _CAMEL_CASE_ATTRIBUTE_ERROR
+      % {
+        'attributeName': 'fooNumber',
+        'propertyName': 'fooNumber',
+        'dashCaseName': 'foo-number',
+      },
+      _CAMEL_CASE_ATTRIBUTE_ERROR
+      % {
+        'attributeName': 'fooString',
+        'propertyName': 'fooString',
+        'dashCaseName': 'foo-string',
+      },
+      _INVALID_BOOLEAN_ATTRIBUTE_EXPRESSION_ERROR
+      % {
+        'attributeName': 'is-collapsible',
+        'dashCaseName': 'is-collapsible',
+      },
+      _INVALID_BOOLEAN_ATTRIBUTE_EXPRESSION_ERROR
+      % {
+        'attributeName': 'foo-boolean',
+        'dashCaseName': 'foo-boolean',
+      },
+      _NO_STATIC_TRUE_BOOLEAN_ERROR
+      % {
+        'attributeName': 'foo-boolean',
+        'dashCaseName': 'foo-boolean',
+        'propertyName': 'fooBoolean',
+      },
+      _NO_STATIC_TRUE_BOOLEAN_ERROR
+      % {
+        'attributeName': 'disabled',
+        'dashCaseName': 'disabled',
+        'propertyName': 'disabled',
+      },
+      _INVALID_PROPERTY_EXPRESSION_ERROR
+      % {
+        'propertyName': 'fooString',
+        'dashCaseName': 'foo-string',
+      },
+      _BINDING_TYPE_MISMATCH_ERROR
+      % {
+        'propertyName': 'fooBoolean',
+        'tagName': 'hello-world-child',
+        'expectedType': 'boolean',
+        'providedType': 'string',
+      },
     ]
     for e in errors:
       self.assertTrue(
@@ -1082,6 +1163,42 @@ class EslintTsTest(unittest.TestCase):
       % {
         'propertyName': 'mixinString',
         'tagName': 'hello-world-child',
+      },
+      _INVALID_BOOLEAN_ATTRIBUTE_EXPRESSION_ERROR
+      % {
+        'attributeName': 'disabled',
+        'dashCaseName': 'disabled',
+      },
+      _NO_STATIC_TRUE_BOOLEAN_ERROR
+      % {
+        'attributeName': 'aria-hidden',
+        'dashCaseName': 'aria-hidden',
+        'propertyName': 'ariaHidden',
+      },
+      _NO_STATIC_TRUE_BOOLEAN_ERROR
+      % {
+        'attributeName': 'draggable',
+        'dashCaseName': 'draggable',
+        'propertyName': 'draggable',
+      },
+      _NO_STATIC_TRUE_BOOLEAN_ERROR
+      % {
+        'attributeName': 'foo-string',
+        'dashCaseName': 'foo-string',
+        'propertyName': 'fooString',
+      },
+      _CAMEL_CASE_ATTRIBUTE_ERROR
+      % {
+        'attributeName': 'viewBox',
+        'propertyName': 'viewBox',
+        'dashCaseName': 'view-box',
+      },
+      _BINDING_TYPE_MISMATCH_ERROR
+      % {
+        'propertyName': 'fooString',
+        'tagName': 'hello-world-child',
+        'expectedType': 'string',
+        'providedType': 'string',
       },
     ]
     for e in non_errors:
@@ -1157,6 +1274,39 @@ class EslintTsTest(unittest.TestCase):
 
     _EXPECTED_ERROR = "Do not mix type and value imports in the same statement. Split them into separate import statements instead"
     self.assertTrue(_EXPECTED_ERROR in str(context.exception))
+
+  def testWebUiEslintPlugin_NoReExports(self):
+    with self.assertRaises(RuntimeError) as context:
+      self._run_test(["with_webui_plugin_no_re_exports_violations.ts"])
+
+    _EXPECTED_STRING = "@webui-eslint/no-re-exports"
+    self.assertTrue(_EXPECTED_STRING in str(context.exception))
+
+    _EXPECTED_ERROR = (
+      "Re-exporting '%(exportName)s' is not allowed, except in top-level "
+      "barrel files (files with only import/export statements). Import "
+      "directly from the original source file instead"
+    )
+
+    errors = [
+      _EXPECTED_ERROR % {'exportName': 'nothing'},
+      _EXPECTED_ERROR % {'exportName': 'PropertyValues'},
+      _EXPECTED_ERROR % {'exportName': 'css'},
+      _EXPECTED_ERROR % {'exportName': 'CSSResultGroup'},
+    ]
+    for e in errors:
+      self.assertTrue(
+        e in str(context.exception), f"Didn't find expected error: {e}"
+      )
+
+    non_errors = [
+      _EXPECTED_ERROR % {'exportName': 'localConst'},
+      _EXPECTED_ERROR % {'exportName': 'LocalInterface'},
+    ]
+    for e in non_errors:
+      self.assertFalse(
+        e in str(context.exception), f'Found unexpected error: {e}'
+      )
 
   def testWebUiEslintPlugin_NoAssertEqualsBoolean(self):
     with self.assertRaises(RuntimeError) as context:

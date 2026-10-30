@@ -55,6 +55,7 @@
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "components/signin/public/identity_manager/tribool.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/protocol/sync_enums.pb.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_renderer_host.h"
@@ -424,7 +425,11 @@ TEST_F(DiceWebSigninInterceptorTest, ShouldShowProfileSwitchBubble) {
       gaia, email, profile_attributes_storage()));
 
   // Add another profile with no account.
-  CreateTestingProfile("Profile 1");
+  Profile* profile_1 = CreateTestingProfile("Profile 1");
+  ProfileAttributesEntry* entry_1 =
+      profile_attributes_storage()->GetProfileAttributesWithPath(
+          profile_1->GetPath());
+  ASSERT_NE(entry_1, nullptr);
   EXPECT_FALSE(interceptor()->ShouldShowProfileSwitchBubble(
       gaia, email, profile_attributes_storage()));
 
@@ -460,6 +465,46 @@ TEST_F(DiceWebSigninInterceptorTest, ShouldShowProfileSwitchBubble) {
   // is different.
   EXPECT_EQ(entry, interceptor()->ShouldShowProfileSwitchBubble(
                        gaia, "alice@gmail.com", profile_attributes_storage()));
+
+  // A storage entry with the account's email but no GaiaId still matches when
+  // the intercepted GaiaId is known.
+  entry->SetAuthInfo(GaiaId(), base::UTF8ToUTF16(email),
+                     /*is_consented_primary_account=*/false);
+  EXPECT_EQ(entry, interceptor()->ShouldShowProfileSwitchBubble(
+                       gaia, email, profile_attributes_storage()));
+  EXPECT_EQ(entry, interceptor()->ShouldShowProfileSwitchBubble(
+                       GaiaId(), email, profile_attributes_storage()));
+
+  // Omitted profiles are never matched. Only ephemeral profiles can be omitted.
+  entry->SetIsEphemeral(true);
+  entry->SetIsOmitted(true);
+  EXPECT_FALSE(interceptor()->ShouldShowProfileSwitchBubble(
+      gaia, email, profile_attributes_storage()));
+  EXPECT_FALSE(interceptor()->ShouldShowProfileSwitchBubble(
+      GaiaId(), email, profile_attributes_storage()));
+  entry->SetIsOmitted(false);
+  entry->SetIsEphemeral(false);
+
+  // An empty email never matches, even entries without an account.
+  entry->SetAuthInfo(GaiaId(), std::u16string(),
+                     /*is_consented_primary_account=*/false);
+  EXPECT_FALSE(interceptor()->ShouldShowProfileSwitchBubble(
+      GaiaId(), "", profile_attributes_storage()));
+
+  // An exact GaiaId match takes precedence over an email-only match. The
+  // storage iteration order is unspecified, so check both assignments.
+  entry_1->SetAuthInfo(GaiaId(), base::UTF8ToUTF16(email),
+                       /*is_consented_primary_account=*/false);
+  entry->SetAuthInfo(gaia, base::UTF8ToUTF16(email),
+                     /*is_consented_primary_account=*/false);
+  EXPECT_EQ(entry, interceptor()->ShouldShowProfileSwitchBubble(
+                       gaia, email, profile_attributes_storage()));
+  entry_1->SetAuthInfo(gaia, base::UTF8ToUTF16(email),
+                       /*is_consented_primary_account=*/false);
+  entry->SetAuthInfo(GaiaId(), base::UTF8ToUTF16(email),
+                     /*is_consented_primary_account=*/false);
+  EXPECT_EQ(entry_1, interceptor()->ShouldShowProfileSwitchBubble(
+                         gaia, email, profile_attributes_storage()));
 }
 
 TEST_F(DiceWebSigninInterceptorTest, NoBubbleWithSingleAccount) {
@@ -2733,6 +2778,69 @@ TEST_P(DiceWebSigninInterceptorTestWithAccountPreview,
       "Signin.Intercept.AccountPreview.TimedOut", true, 1);
   histogram_tester.ExpectTotalCount(
       "Signin.Intercept.AccountPreview.ResponseTime", 1);
+}
+
+TEST_P(DiceWebSigninInterceptorTestWithAccountPreview,
+       InterceptBubbleWithAccountPreviewDataZeroTimeout) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      switches::kEnableAccountPreviewPreferredAccount,
+      {{switches::kAccountPreviewPreferredAccountSingleAccountPromoFetchTimeout
+            .name,
+        "0s"}});
+
+  base::HistogramTester histogram_tester;
+  auto fake_service = std::make_unique<signin::TestAccountPreviewDataService>();
+  fake_service->set_defer_callbacks(true);
+  signin::TestAccountPreviewDataService* raw_fake_service = fake_service.get();
+  AccountPreviewDataServiceFactory::GetInstance()->SetTestingFactory(
+      profile(),
+      base::BindLambdaForTesting([&fake_service](content::BrowserContext*)
+                                     -> std::unique_ptr<KeyedService> {
+        return std::move(fake_service);
+      }));
+
+  AccountInfo primary_account_info = SetUpPrimaryAccountIfNeeded();
+  AccountInfo account_info =
+      identity_test_env()->MakeAccountAvailable("alice@example.com");
+  MakeValidAccountInfo(&account_info);
+  identity_test_env()->UpdateAccountInfoForAccount(account_info);
+
+  WebSigninInterceptor::Delegate::BubbleParameters expected_parameters(
+      GetInterceptionType(),
+      /*intercepted_account=*/account_info,
+      /*primary_account=*/primary_account_info,
+      /*profile_highlight_color=*/SkColor(),
+      /*show_link_data_option=*/false,
+      /*show_managed_disclaimer=*/false,
+      /*account_preview_preference=*/std::nullopt);
+
+  EXPECT_CALL(*mock_delegate(),
+              ShowSigninInterceptionBubble(
+                  web_contents(), MatchBubbleParameters(expected_parameters),
+                  testing::_));
+
+  interceptor()->MaybeInterceptWebSignin(
+      web_contents(), account_info.GetAccountId(),
+      signin_metrics::AccessPoint::kWebSignin,
+      /*is_new_account=*/true, /*is_chrome_signin=*/false,
+      /*primary_is_connected=*/signin::Tribool::kUnknown);
+
+  EXPECT_TRUE(raw_fake_service->has_pending_callback());
+  task_environment()->FastForwardBy(base::Seconds(0));
+
+  // Even if the service returns data later, the bubble was already shown
+  // without preview data.
+  signin::AccountPreviewDataService::AccountPreviewPreference pref;
+  pref.preferred_data_types.push_back(
+      {syncer::BOOKMARKS, signin::SyncDataQuartile::kAboveQ3});
+  raw_fake_service->TriggerCallback(pref);
+
+  testing::Mock::VerifyAndClearExpectations(mock_delegate());
+  histogram_tester.ExpectUniqueSample(
+      "Signin.Intercept.AccountPreview.TimedOut", true, 1);
+  histogram_tester.ExpectUniqueTimeSample(
+      "Signin.Intercept.AccountPreview.ResponseTime", base::Seconds(0), 1);
 }
 
 TEST_P(DiceWebSigninInterceptorTestWithAccountPreview,

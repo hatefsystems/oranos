@@ -452,6 +452,8 @@ ComputedStyle::ComputeDifferenceIgnoringInheritedFirstLineStyle(
   if (old_style.Display() != new_style.Display() &&
       (old_style.BlockifiesChildren() != new_style.BlockifiesChildren() ||
        old_style.InlinifiesChildren() != new_style.InlinifiesChildren() ||
+       old_style.AllowsZIndexOnChildren() !=
+           new_style.AllowsZIndexOnChildren() ||
        (old_style.Display() == EDisplay::kContents &&
         old_style.IsContentDrawableCanvasChild()) !=
            (new_style.Display() == EDisplay::kContents &&
@@ -1461,7 +1463,7 @@ namespace {
 
 gfx::RectF GetReferenceBox(const LayoutBox* box, CoordBox coord_box) {
   if (box) {
-    if (const LayoutBox* containing_block = box->ContainingBlock()) {
+    if (const LayoutBox* container = box->ContainingBox()) {
       // In SVG contexts, all values behave as view-box.
       if (box->IsSVG()) {
         return gfx::RectF(SVGViewportResolver(*box).ResolveViewport());
@@ -1470,13 +1472,13 @@ gfx::RectF GetReferenceBox(const LayoutBox* box, CoordBox coord_box) {
       switch (coord_box) {
         case CoordBox::kFillBox:
         case CoordBox::kContentBox:
-          return gfx::RectF(containing_block->PhysicalContentBoxRect());
+          return gfx::RectF(container->PhysicalContentBoxRect());
         case CoordBox::kPaddingBox:
-          return gfx::RectF(containing_block->PhysicalPaddingBoxRect());
+          return gfx::RectF(container->PhysicalPaddingBoxRect());
         case CoordBox::kViewBox:
         case CoordBox::kStrokeBox:
         case CoordBox::kBorderBox:
-          return gfx::RectF(containing_block->PhysicalBorderBoxRect());
+          return gfx::RectF(container->PhysicalBorderBoxRect());
       }
     }
   }
@@ -1485,12 +1487,11 @@ gfx::RectF GetReferenceBox(const LayoutBox* box, CoordBox coord_box) {
   return gfx::RectF();
 }
 
-gfx::PointF GetOffsetFromContainingBlock(const LayoutBox* box) {
+gfx::PointF GetOffsetFromContainingBox(const LayoutBox* box) {
   if (box) {
-    if (const LayoutBox* containing_block = box->ContainingBlock()) {
-      gfx::PointF offset =
-          box->LocalToAncestorPoint(gfx::PointF(), containing_block,
-                                    {MapCoordinatesMode::kIgnoreTransforms});
+    if (const LayoutBox* container = box->ContainingBox()) {
+      gfx::PointF offset = box->LocalToAncestorPoint(
+          gfx::PointF(), container, {MapCoordinatesMode::kIgnoreTransforms});
       return offset;
     }
   }
@@ -1629,8 +1630,7 @@ void ComputedStyle::ApplyMotionPathTransform(float origin_x,
       case BasicShape::kStyleRayType: {
         const gfx::RectF reference_box = GetReferenceBox(box, coord_box);
         const gfx::PointF offset_from_reference_box =
-            GetOffsetFromContainingBlock(box) -
-            reference_box.OffsetFromOrigin();
+            GetOffsetFromContainingBox(box) - reference_box.OffsetFromOrigin();
         const gfx::SizeF& reference_box_size = reference_box.size();
         const StyleRay& ray = To<StyleRay>(basic_shape);
         // Specifies the origin of the ray, where the ray’s line begins (the 0%
@@ -1663,8 +1663,7 @@ void ComputedStyle::ApplyMotionPathTransform(float origin_x,
       case BasicShape::kStyleShapeType: {
         const gfx::RectF reference_box = GetReferenceBox(box, coord_box);
         const gfx::PointF offset_from_reference_box =
-            GetOffsetFromContainingBlock(box) -
-            reference_box.OffsetFromOrigin();
+            GetOffsetFromContainingBox(box) - reference_box.OffsetFromOrigin();
         const gfx::SizeF& reference_box_size = reference_box.size();
         const gfx::PointF starting_point = GetStartingPointOfThePath(
             offset_from_reference_box, position, reference_box_size);
@@ -1677,11 +1676,11 @@ void ComputedStyle::ApplyMotionPathTransform(float origin_x,
       }
     }
   } else if (IsA<CoordBoxOffsetPathOperation>(offset_path)) {
-    if (box && box->ContainingBlock()) {
-      const ComputedStyle& style = box->ContainingBlock()->Style();
+    if (box && box->ContainingBox()) {
+      const ComputedStyle& style = box->ContainingBox()->Style();
       const gfx::RectF reference_box = GetReferenceBox(box, coord_box);
       const gfx::PointF offset_from_reference_box =
-          GetOffsetFromContainingBlock(box) - reference_box.OffsetFromOrigin();
+          GetOffsetFromContainingBox(box) - reference_box.OffsetFromOrigin();
       const gfx::SizeF& reference_box_size = reference_box.size();
       const bool has_ordinary_rounded_corners =
           style.CornerTopLeftShape() == Superellipse::Round() &&
@@ -1850,27 +1849,21 @@ ETextAlign ComputedStyle::GetTextAlign(bool is_last_line) const {
   NOTREACHED();
 }
 
-// Unicode 11 introduced Georgian capital letters (U+1C90 - U+1CBA,
-// U+1CB[D-F]), but virtually no font covers them. For now map them back
-// to their lowercase counterparts (U+10D0 - U+10FA, U+10F[D-F]).
-// https://www.unicode.org/charts/PDF/U10A0.pdf
-// https://www.unicode.org/charts/PDF/U1C90.pdf
-// See https://crbug.com/865427 .
-// TODO(jshin): Make this platform-dependent. For instance, turn this
-// off when CrOS gets new Georgian fonts covering capital letters.
-// ( https://crbug.com/880144 ).
-static String DisableNewGeorgianCapitalLetters(const String& text) {
+namespace {
+
+// Disabling CSSTextTransformGeorgianUppercase restores the legacy mapping so we
+// can roll back if missing-glyph regressions appear after launch.
+// Original workaround: https://crrev.com/c/1205712.
+// TODO(crbug.com/40127672): Remove this helper and its character utilities with
+// the kill switch two milestones after the Stable launch, if rollback is no
+// longer needed.
+String ApplyLegacyGeorgianUppercaseWorkaround(const String& text) {
   if (text.IsNull() || text.Is8Bit()) {
     return text;
   }
-  unsigned length = text.length();
-  const StringImpl& input = *(text.Impl());
   StringBuilder result;
-  result.ReserveCapacity(length);
-  // |input| must be well-formed UTF-16 so that there's no worry
-  // about surrogate handling.
-  for (unsigned i = 0; i < length; ++i) {
-    UChar character = UNSAFE_TODO(input[i]);
+  result.ReserveCapacity(text.length());
+  for (UChar character : text.Span16()) {
     if (unicode::IsModernGeorgianUppercase(character)) {
       result.Append(unicode::LowercaseModernGeorgianUppercase(character));
     } else {
@@ -1879,8 +1872,6 @@ static String DisableNewGeorgianCapitalLetters(const String& text) {
   }
   return result.ToString();
 }
-
-namespace {
 
 String ApplyFullwidthTransform(const String& text,
                                TextOffsetMap* offset_map,
@@ -1993,8 +1984,10 @@ String ComputedStyle::ApplyTextTransform(const String& text,
   } else if (EnumHasFlags(transform, ETextTransform::kUppercase)) {
     const LayoutLocale* locale = GetFontDescription().Locale();
     CaseMap case_map(locale ? locale->CaseMapLocale() : CaseMap::Locale());
-    result =
-        DisableNewGeorgianCapitalLetters(case_map.ToUpper(result, offset_map));
+    result = case_map.ToUpper(result, offset_map);
+    if (!RuntimeEnabledFeatures::CSSTextTransformGeorgianUppercaseEnabled()) {
+      result = ApplyLegacyGeorgianUppercaseWorkaround(result);
+    }
   } else if (EnumHasFlags(transform, ETextTransform::kLowercase)) {
     const LayoutLocale* locale = GetFontDescription().Locale();
     CaseMap case_map(locale ? locale->CaseMapLocale() : CaseMap::Locale());
@@ -2130,21 +2123,21 @@ FontBaseline ComputedStyle::GetFontBaseline() const {
     case EDominantBaseline::kAuto:
       break;
     case EDominantBaseline::kMiddle:
-      return kXMiddleBaseline;
+      return FontBaseline::kXMiddle;
     case EDominantBaseline::kAlphabetic:
-      return kAlphabeticBaseline;
+      return FontBaseline::kAlphabetic;
     case EDominantBaseline::kHanging:
-      return kHangingBaseline;
+      return FontBaseline::kHanging;
     case EDominantBaseline::kCentral:
-      return kCentralBaseline;
+      return FontBaseline::kCentral;
     case EDominantBaseline::kTextBeforeEdge:
-      return kTextOverBaseline;
+      return FontBaseline::kTextOver;
     case EDominantBaseline::kTextAfterEdge:
-      return kTextUnderBaseline;
+      return FontBaseline::kTextUnder;
     case EDominantBaseline::kIdeographic:
-      return kIdeographicUnderBaseline;
+      return FontBaseline::kIdeographicUnder;
     case EDominantBaseline::kMathematical:
-      return kMathBaseline;
+      return FontBaseline::kMath;
 
     case EDominantBaseline::kUseScript:
     case EDominantBaseline::kNoChange:
@@ -2155,8 +2148,9 @@ FontBaseline ComputedStyle::GetFontBaseline() const {
   // Vertical flow (except 'text-orientation: sideways') uses ideographic
   // central baseline.
   // https://drafts.csswg.org/css-writing-modes-3/#text-baselines
-  return !GetFontDescription().IsVerticalAnyUpright() ? kAlphabeticBaseline
-                                                      : kCentralBaseline;
+  return !GetFontDescription().IsVerticalAnyUpright()
+             ? FontBaseline::kAlphabetic
+             : FontBaseline::kCentral;
 }
 
 FontHeight ComputedStyle::GetFontHeight(FontBaseline baseline) const {
@@ -2238,6 +2232,7 @@ const AppliedTextDecorationVector& ComputedStyle::AppliedTextDecorations()
     const {
   DEFINE_STATIC_LOCAL(Persistent<AppliedTextDecorationVector>, empty,
                       (MakeGarbageCollected<AppliedTextDecorationVector>()));
+  CHECK(IsMainThread());
   if (!HasAppliedTextDecorations()) {
     return *empty;
   }
@@ -2305,6 +2300,7 @@ const ComputedGridTrackList& ComputedStyle::ComputedGridTemplate(
   DEFINE_STATIC_LOCAL(
       Persistent<ComputedGridTrackList>, default_track_list,
       (MakeGarbageCollected<ComputedGridTrackList>(ComputedGridTrackList())));
+  CHECK(IsMainThread());
   return *default_track_list;
 }
 
@@ -2806,12 +2802,44 @@ bool ComputedStyle::MarkerShouldBeInside(
   return false;
 }
 
+namespace {
+
+std::optional<blink::Color> ResolveMirroredAccentColorImpl(
+    const StyleAutoColor& accent_color,
+    const blink::Color& current_color,
+    mojom::blink::ColorScheme color_scheme,
+    bool in_forced_colors_mode,
+    EForcedColorAdjust forced_color_adjust) {
+  if (!RuntimeEnabledFeatures::CSSAccentColorKeywordEnabled()) {
+    return std::nullopt;
+  }
+  // In forced colors mode the keywords fall back to the system accent color so
+  // that user color overrides are respected.
+  if (in_forced_colors_mode &&
+      forced_color_adjust == EForcedColorAdjust::kAuto) {
+    return std::nullopt;
+  }
+  // `accent-color: auto` defers to the system accent color.
+  if (accent_color.IsAutoColor()) {
+    return std::nullopt;
+  }
+  return accent_color.ToStyleColor().Resolve(current_color, color_scheme);
+}
+
+}  // namespace
+
 std::optional<blink::Color> ComputedStyle::AccentColorResolved() const {
   const StyleAutoColor& auto_color = AccentColor();
   if (auto_color.IsAutoColor()) {
     return std::nullopt;
   }
   return auto_color.Resolve(GetCurrentColor(), UsedColorScheme());
+}
+
+std::optional<blink::Color> ComputedStyle::ResolveMirroredAccentColor() const {
+  return ResolveMirroredAccentColorImpl(AccentColor(), GetCurrentColor(),
+                                        UsedColorScheme(), InForcedColorsMode(),
+                                        ForcedColorAdjust());
 }
 
 std::optional<blink::Color> ComputedStyle::ResolvedCaretTextColor() const {
@@ -2915,6 +2943,9 @@ bool ComputedStyle::CalculateIsStackingContextWithoutContainment() const {
     return true;
   }
   if (ForcesStackingContext()) {
+    return true;
+  }
+  if (IsUnboundedElementActive()) {
     return true;
   }
   if (StyleType() == kPseudoIdBackdrop) {
@@ -3088,6 +3119,13 @@ const ComputedStyle* ComputedStyleBuilder::CloneStyle() const {
   has_own_transitions_ = false;
   return MakeGarbageCollected<ComputedStyle>(ComputedStyle::BuilderPassKey(),
                                              *this);
+}
+
+std::optional<blink::Color> ComputedStyleBuilder::ResolveMirroredAccentColor(
+    mojom::blink::ColorScheme color_scheme) const {
+  return ResolveMirroredAccentColorImpl(AccentColor(), GetCurrentColor(),
+                                        color_scheme, InForcedColorsMode(),
+                                        ForcedColorAdjust());
 }
 
 void ComputedStyleBuilder::PropagateIndependentInheritedProperties(
@@ -3305,16 +3343,6 @@ CSSVariableData* ComputedStyleBuilder::GetVariableData(
     const AtomicString& name,
     bool is_inherited_property) const {
   return blink::GetVariableDataInternal(*this, name, is_inherited_property);
-}
-
-void ComputedStyleBuilder::SetInheritedVariablesFrom(
-    const ComputedStyle* style) {
-  SetInheritedVariablesInternal(style->InheritedVariablesInternal());
-}
-
-void ComputedStyleBuilder::SetNonInheritedVariablesFrom(
-    const ComputedStyle* style) {
-  SetNonInheritedVariablesInternal(style->NonInheritedVariablesInternal());
 }
 
 STATIC_ASSERT_ENUM(cc::OverscrollBehavior::Type::kAuto,

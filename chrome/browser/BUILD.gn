@@ -1374,6 +1374,7 @@ source_set("core") {
     "//components/password_manager/core/browser:metrics_util",
     "//components/password_manager/core/browser:password_switches",
     "//components/password_manager/core/browser/features:password_features",
+    "//components/password_manager/core/common:features",
     "//components/payments/content",
     "//components/payments/core",
     "//components/pdf/common:constants",
@@ -2016,7 +2017,6 @@ source_set("core") {
       "//chrome/browser/nearby_sharing/common",
       "//chrome/browser/policy:onc",
       "//chrome/browser/policy:system_features_disable_list",
-      "//chrome/browser/smart_card",
       "//chrome/browser/ui/ash/login",
       "//chrome/browser/ui/ash/main_extra_parts",
       "//chrome/browser/ui/ash/system_web_apps",
@@ -2047,6 +2047,10 @@ source_set("core") {
   } else {
     # Activity reporting must never be built into ChromeOS.
     deps += [ "//components/activity_reporter" ]
+  }
+
+  if (enable_smart_card) {
+    deps += [ "//chrome/browser/smart_card" ]
   }
 
   if (enable_screen_ai_service) {
@@ -3069,7 +3073,6 @@ source_set("browser") {
       "//chrome/browser/ui:scoped_tabbed_browser_displayer",
       "//chrome/browser/ui:singleton_tabs",
       "//chrome/browser/ui:tab_ui_helper",
-      "//chrome/browser/ui:ui_controller_factory",
       "//chrome/browser/ui:uma_browsing_activity_observer",
       "//chrome/browser/ui:unload_controller",
       "//chrome/browser/ui:unload_controller_impl",
@@ -4378,6 +4381,7 @@ source_set("browser") {
       "//chrome/browser/ui/views/context_hub:memory_bank_impl",
       "//chrome/browser/ui/views/desktop_capture",
       "//chrome/browser/ui/views/desktop_capture:impl",
+      "//chrome/browser/ui/views/dictation:iph_controller_impl",
       "//chrome/browser/ui/views/download",
       "//chrome/browser/ui/views/exclusive_access",
       "//chrome/browser/ui/views/exclusive_access:impl",
@@ -5398,6 +5402,7 @@ if (!is_android) {
       "//chrome/browser/renderer_context_menu:test_support",
       "//chrome/browser/ui:browser_tabstrip",
       "//chrome/browser/ui:browser_window_header",
+      "//chrome/browser/ui/views/frame:browser_view_header",
       "//chrome/common:chrome_features",
       "//chrome/common:non_code_constants",
       "//chrome/test:test_support",

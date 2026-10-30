@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_CONTEXTUAL_TASKS_CONTEXTUAL_TASKS_SIDE_PANEL_COORDINATOR_H_
 
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -13,11 +14,13 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/scoped_observation.h"
 #include "build/build_config.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_panel_controller.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_panel_host.h"
 #include "chrome/browser/tab_list/tab_list_interface_observer.h"
 #include "components/sessions/core/session_id.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "extensions/buildflags/buildflags.h"
@@ -26,7 +29,6 @@
 #include "url/gurl.h"
 
 #if !BUILDFLAG(IS_ANDROID)
-#include "base/scoped_observation.h"
 #include "chrome/browser/themes/theme_service_observer.h"
 #include "chrome/browser/ui/views/bubble/webui_bubble_reopen_suppressor.h"
 #include "ui/native_theme/native_theme_observer.h"
@@ -66,6 +68,9 @@ class ContextualTasksService;
 class ContextualTasksUiService;
 class ActiveTaskContextProvider;
 class EntryPointEligibilityManager;
+#if !BUILDFLAG(IS_ANDROID)
+class ContextualTasksOnboardingTooltipController;
+#endif
 
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
@@ -81,6 +86,7 @@ class ContextualTasksSidePanelCoordinator
     : public ContextualTasksPanelController,
       public ContextualTasksPanelHost::Observer,
       public TabListInterfaceObserver,
+      public signin::IdentityManager::Observer,
       content::WebContentsObserver
 #if !BUILDFLAG(IS_ANDROID)
     ,
@@ -109,12 +115,20 @@ class ContextualTasksSidePanelCoordinator
     // Whether the panel is open.
     bool is_open;
 
+    // Whether this cache item has an active open session whose link click count
+    // has not yet been recorded.
+    bool has_open_session = false;
+
     // The time when the WebContents becomes inactive.
     base::TimeTicks last_active_time_ticks;
 
     // The entry source that triggered this task's panel.
     ContextualTasksPanelController::EntrySource entry_source =
         ContextualTasksPanelController::EntrySource::kOther;
+
+    // The entry point that triggered this task's panel.
+    omnibox::ChromeAimEntryPoint entry_point =
+        omnibox::ChromeAimEntryPoint::UNKNOWN_AIM_ENTRY_POINT;
 
     // The time when this task's panel was opened.
     base::TimeTicks open_time_ticks;
@@ -127,6 +141,10 @@ class ContextualTasksSidePanelCoordinator
     // open session.
     bool time_to_handshake_complete_recorded = false;
 
+    // Number of links clicked in this task's panel during the current open
+    // session.
+    size_t link_click_count = 0;
+
     // Observer for the embedded WebContents in the side panel.
     std::unique_ptr<SidePanelWebContentsObserver> web_contents_observer;
 
@@ -135,8 +153,6 @@ class ContextualTasksSidePanelCoordinator
     // panel loads the page.
     GURL restored_url;
   };
-
-  DECLARE_USER_DATA(ContextualTasksSidePanelCoordinator);
 
   explicit ContextualTasksSidePanelCoordinator(
       BrowserWindowInterface* browser_window,
@@ -156,9 +172,6 @@ class ContextualTasksSidePanelCoordinator
       const ContextualTasksSidePanelCoordinator&) = delete;
   ~ContextualTasksSidePanelCoordinator() override;
 
-  static ContextualTasksSidePanelCoordinator* From(
-      BrowserWindowInterface* window);
-
   // ContextualTasksPanelController:
   void AddObserver(ContextualTasksPanelController::Observer* observer) override;
   void RemoveObserver(
@@ -171,24 +184,29 @@ class ContextualTasksSidePanelCoordinator
                 std::nullopt) override;
   void Close() override;
   void OpenInZeroState() override;
+  void OpenUrlInNewTab(const GURL& url) override;
   bool MoveActiveTabToNewThreadIfShared() override;
   std::map<std::string, std::string> GetTabRestoreData(
       tabs::TabInterface* tab) const override;
-  void ShareTabsWithActiveOrNewThread(
+  void ShareTabsWithNewThread(
       const std::vector<tabs::TabHandle>& tab_handles) override;
   void ShareTabsWithExistingThread(
       const base::Uuid& task_id,
       const std::vector<tabs::TabHandle>& tab_handles,
       omnibox::ChromeAimEntryPoint entry_point) override;
   std::vector<RecentThreadInfo> GetRecentThreads() const override;
+  void UnshareTabs(const std::vector<tabs::TabHandle>& tab_handles) override;
   bool IsPanelOpenForContextualTask() const override;
   bool IsShowingResults() const override;
+  bool HasResults() const override;
   ContextualTasksPanelController::EntrySource GetActiveEntrySource()
       const override;
+  bool IsOnboardingTooltipVisible() const override;
   std::optional<tabs::TabHandle> GetAutoSuggestedTabHandle() override;
   void OnTaskChanged(content::WebContents* web_contents,
                      base::Uuid task_id) override;
   void OnAiInteraction() override;
+  void OnLinkClicked() override;
   void SetPendingTaskForTab(tabs::TabInterface* tab,
                             const base::Uuid& task_id) override;
   content::WebContents* GetActiveWebContents() const override;
@@ -211,9 +229,13 @@ class ContextualTasksSidePanelCoordinator
   bool CanExpandToFullTab() const override;
   void ShowPageInfoBubble(bool is_pointer_interaction) override;
   void OnLogoPointerDown() override;
-  ContextualTasksPermissionController* permission_controller() {
-    return permission_controller_.get();
+  ContextualTasksPermissionController* permission_controller() override;
+#if !BUILDFLAG(IS_ANDROID)
+  ContextualTasksOnboardingTooltipController*
+  onboarding_controller_for_testing() {
+    return onboarding_controller_.get();
   }
+#endif
 #if BUILDFLAG(ENABLE_EXTENSIONS_CORE) && !BUILDFLAG(IS_ANDROID)
   ContextualTasksExtensionsContainer* GetExtensionsContainerForTesting() {
     return extensions_container_.get();
@@ -250,6 +272,13 @@ class ContextualTasksSidePanelCoordinator
                     tabs::TabInterface* tab,
                     TabRemovedReason removed_reason) override;
 
+  // signin::IdentityManager::Observer:
+  void OnAccountsInCookieUpdated(
+      const signin::AccountsInCookieJarInfo& accounts_in_cookie_jar_info,
+      const GoogleServiceAuthError& error) override;
+  void OnIdentityManagerShutdown(
+      signin::IdentityManager* identity_manager) override;
+
 #if !BUILDFLAG(IS_ANDROID)
   // ThemeServiceObserver:
   void OnThemeChanged() override;
@@ -277,6 +306,10 @@ class ContextualTasksSidePanelCoordinator
 
   // Hide or show panel base on open state of the current task.
   void UpdatePanelVisibility();
+
+  // Returns the task associated with the active side panel without
+  // mutating pending task state.
+  std::optional<ContextualTask> GetCurrentTask() const;
 
   // Clean up unused WebContents.
   void CleanUpUnusedWebContents() override;
@@ -374,13 +407,17 @@ class ContextualTasksSidePanelCoordinator
   // Get the open state of the panel.
   bool ShouldBeOpen();
 
-  // Returns true if the side panel is currently open and showing Lens results
-  // (e.g. a task waiting for its search URL, or a non-AIM Search Results Page /
-  // Lens SRP).
+  // Returns the active task's HTTP/HTTPS results URL, agnostic to whether side
+  // panel rearchitecture is enabled, or an empty `GURL` if no results URL is
+  // loaded.
+  GURL GetActiveResultsUrl() const;
+
+  // Returns true if the active tab's side panel has Lens results loaded (e.g.
+  // a Lens Overlay entry or a non-AIM Search Results Page / Lens SRP).
   bool IsShowingLensResults() const;
 
-  // Returns true if the side panel is currently open and showing AIM results
-  // (i.e. an AIM page that is not in zero state).
+  // Returns true if the active tab's side panel has AIM results loaded (i.e.
+  // an AIM page that is not in zero state).
   bool IsShowingAimResults() const;
 
   // Closes any active Lens sessions for tabs associated with the given task.
@@ -451,11 +488,15 @@ class ContextualTasksSidePanelCoordinator
 
   base::CallbackListSubscription eligibility_change_subscription_;
 
-  ui::ScopedUnownedUserData<ContextualTasksSidePanelCoordinator>
+  ui::ScopedUnownedUserData<ContextualTasksPanelController>
       scoped_unowned_user_data_;
 
   bool in_cobrowsing_session_ = false;
   bool is_opening_in_zero_state_ = false;
+
+  // Whether `OpenUrlInNewTab()` is opening a tab for the panel's own UI, so
+  // `OnTabAdded()` doesn't treat it as a link opened from the active tab.
+  bool is_opening_tab_from_panel_ui_ = false;
 
   // When true, PrimaryPageChanged() will not auto-hide the panel on a
   // contextual tasks URL navigation. Set only by interactive tests that drive
@@ -466,6 +507,10 @@ class ContextualTasksSidePanelCoordinator
   // is being closed so that it can be logged.
   std::optional<ContextualTasksPanelController::EntrySource>
       closing_entry_source_;
+
+  // Used to save whether a link was clicked in the task's panel during the open
+  // session when the panel is being closed so that it can be logged.
+  std::optional<bool> closing_had_link_click_;
 
   // Tabs on which the panel was closed while the tab stays associated with its
   // task, so that the panel stays open on other tabs of the same task. Only
@@ -504,6 +549,18 @@ class ContextualTasksSidePanelCoordinator
   std::unique_ptr<ContextualTasksExtensionsContainer> extensions_container_;
 #endif
 
+  // Moves cached side panel `WebContents` to new tasks in zero state after the
+  // user signs out of Google on the web, so they no longer show or restore
+  // content from the signed-out account.
+  void ResetWebContentsToZeroStateAfterWebSignOut();
+
+  // Whether the user was signed in to at least one Google account on the web
+  // the last time the cookie jar was observed.
+  bool is_signed_in_to_web_ = false;
+  base::ScopedObservation<signin::IdentityManager,
+                          signin::IdentityManager::Observer>
+      identity_manager_observation_{this};
+
 #if !BUILDFLAG(IS_ANDROID)
   // Refreshes cached side panel `WebContents` when the profile's effective dark
   // mode changes so embedded pages stay in sync with the shared toolbar.
@@ -514,6 +571,8 @@ class ContextualTasksSidePanelCoordinator
       theme_service_observation_{this};
   base::ScopedObservation<ui::NativeTheme, ui::NativeThemeObserver>
       native_theme_observation_{this};
+  std::unique_ptr<ContextualTasksOnboardingTooltipController>
+      onboarding_controller_;
 #endif
 
   base::WeakPtrFactory<ContextualTasksSidePanelCoordinator> weak_ptr_factory_{

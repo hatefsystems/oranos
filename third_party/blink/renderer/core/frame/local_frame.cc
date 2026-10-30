@@ -997,12 +997,6 @@ void LocalFrame::PrintNavigationErrorMessage(const Frame& target_frame,
   DomWindow()->PrintErrorMessage(message);
 }
 
-void LocalFrame::PrintNavigationWarning(const String& message) {
-  console_->AddMessage(MakeGarbageCollected<ConsoleMessage>(
-      mojom::ConsoleMessageSource::kJavaScript,
-      mojom::ConsoleMessageLevel::kWarning, message));
-}
-
 bool LocalFrame::ShouldClose() {
   // TODO(crbug.com/1407078): This should be fixed to dispatch beforeunload
   // events to both local and remote frames.
@@ -3046,9 +3040,10 @@ mojom::blink::DevicePostureProvider* LocalFrame::GetDevicePostureProvider() {
 // static
 void LocalFrame::NotifyUserActivation(
     LocalFrame* frame,
-    mojom::blink::UserActivationNotificationType notification_type) {
+    mojom::blink::UserActivationNotificationType notification_type,
+    bool need_browser_verification) {
   if (frame) {
-    frame->NotifyUserActivation(notification_type);
+    frame->NotifyUserActivation(notification_type, need_browser_verification);
   }
 }
 
@@ -3065,10 +3060,15 @@ bool LocalFrame::ConsumeTransientUserActivation(
 }
 
 void LocalFrame::NotifyUserActivation(
-    mojom::blink::UserActivationNotificationType notification_type) {
-  GetLocalFrameHostRemote().UpdateUserActivationState(
-      mojom::blink::UserActivationUpdateType::kNotifyActivation,
-      notification_type);
+    mojom::blink::UserActivationNotificationType notification_type,
+    bool need_browser_verification) {
+  mojom::blink::UserActivationUpdateType update_type =
+      need_browser_verification
+          ? mojom::blink::UserActivationUpdateType::
+                kNotifyActivationPendingBrowserVerification
+          : mojom::blink::UserActivationUpdateType::kNotifyActivation;
+  GetLocalFrameHostRemote().UpdateUserActivationState(update_type,
+                                                      notification_type);
   Client()->NotifyUserActivation();
   NotifyUserActivationInFrameTree(notification_type);
 }
@@ -3148,11 +3148,6 @@ class FrameColorOverlay final : public FrameOverlay::Delegate {
 };
 
 }  // namespace
-
-void LocalFrame::SetReducedAcceptLanguage(
-    const AtomicString& reduced_accept_language) {
-  reduced_accept_language_ = reduced_accept_language;
-}
 
 template <>
 struct DowncastTraits<FrameColorOverlay> {
@@ -3259,15 +3254,6 @@ void LocalFrame::SetContextPaused(bool is_paused) {
   Loader().SetDefersLoading(GetLoaderFreezeMode());
   // TODO(altimin): Move this to PageScheduler level.
   GetFrameScheduler()->SetPaused(is_paused);
-}
-
-LocalFrame* LocalFrame::GetPreviousLocalFrameForLocalSwap() {
-  CHECK(IsProvisional());
-  if (auto* previous_main_frame =
-          GetPage()->GetPreviousMainFrameForLocalSwap()) {
-    return previous_main_frame;
-  }
-  return DynamicTo<LocalFrame>(GetProvisionalOwnerFrame());
 }
 
 bool LocalFrame::SwapIn() {

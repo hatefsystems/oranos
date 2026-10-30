@@ -1585,6 +1585,12 @@ export class OmniboxPopupSearchboxElement extends
     this.isLogicallyFocused_ = isFocused;
     if (isFocused) {
       if (showFullUrl) {
+        // Focus Location requests exit keyword mode if the input already has
+        // focus.
+        if (this.shadowRoot?.activeElement === this.$.input) {
+          this.keywordModeManager.clearKeyword(
+              this.getInputElement().inputElement.value);
+        }
         this.maybeShowFullUrl_();
       }
       if (document.visibilityState === 'visible') {
@@ -1626,10 +1632,14 @@ export class OmniboxPopupSearchboxElement extends
     if (!this.userInputInProgress_) {
       // Clear permanent URL text and transition to user input mode with empty
       // text.
+      this.fullUrlShown_ = false;
       this.$.input.setInputText('');
       this.userInputInProgress_ = true;
       this.hasUserInput_ = false;
       this.lastInputText_ = '';
+      this.lastInputSelection_ = {start: 0, end: 0};
+      this.textfieldModel_.setInitialText('', {start: 0, end: 0});
+      this.updateEditHistoryState_();
     } else {
       // Preserve existing user draft text and select all of it.
       this.getInputElement().select();
@@ -1667,6 +1677,10 @@ export class OmniboxPopupSearchboxElement extends
     this.clickQueriedZps_ = false;
     this.getInputElement().setSelectionRange(0, 0);
     this.getInputElement().blur();
+    // Show the start of the text, so that the #mirror elides its end. Blink
+    // scrolls an <input> back to its start on blur, but only fires blur (from
+    // `blur()`) while the page has system focus, so don't rely on it.
+    this.getInputElement().inputElement.scrollLeft = 0;
     // Cache the selected match before clearing autocomplete results so the
     // searchbox icon does not fall back to the default icon while blurred.
     if (this.selectedMatch) {
@@ -1730,18 +1744,23 @@ export class OmniboxPopupSearchboxElement extends
         inputEl.scrollLeft = inputEl.scrollWidth;
       } else if (!isFullSelection) {
         this.scrollSelectionStartIntoView_(selStart);
+        // Then scroll only as far past the start as the caret (`end`) needs. A
+        // range handed off from the native omnibox is usually a drag, which
+        // scrolled its text to keep the caret in view (see
+        // OmniboxViewViews::OnMousePressed()), so this shows about the same
+        // part of the text, give or take the two inputs' widths.
+        this.scrollOffsetIntoView_(end, inputEl.scrollLeft);
       }
     }
   }
 
   /**
    * Scrolls the single-line input to the start of the text, or only as far past
-   * it as needed to show the selection start at `selStart`. In Full WebUI mode
-   * the native textfield never takes focus, so it doesn't scroll while the user
-   * drags. It shows the start of the text with the end elided, so a range
-   * handed off from it starts where the user saw it. Blink doesn't scroll a
-   * text field for `setSelectionRange()`, so without this the input keeps its
-   * old scroll offset.
+   * it as needed to show the selection start at `selStart`. The native omnibox
+   * shows the elided URL from its start while unfocused, so a range handed off
+   * from it starts where the user saw it. Blink doesn't scroll a text field for
+   * `setSelectionRange()`, so without this the input keeps its old scroll
+   * offset.
    */
   private scrollSelectionStartIntoView_(selStart: number) {
     this.scrollOffsetIntoView_(selStart, /*fromScrollLeft=*/ 0);
@@ -2249,13 +2268,9 @@ export class OmniboxPopupSearchboxElement extends
       return;
     }
 
-    // Stage 4 (`kBlur`): Blurs Omnibox and closes UI, returning focus to Web
-    // Contents.
-    if (this.fullUrlShown_) {
-      // Revert the native omnibox view in case it was unelided (e.g. via drag)
-      // so closing the popup restores the elided URL.
-      this.popupPageHandler_.revert(this.currentSequenceNum_);
-    }
+    // Stage 4 (`kBlur`): Reverts selection, blurs omnibox and closes UI,
+    // returning focus to Web Contents.
+    this.popupPageHandler_.revert(this.currentSequenceNum_);
     inputEl.blur();
     this.popupPageHandler_.closeUI();
     this.popupPageHandler_.logEscapeAction(OmniboxEscapeAction.kBlur);

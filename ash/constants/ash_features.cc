@@ -48,9 +48,6 @@ BASE_FEATURE(kAmbientModeDevUseProdFeature,
              "ChromeOSAmbientModeDevChannelUseProdServer",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Adds support for allowing or disabling APN modification by policy.
-BASE_FEATURE(kAllowApnModificationPolicy, base::FEATURE_ENABLED_BY_DEFAULT);
-
 // Controls whether proxy settings from policy or extensions are applied
 // verbatim without appending implicit bypass rules for simple hostnames.
 BASE_FEATURE(kApplyManagedProxyBypassListVerbatim,
@@ -65,6 +62,9 @@ BASE_FEATURE(kArcAdbSideloadingFeature,
 // browser windows during session restore.
 BASE_FEATURE(kAshSessionRestoreDeferOccludedActiveTabLoad,
              base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Enables audio I/O selection improvement algorithm. http://launch/4301655.
+BASE_FEATURE(kAudioSelectionImprovement, base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Controls whether to enable the audio focus enforcement toggle in settings.
 BASE_FEATURE(kAudioFocusSetting, base::FEATURE_DISABLED_BY_DEFAULT);
@@ -737,9 +737,6 @@ BASE_FEATURE(kGlanceablesTimeManagementTasksViewAssignedTasks,
 // Enables logging new Gaia account creation event.
 BASE_FEATURE(kGaiaRecordAccountCreation, base::FEATURE_ENABLED_BY_DEFAULT);
 
-// Enables the Game Dashboard Main Menu utility views.
-BASE_FEATURE(kGameDashboardUtilities, base::FEATURE_DISABLED_BY_DEFAULT);
-
 // Enables the Game Dashboard's Record Game feature. This flag is to be enabled
 // by the feature management module.
 BASE_FEATURE(kFeatureManagementGameDashboardRecordGame,
@@ -954,7 +951,7 @@ BASE_FEATURE(kInstantHotspotOnNearby, base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kInstantTethering, base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enables the inline update flow for Isolated Web Apps in Settings.
-BASE_FEATURE(kIsolatedWebAppInlineUpdate, base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kIsolatedWebAppInlineUpdate, base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enables or disables the internal server side speech recognition on ChromeOS.
 // The supported locales for this feature are specified using the locales
@@ -1061,6 +1058,11 @@ BASE_FEATURE(kLocalFactorsPasswordComplexity, base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enables local authentication controller with PIN support.
 BASE_FEATURE(kLocalAuthenticationWithPin, base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Enables client certificate authentication for browser-process network
+// requests on the login screen (e.g. behind an mTLS proxy).
+BASE_FEATURE(kLoginScreenProxyClientCertAuth,
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Feature to allow MAC address randomization to be enabled for WiFi networks.
 BASE_FEATURE(kMacAddressRandomization, base::FEATURE_DISABLED_BY_DEFAULT);
@@ -1202,9 +1204,6 @@ BASE_FEATURE(kOobeInputMethods, base::FEATURE_DISABLED_BY_DEFAULT);
 
 // If enabled, SplitModifierKeyboardInfoScreen will be shown in OOBE.
 BASE_FEATURE(kOobeSplitModifierKeyboardInfo, base::FEATURE_ENABLED_BY_DEFAULT);
-
-// Enables OOBE Jelly features.
-BASE_FEATURE(kOobeJelly, base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enables OOBE perks discovery feature.
 BASE_FEATURE(kOobePerksDiscovery, base::FEATURE_ENABLED_BY_DEFAULT);
@@ -1875,6 +1874,10 @@ bool ForceOnDeviceAppControlsForAllRegions() {
   return base::FeatureList::IsEnabled(kForceOnDeviceAppControlsForAllRegions);
 }
 
+bool IsAudioSelectionImprovementEnabled() {
+  return base::FeatureList::IsEnabled(kAudioSelectionImprovement);
+}
+
 bool Is16DesksEnabled() {
   return base::FeatureList::IsEnabled(kFeatureManagement16Desks);
 }
@@ -1893,10 +1896,6 @@ bool IsAmbientEQDefaultOff() {
 
 bool IsAmbientModeDevUseProdEnabled() {
   return base::FeatureList::IsEnabled(kAmbientModeDevUseProdFeature);
-}
-
-bool IsAllowApnModificationPolicyEnabled() {
-  return base::FeatureList::IsEnabled(kAllowApnModificationPolicy);
 }
 
 bool IsApplyManagedProxyBypassListVerbatimEnabled() {
@@ -2408,8 +2407,8 @@ bool IsLobsterEnabledForManagedUsers() {
   return base::FeatureList::IsEnabled(kLobsterForManagedUsers);
 }
 
-bool AreGameDashboardUtilitiesEnabled() {
-  return base::FeatureList::IsEnabled(kGameDashboardUtilities);
+bool IsLoginScreenProxyClientCertAuthEnabled() {
+  return base::FeatureList::IsEnabled(kLoginScreenProxyClientCertAuth);
 }
 
 bool IsProductivityLauncherImageSearchEnabled() {
@@ -2419,7 +2418,6 @@ bool IsProductivityLauncherImageSearchEnabled() {
 bool IsMacAddressRandomizationEnabled() {
   return base::FeatureList::IsEnabled(kMacAddressRandomization);
 }
-
 
 bool IsEcheShorterScanningDutyCycleEnabled() {
   return base::FeatureList::IsEnabled(kEcheShorterScanningDutyCycle);
@@ -2461,10 +2459,6 @@ bool AreOngoingProcessesEnabled() {
 
 bool IsOemAppsMustUpdateFromWebstoreEnabled() {
   return base::FeatureList::IsEnabled(kOemAppsMustUpdateFromWebstore);
-}
-
-bool IsOobeJellyEnabled() {
-  return base::FeatureList::IsEnabled(kOobeJelly);
 }
 
 bool IsModifierSplitEnabled() {

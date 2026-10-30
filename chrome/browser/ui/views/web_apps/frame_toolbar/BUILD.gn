@@ -45,6 +45,7 @@ if (toolkit_views) {
     ]
     deps = [
       "//chrome/browser/ui/browser_window",
+      "//chrome/browser/ui/content_settings",
       "//ui/base",
       "//ui/compositor",
     ]
@@ -134,7 +135,6 @@ if (toolkit_views) {
       "//chrome/browser/ui/views/frame:browser_view_header",
       "//chrome/browser/ui/views/frame:toolbar_button_provider",
       "//chrome/browser/ui/views/toolbar",
-      "//chrome/browser/ui/waap:window_metrics_manager",
       "//chrome/browser/ui/web_applications",
       "//ui/base",
       "//ui/base/metadata",
@@ -382,6 +382,9 @@ if (toolkit_views) {
     }
     if (use_ozone) {
       deps += [ "//ui/ozone" ]
+    }
+    if (is_mac) {
+      deps += [ "//chrome/browser/apps/app_shim" ]
     }
   }
 

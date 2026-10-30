@@ -1168,15 +1168,12 @@ public class NewTabPageCoordinatorUnitTest {
         View optionalButton = mNewTabPageLayout.findViewById(R.id.optional_button);
         assertEquals(View.VISIBLE, optionalButton.getVisibility());
 
-        // The Create image strings aren't applied, so the layout's default gallery strings are
-        // kept.
+        // The Create image strings aren't applied, so the layout's default strings are kept.
         assertEquals(
-                mActivity.getString(R.string.ntp_action_chip_gallery_accessibility),
+                mActivity.getString(R.string.ntp_action_chip_add_image_accessibility),
                 optionalButton.getContentDescription());
         TextView optionalButtonText = mNewTabPageLayout.findViewById(R.id.optional_button_text);
-        assertEquals(
-                mActivity.getString(R.string.omnibox_navattach_gallery),
-                optionalButtonText.getText().toString());
+        assertEquals(mActivity.getString(R.string.add), optionalButtonText.getText().toString());
 
         // Clicking doesn't enter image generation mode.
         optionalButton.performClick();
@@ -2322,6 +2319,44 @@ public class NewTabPageCoordinatorUnitTest {
                         OmniboxFocusReason.FAKE_BOX_LONG_PRESS,
                         "second paste");
         assertEquals("", searchBoxTextView.getText().toString());
+    }
+
+    @Test
+    public void testOnToEdgeChange() {
+        PropertyModel model = mCoordinator.getModelForTesting();
+        int toolbarHeightNoShadow =
+                mActivity.getResources().getDimensionPixelSize(R.dimen.toolbar_height_no_shadow);
+        int baseTransitionStartOffset =
+                mCoordinator.getCurrentNtpFakeSearchBoxTransitionStartOffset();
+
+        mCoordinator.onToEdgeChange(/* systemTopInset= */ 50, /* supportsEdgeToEdgeOnTop= */ true);
+        assertEquals(
+                toolbarHeightNoShadow + 50, model.get(NewTabPageLayoutProperties.TOP_INSET_PX));
+        assertEquals(toolbarHeightNoShadow + 50, mNewTabPageLayout.getPaddingTop());
+        assertEquals(
+                baseTransitionStartOffset + 50,
+                mCoordinator.getCurrentNtpFakeSearchBoxTransitionStartOffset());
+
+        // When the controller is drawing to the top edge (systemTopInset = 50) but the NTP has a
+        // default background (supportsEdgeToEdgeOnTop = false), top inset should reset to
+        // toolbarHeightNoShadow.
+        mCoordinator.onToEdgeChange(/* systemTopInset= */ 50, /* supportsEdgeToEdgeOnTop= */ false);
+        assertEquals(toolbarHeightNoShadow, model.get(NewTabPageLayoutProperties.TOP_INSET_PX));
+        assertEquals(toolbarHeightNoShadow, mNewTabPageLayout.getPaddingTop());
+        assertEquals(
+                baseTransitionStartOffset,
+                mCoordinator.getCurrentNtpFakeSearchBoxTransitionStartOffset());
+
+        mCoordinator.onToEdgeChange(/* systemTopInset= */ 50, /* supportsEdgeToEdgeOnTop= */ true);
+        assertEquals(
+                toolbarHeightNoShadow + 50, model.get(NewTabPageLayoutProperties.TOP_INSET_PX));
+        assertEquals(toolbarHeightNoShadow + 50, mNewTabPageLayout.getPaddingTop());
+
+        // Resetting top inset (as done by EdgeToEdgePadAdjuster#overrideTopInset(0)) resets
+        // TOP_INSET_PX to toolbarHeightNoShadow.
+        mCoordinator.onToEdgeChange(/* systemTopInset= */ 0, /* supportsEdgeToEdgeOnTop= */ false);
+        assertEquals(toolbarHeightNoShadow, model.get(NewTabPageLayoutProperties.TOP_INSET_PX));
+        assertEquals(toolbarHeightNoShadow, mNewTabPageLayout.getPaddingTop());
     }
 
     /**

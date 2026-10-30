@@ -4,11 +4,13 @@
 
 #import <XCTest/XCTest.h>
 
+#import "base/ios/ios_util.h"
 #import "base/test/metrics/user_action_tester.h"
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/autofill/ui_bundled/autofill_app_interface.h"
 #import "ios/chrome/browser/settings/ui_bundled/autofill/autofill_settings_constants.h"
 #import "ios/chrome/browser/settings/ui_bundled/settings_root_table_constants.h"
+#import "ios/chrome/browser/settings/ui_bundled/settings_table_view_controller_constants.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
@@ -65,15 +67,11 @@ id<GREYMatcher> DeleteConfirmationButton() {
 // Helper to open the CVC storage settings.
 - (void)openCvcStorageSettings {
   [ChromeEarlGreyUI openSettingsMenu];
-  if ([ChromeEarlGrey isYourSavedInfoSettingsPageIosEnabled]) {
-    [ChromeEarlGreyUI
-        tapSettingsMenuButton:grey_accessibilityID(
-                                  @"kSettingsAutofillAndPasswordsCellId")];
-    [[EarlGrey selectElementWithMatcher:PaymentMethodsButton()]
-        performAction:grey_tap()];
-  } else {
-    [ChromeEarlGreyUI tapSettingsMenuButton:PaymentMethodsButton()];
-  }
+  [ChromeEarlGreyUI
+      tapSettingsMenuButton:grey_accessibilityID(
+                                kSettingsAutofillAndPasswordsCellId)];
+  [[EarlGrey selectElementWithMatcher:PaymentMethodsButton()]
+      performAction:grey_tap()];
   [[EarlGrey selectElementWithMatcher:CvcStorageButton()]
       performAction:grey_tap()];
 }
@@ -212,6 +210,13 @@ id<GREYMatcher> DeleteConfirmationButton() {
 #define MAYBE_testDeleteActionsAreRecorded testDeleteActionsAreRecorded
 #endif
 - (void)MAYBE_testDeleteActionsAreRecorded {
+  // TODO(crbug.com/576277206): Re-enable on iPad with iOS 26 once the flake
+  // is fixed.
+  if ([ChromeEarlGrey isIPadIdiom] && base::ios::IsRunningOnIOS26OrLater() &&
+      !base::ios::IsRunningOnIOS27OrLater()) {
+    EARL_GREY_TEST_DISABLED(@"Flaky on iPad with iOS 26.");
+  }
+
   base::UserActionTester userActionTester;
 
   // Create & save local credit card.

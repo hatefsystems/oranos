@@ -596,21 +596,31 @@ void BrowserNativeWidgetMac::ValidateUserInterfaceItem(
       // Menu items may be validated during browser startup, before the
       // TabStripModel has been populated. Short-circuit to false in that case.
       result->new_toggle_state =
-          !model->empty() && model->active_index() != TabStripModel::kNoTab &&
-          !model->WillContextMenuMuteSites(model->active_index());
+          !model->empty() && model->GetActiveTab() &&
+          !model->WillContextMenuMuteSites(model->GetActiveTab()->GetHandle());
       break;
     }
     case IDC_WINDOW_PIN_TAB: {
       TabStripModel* model = browser->tab_strip_model();
       result->new_toggle_state =
-          !model->empty() && !model->WillContextMenuPin(model->active_index());
+          !model->empty() && model->GetActiveTab() &&
+          !model->WillContextMenuPin(model->GetActiveTab()->GetHandle());
       break;
     }
     case IDC_WINDOW_GROUP_TAB: {
       TabStripModel* model = browser->tab_strip_model();
       result->new_toggle_state =
-          !model->empty() &&
-          !model->WillContextMenuGroup(model->active_index());
+          !model->empty() && model->GetActiveTab() &&
+          !model->WillContextMenuGroup(model->GetActiveTab()->GetHandle());
+      break;
+    }
+    case IDC_GROUP_TARGET_TAB: {
+      TabStripModel* model = browser->tab_strip_model();
+      std::optional<int> index = chrome::GetKeyboardFocusedTabIndex(browser);
+      result->new_toggle_state =
+          index.has_value() &&
+          !model->WillContextMenuGroup(
+              model->GetTabAtIndex(index.value())->GetHandle());
       break;
     }
   }

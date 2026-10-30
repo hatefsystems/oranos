@@ -296,26 +296,18 @@ const char* ResultInterface::MessageToMethodName_(mojo::Message& message) {
 uint32_t ResultInterface::Method_Sym::IPCStableHash() {
   // This method's address is used for identifying the mojo method name after
   // symbolization. So each IPCStableHash should have a unique address.
-  // We cannot use NO_CODE_FOLDING() here - it relies on the uniqueness of
-  // __LINE__ value, which is not unique across different mojo modules.
-  // The code below is very similar to NO_CODE_FOLDING, but it uses a unique
-  // hash instead of __LINE__.
-  static constexpr uint32_t kHash = 0x826d7762;  // IPCStableHash for golden::ResultInterface::Method
-  const uint32_t hash = kHash;
-  base::debug::Alias(&hash);
-  return hash;
+  // Returning a unique hash ensures that the function body is unique, and thus
+  // prevents identical code folding (except for the variants of the same
+  // method, e.g. blink and non-blink, which is fine).
+  return 0x826d7762;  // IPCStableHash for golden::ResultInterface::Method
 }
 uint32_t ResultInterface::SyncMethod_Sym::IPCStableHash() {
   // This method's address is used for identifying the mojo method name after
   // symbolization. So each IPCStableHash should have a unique address.
-  // We cannot use NO_CODE_FOLDING() here - it relies on the uniqueness of
-  // __LINE__ value, which is not unique across different mojo modules.
-  // The code below is very similar to NO_CODE_FOLDING, but it uses a unique
-  // hash instead of __LINE__.
-  static constexpr uint32_t kHash = 0x42fd29bb;  // IPCStableHash for golden::ResultInterface::SyncMethod
-  const uint32_t hash = kHash;
-  base::debug::Alias(&hash);
-  return hash;
+  // Returning a unique hash ensures that the function body is unique, and thus
+  // prevents identical code folding (except for the variants of the same
+  // method, e.g. blink and non-blink, which is fine).
+  return 0x42fd29bb;  // IPCStableHash for golden::ResultInterface::SyncMethod
 }
 # endif // !BUILDFLAG(IS_FUCHSIA)
 bool ResultInterface::SyncMethod(bool a,
@@ -610,10 +602,8 @@ bool ResultInterface_Method_ForwardToCallback::Accept(
   if (success && !input_data_view.ReadResult(&p_result))
     success = false;
   if (!success) {
-    ReportValidationErrorForMessage(
-        message,
-        mojo::internal::VALIDATION_ERROR_DESERIALIZATION_FAILED,
-        ResultInterface::Name_, 0, true);
+    mojo::internal::ReportDeserializationErrorForMessage(
+        message, ResultInterface::Name_, 0, true);
     return false;
   }
   if (!callback_.is_null()) {
@@ -639,15 +629,10 @@ void ResultInterface_Method_ProxyToResponder::Run(
    });
 #endif
 
-  const uint32_t kFlags = mojo::Message::kFlagIsResponse |
-      ((is_sync_) ? mojo::Message::kFlagIsSync : 0) |
-      ((true) ? 0 : mojo::Message::kFlagNoInterrupt) |
-      ((false) ? mojo::Message::kFlagIsUrgent : 0);
-
   const size_t estimated_payload_size =
     0;
   mojo::Message message(
-      std::to_underlying(messages::ResultInterface::kMethod), kFlags, estimated_payload_size);
+      std::to_underlying(messages::ResultInterface::kMethod), response_flags_, estimated_payload_size);
   mojo::internal::MessageFragment<
       ::golden::internal::ResultInterface_Method_ResponseParams_Data> params(
           message);
@@ -673,16 +658,7 @@ void ResultInterface_Method_ProxyToResponder::Run(
   message.set_method_name("Method");
 #endif
 
-  message.set_request_id(request_id_);
-  message.set_trace_nonce(trace_nonce_);
-  ::mojo::internal::SendMojoMessage(*responder_, message);
-  // SendMojoMessage() fails silently if the responder connection is closed,
-  // or if the message is malformed.
-  //
-  // TODO(darin): If Accept() returns false due to a malformed message, that
-  // may be good reason to close the connection. However, we don't have a
-  // way to do that from here. We should add a way.
-  responder_ = nullptr;
+  SendResponse(message);
 }
 class ResultInterface_SyncMethod_ProxyToResponder : public ::mojo::internal::ProxyToResponder {
  public:
@@ -760,10 +736,8 @@ bool ResultInterface_SyncMethod_ForwardToCallback::Accept(
   if (success && !input_data_view.ReadResult(&p_result))
     success = false;
   if (!success) {
-    ReportValidationErrorForMessage(
-        message,
-        mojo::internal::VALIDATION_ERROR_DESERIALIZATION_FAILED,
-        ResultInterface::Name_, 1, true);
+    mojo::internal::ReportDeserializationErrorForMessage(
+        message, ResultInterface::Name_, 1, true);
     return false;
   }
   if (!callback_.is_null()) {
@@ -789,15 +763,10 @@ void ResultInterface_SyncMethod_ProxyToResponder::Run(
    });
 #endif
 
-  const uint32_t kFlags = mojo::Message::kFlagIsResponse |
-      ((is_sync_) ? mojo::Message::kFlagIsSync : 0) |
-      ((true) ? 0 : mojo::Message::kFlagNoInterrupt) |
-      ((false) ? mojo::Message::kFlagIsUrgent : 0);
-
   const size_t estimated_payload_size =
     0;
   mojo::Message message(
-      std::to_underlying(messages::ResultInterface::kSyncMethod), kFlags, estimated_payload_size);
+      std::to_underlying(messages::ResultInterface::kSyncMethod), response_flags_, estimated_payload_size);
   mojo::internal::MessageFragment<
       ::golden::internal::ResultInterface_SyncMethod_ResponseParams_Data> params(
           message);
@@ -823,16 +792,7 @@ void ResultInterface_SyncMethod_ProxyToResponder::Run(
   message.set_method_name("SyncMethod");
 #endif
 
-  message.set_request_id(request_id_);
-  message.set_trace_nonce(trace_nonce_);
-  ::mojo::internal::SendMojoMessage(*responder_, message);
-  // SendMojoMessage() fails silently if the responder connection is closed,
-  // or if the message is malformed.
-  //
-  // TODO(darin): If Accept() returns false due to a malformed message, that
-  // may be good reason to close the connection. However, we don't have a
-  // way to do that from here. We should add a way.
-  responder_ = nullptr;
+  SendResponse(message);
 }
 bool ResultInterface_SyncMethod_HandleSyncResponse::Accept(
     mojo::Message* message) {
@@ -850,10 +810,8 @@ bool ResultInterface_SyncMethod_HandleSyncResponse::Accept(
   if (success && !input_data_view.ReadResult(&p_result))
     success = false;
   if (!success) {
-    ReportValidationErrorForMessage(
-        message,
-        mojo::internal::VALIDATION_ERROR_DESERIALIZATION_FAILED,
-        ResultInterface::Name_, 1, true);
+    mojo::internal::ReportDeserializationErrorForMessage(
+        message, ResultInterface::Name_, 1, true);
     return false;
   }if (p_result->is_success()) {
       *out_result_ = base::ok(std::move(p_result->get_success()));
@@ -903,10 +861,8 @@ bool ResultInterfaceStubDispatch::AcceptWithResponder(
       if (success)
         p_a = input_data_view.a();
       if (!success) {
-        ReportValidationErrorForMessage(
-            message,
-            mojo::internal::VALIDATION_ERROR_DESERIALIZATION_FAILED,
-            ResultInterface::Name_, 0, false);
+        mojo::internal::ReportDeserializationErrorForMessage(
+            message, ResultInterface::Name_, 0, false);
         return false;
       }
       auto callback =
@@ -933,10 +889,8 @@ bool ResultInterfaceStubDispatch::AcceptWithResponder(
       if (success)
         p_a = input_data_view.a();
       if (!success) {
-        ReportValidationErrorForMessage(
-            message,
-            mojo::internal::VALIDATION_ERROR_DESERIALIZATION_FAILED,
-            ResultInterface::Name_, 1, false);
+        mojo::internal::ReportDeserializationErrorForMessage(
+            message, ResultInterface::Name_, 1, false);
         return false;
       }
       auto callback =

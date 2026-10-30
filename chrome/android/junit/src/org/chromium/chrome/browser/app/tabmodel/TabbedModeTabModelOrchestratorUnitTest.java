@@ -248,6 +248,7 @@ public class TabbedModeTabModelOrchestratorUnitTest {
     @Test
     public void testDestroy() {
         when(mTabModel.getProfile()).thenReturn(mProfile);
+        when(mTabModel.getCurrentTabSupplier()).thenReturn(ObservableSuppliers.createNullable());
         when(mTabModelSelector.getModel(anyBoolean())).thenReturn(mTabModel);
         when(mTabModelSelector.isTabStateInitialized()).thenReturn(true);
         when(mTabWindowManager.requestSelector(

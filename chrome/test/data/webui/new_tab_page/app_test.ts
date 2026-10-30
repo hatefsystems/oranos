@@ -3,17 +3,16 @@
 // found in the LICENSE file.
 
 import {ActionChipsApiProxyImpl, VoiceSearchAction} from 'chrome://new-tab-page/lazy_load.js';
-import type {ActionChipClickDetail, ComposeboxFuseboxActionRequest, Module} from 'chrome://new-tab-page/lazy_load.js';
-import {ActionChipsRetrievalState, ComposeboxProxyImpl, counterfactualLoad, ModuleDescriptor, ModuleRegistry, NtpComposeboxElement} from 'chrome://new-tab-page/lazy_load.js';
+import type {ActionChipClickDetail, ComposeboxFuseboxActionRequest, ComposeboxVoiceSearchElement, CustomizeButtonsElement, Module} from 'chrome://new-tab-page/lazy_load.js';
+import {ActionChipsRetrievalState, ComposeboxProxyImpl, ModuleRegistry, NtpComposeboxElement} from 'chrome://new-tab-page/lazy_load.js';
 import {ActionChipsHandlerRemote, ActionChipsPageCallbackRouter, IconType, InputSource, QueryActionOverride, SearchboxOverride} from 'chrome://new-tab-page/new_tab_page.js';
 import type {ActionChipsPageRemote, CustomizeButtonsDocumentRemote, FuseboxAction, TabInfo} from 'chrome://new-tab-page/new_tab_page.js';
-import {$$, BackgroundManager, BrowserCommandProxy, CONTEXTUAL_ENTRYPOINT_ELEMENT_ID, CUSTOMIZE_CHROME_BUTTON_ELEMENT_ID, CustomizeButtonsDocumentCallbackRouter, CustomizeButtonsHandlerRemote, CustomizeButtonsProxy, CustomizeChromeSection, CustomizeDialogPage, GlifAnimationState, NewTabPageProxy, NtpCustomizeChromeEntryPoint, NtpElement, SearchboxBrowserProxy, SidePanelOpenTrigger, VoiceAction, WindowProxy} from 'chrome://new-tab-page/new_tab_page.js';
-import type {AppElement, CustomizeButtonsElement, NtpSearchboxElement, PageRemote} from 'chrome://new-tab-page/new_tab_page.js';
-import {NtpBackgroundImageSource, PageCallbackRouter, PageHandlerRemote} from 'chrome://new-tab-page/new_tab_page.js';
+import {$$, BackgroundManager, browserCommandProxyFactory, CONTEXTUAL_ENTRYPOINT_ELEMENT_ID, CUSTOMIZE_CHROME_BUTTON_ELEMENT_ID, CustomizeButtonsHandlerRemote, customizeButtonsProxyFactory, CustomizeChromeSection, CustomizeDialogPage, GlifAnimationState, newTabPageProxyFactory, NtpCustomizeChromeEntryPoint, NtpElement, SearchboxBrowserProxy, SidePanelOpenTrigger, VoiceAction, WindowProxy} from 'chrome://new-tab-page/new_tab_page.js';
+import type {AppElement, NtpSearchboxElement, PageRemote} from 'chrome://new-tab-page/new_tab_page.js';
+import {NtpBackgroundImageSource, PageHandlerRemote} from 'chrome://new-tab-page/new_tab_page.js';
 import {ComposeboxFile} from 'chrome://resources/cr_components/composebox/common.js';
 import {PageHandlerRemote as ComposeboxPageHandlerRemote} from 'chrome://resources/cr_components/composebox/composebox.mojom-webui.js';
 import {ContextUploadStatus, ModelMode, ToolMode} from 'chrome://resources/cr_components/composebox/composebox_query.mojom-webui.js';
-import type {ComposeboxVoiceSearchElement} from 'chrome://resources/cr_components/composebox/composebox_voice_search.js';
 import {WindowProxy as ComposeboxWindowProxy} from 'chrome://resources/cr_components/composebox/window_proxy.js';
 import type {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import type {CrToastElement} from 'chrome://resources/cr_elements/cr_toast/cr_toast.js';
@@ -70,13 +69,18 @@ suite('NewTabPageAppTest', () => {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
 
     windowProxy = installMock(WindowProxy);
-    handler = installMock(
-        PageHandlerRemote,
-        mock => NewTabPageProxy.setInstance(mock, new PageCallbackRouter()));
-    customizeButtonsHandler = installMock(
-        CustomizeButtonsHandlerRemote,
-        mock => CustomizeButtonsProxy.setInstance(
-            mock, new CustomizeButtonsDocumentCallbackRouter()));
+    handler = installMock(PageHandlerRemote, mock => {
+      const {instance, remote} = newTabPageProxyFactory.createForTest(mock);
+      newTabPageProxyFactory.setInstance(instance);
+      callbackRouterRemote = remote;
+    });
+    customizeButtonsHandler =
+        installMock(CustomizeButtonsHandlerRemote, mock => {
+          const {instance, remote} =
+              customizeButtonsProxyFactory.createForTest(mock);
+          customizeButtonsProxyFactory.setInstance(instance);
+          customizeButtonsCallbackRouterRemote = remote;
+        });
     handler.setPromiseResolveFor('getMostVisitedSettings', {
       customLinksEnabled: false,
       shortcutsVisible: false,
@@ -100,13 +104,9 @@ suite('NewTabPageAppTest', () => {
                         removeEventListener: () => {},
                       }));
     windowProxy.setPromiseResolveFor('waitForLazyRender');
+    windowProxy.setPromiseResolveFor('ensureLazyLoaded');
     windowProxy.setResultFor('createIframeSrc', '');
     windowProxy.setResultFor('url', url);
-    callbackRouterRemote = NewTabPageProxy.getInstance()
-                               .callbackRouter.$.bindNewPipeAndPassRemote();
-    customizeButtonsCallbackRouterRemote =
-        CustomizeButtonsProxy.getInstance()
-            .callbackRouter.$.bindNewPipeAndPassRemote();
     backgroundManager = installMock(BackgroundManager);
     backgroundManager.setPromiseResolveFor(
         'getBackgroundImageLoadTime', backgroundImageLoadTime);
@@ -214,6 +214,36 @@ suite('NewTabPageAppTest', () => {
       assertEquals(
           1, metrics.count(VOICE_ACTIONS_METRIC, VoiceAction.ACTIVATE));
     });
+
+    test(
+        'voice search overlay waits for the lazy loaded code to load',
+        async () => {
+          const lazyRenderResolver = new PromiseResolver<void>();
+          windowProxy.setResultFor(
+              'waitForLazyRender', lazyRenderResolver.promise);
+          const lazyLoadResolver = new PromiseResolver<void>();
+          windowProxy.resetResolver('ensureLazyLoaded');
+          windowProxy.setResultFor(
+              'ensureLazyLoaded', lazyLoadResolver.promise);
+          await recreateApp();
+
+          // Act.
+          $$(app, '#searchbox')!.dispatchEvent(new Event('open-voice-search'));
+          await microtasksFinished();
+
+          // Assert.
+          assertEquals(1, windowProxy.getCallCount('ensureLazyLoaded'));
+          assertFalse(
+              !!app.shadowRoot.querySelector('ntp-voice-search-overlay'));
+
+          // Act.
+          lazyLoadResolver.resolve();
+          await microtasksFinished();
+
+          // Assert.
+          assertTrue(
+              !!app.shadowRoot.querySelector('ntp-voice-search-overlay'));
+        });
 
     test('voice search keyboard shortcut', async () => {
       // Test correct shortcut opens voice search.
@@ -372,6 +402,10 @@ suite('NewTabPageAppTest', () => {
 
   suite('Theming', () => {
     test('setting theme updates ntp', async () => {
+      // Arrange.
+      app.style.setProperty(
+          '--color-new-tab-page-background', 'rgb(255, 0, 0)');
+
       // Act.
       callbackRouterRemote.setTheme(createTheme());
       await callbackRouterRemote.$.flushForTesting();
@@ -382,6 +416,8 @@ suite('NewTabPageAppTest', () => {
       assertEquals(
           0xffff0000 /* red */,
           (await backgroundManager.whenCalled('setBackgroundColor')).value);
+      assertStyle(
+          $$(app, '#rhsContent')!, 'background-color', 'rgb(255, 0, 0)');
       assertStyle(
           $$(app, '#content')!, '--color-new-tab-page-attribution-foreground',
           'rgba(0, 0, 255, 1.00)');
@@ -414,6 +450,8 @@ suite('NewTabPageAppTest', () => {
 
     test('setting background image shows image', async () => {
       // Arrange.
+      app.style.setProperty(
+          '--color-new-tab-page-background', 'rgb(255, 0, 0)');
       const theme = createTheme();
       theme.backgroundImage = createBackgroundImage('https://img.png');
 
@@ -421,10 +459,13 @@ suite('NewTabPageAppTest', () => {
       backgroundManager.resetResolver('setShowBackgroundImage');
       callbackRouterRemote.setTheme(theme);
       await callbackRouterRemote.$.flushForTesting();
+      await microtasksFinished();
 
       // Assert.
       assertEquals(1, backgroundManager.getCallCount('setShowBackgroundImage'));
       assertTrue(await backgroundManager.whenCalled('setShowBackgroundImage'));
+      assertStyle(
+          $$(app, '#rhsContent')!, 'background-color', 'rgba(0, 0, 0, 0)');
 
       // Scrim removal will remove text shadows as background protection is
       // applied to the background element instead.
@@ -705,7 +746,7 @@ suite('NewTabPageAppTest', () => {
     test('can show promo with browser command', async () => {
       const promoBrowserCommandHandler = installMock(
           CommandHandlerRemote,
-          mock => BrowserCommandProxy.getInstance().handler = mock);
+          mock => browserCommandProxyFactory.setInstance({handler: mock}));
       promoBrowserCommandHandler.setPromiseResolveFor(
           'canExecuteCommand', {canExecute: true});
 
@@ -740,7 +781,7 @@ suite('NewTabPageAppTest', () => {
     test('executes promo browser command', async () => {
       const promoBrowserCommandHandler = installMock(
           CommandHandlerRemote,
-          mock => BrowserCommandProxy.getInstance().handler = mock);
+          mock => browserCommandProxyFactory.setInstance({handler: mock}));
       promoBrowserCommandHandler.setPromiseResolveFor(
           'executeCommand', {commandExecuted: true});
 
@@ -874,41 +915,6 @@ suite('NewTabPageAppTest', () => {
     });
 
     modulesCommonTests('ntp-modules');
-  });
-
-  suite('CounterfactualModules', () => {
-    suiteSetup(() => {
-      loadTimeData.overrideValues({
-        modulesEnabled: false,
-        modulesLoadEnabled: true,
-      });
-    });
-
-    test('modules loaded but not rendered if counterfactual', async () => {
-      // Act.
-      const fooElement = document.createElement('div');
-      const barElement = document.createElement('div');
-      moduleResolver.resolve([
-        {
-          descriptor:
-              new ModuleDescriptor('foo', () => Promise.resolve(fooElement)),
-          elements: [fooElement],
-        },
-        {
-          descriptor:
-              new ModuleDescriptor('bar', () => Promise.resolve(barElement)),
-          elements: [barElement],
-        },
-      ]);
-      await counterfactualLoad();
-      await microtasksFinished();
-
-      // Assert.
-      assertTrue(moduleRegistry.getCallCount('initializeModules') > 0);
-      assertEquals(1, handler.getCallCount('onModulesLoadedWithData'));
-      assertEquals(
-          0, app.shadowRoot.querySelectorAll('ntp-module-wrapper').length);
-    });
   });
 
   suite('CustomizeChromeSidePanel', () => {
@@ -1093,6 +1099,31 @@ suite('NewTabPageAppTest', () => {
       // Assert.
       assertTrue(scrim.hidden);
       assertFalse(!!app.shadowRoot.querySelector('ntp-lens-upload-dialog'));
+    });
+
+    test('lens upload dialog waits for lazy loaded code to load', async () => {
+      // Arrange.
+      const ensureLazyLoadedResolver = new PromiseResolver<void>();
+      windowProxy.resetResolver('ensureLazyLoaded');
+      windowProxy.setResultFor(
+          'ensureLazyLoaded', ensureLazyLoadedResolver.promise);
+      callbackRouterRemote.setTheme(createTheme());
+      await callbackRouterRemote.$.flushForTesting();
+
+      // Act.
+      $$(app, '#searchbox')!.dispatchEvent(new Event('open-lens-search'));
+      await microtasksFinished();
+
+      // Assert: dialog is not stamped until ensureLazyLoaded resolves.
+      assertEquals(1, windowProxy.getCallCount('ensureLazyLoaded'));
+      assertFalse(!!app.shadowRoot.querySelector('ntp-lens-upload-dialog'));
+
+      // Act: resolve lazy load.
+      ensureLazyLoadedResolver.resolve();
+      await microtasksFinished();
+
+      // Assert.
+      assertTrue(!!app.shadowRoot.querySelector('ntp-lens-upload-dialog'));
     });
   });
 
@@ -1410,6 +1441,41 @@ suite('NewTabPageAppTest', () => {
               composebox.state?.text);
           assertEquals(0, searchboxHandler.getCallCount('setActiveToolMode'));
         });
+
+    test('composebox waits for the lazy loaded code to load', async () => {
+      // Arrange: Simulate lazy_load.js not having finished loading yet when
+      // the user opens the composebox before waitForLazyRender resolves.
+      const lazyRenderResolver = new PromiseResolver<void>();
+      windowProxy.setResultFor('waitForLazyRender', lazyRenderResolver.promise);
+      windowProxy.resetResolver('ensureLazyLoaded');
+      const lazyLoadResolver = new PromiseResolver<void>();
+      windowProxy.setResultFor('ensureLazyLoaded', lazyLoadResolver.promise);
+      await recreateApp();
+
+      // Act.
+      const searchbox = $$(app, '#searchbox')!;
+      searchbox.dispatchEvent(new CustomEvent('open-composebox', {
+        detail: {text: '', files: []},
+      }));
+      await microtasksFinished();
+
+      // Assert: Lazy loading is requested right away, but the composebox is
+      // not shown and session start is not recorded until lazy_load.js
+      // finishes loading.
+      assertEquals(1, windowProxy.getCallCount('ensureLazyLoaded'));
+      assertEquals(
+          0, metrics.count('NewTabPage.Composebox.FromNTPLoadToSessionStart'));
+      assertFalse(!!app.shadowRoot.querySelector('#composebox'));
+
+      // Act.
+      lazyLoadResolver.resolve();
+      await microtasksFinished();
+
+      // Assert.
+      assertTrue(!!app.shadowRoot.querySelector('#composebox'));
+      assertEquals(
+          1, metrics.count('NewTabPage.Composebox.FromNTPLoadToSessionStart'));
+    });
 
     test('composebox state toggles inert attribute on siblings', async () => {
       // Arrange: Verify blocked elements do NOT have inert initially.
@@ -1897,7 +1963,7 @@ suite('NewTabPageAppTest', () => {
               (searchbox.dispatchEvent(new CustomEvent('open-composebox', {
                 detail: {text: '', files: []},
               })));
-              await app.updateComplete;
+              await microtasksFinished();
 
               const composeboxElement =
                   app.shadowRoot.querySelector<NtpComposeboxElement>(
@@ -2369,6 +2435,74 @@ suite('NewTabPageAppTest', () => {
                   submitIcon.getBoundingClientRect().bottom,
                   LAYOUT_TOLERANCE_PX,
                   'Attachment chip and submit button should be bottom aligned');
+            });
+
+        test(
+            'tool chip does not shift vertically when submit button appears',
+            async () => {
+              await recreateApp();
+              await microtasksFinished();
+
+              const searchbox = $$(app, '#searchbox');
+              assertTrue(!!searchbox);
+
+              searchbox.dispatchEvent(new CustomEvent('open-composebox', {
+                detail: {
+                  text: '',
+                  files: [],
+                },
+              }));
+              await microtasksFinished();
+
+              const composebox = $$(app, '#composebox') as NtpComposeboxElement;
+              assertTrue(!!composebox);
+              composebox.inToolMode = true;
+              composebox.contextMenuEnabled = false;
+              composebox.requestUpdate();
+              await composebox.updateComplete;
+
+              const toolChipsContainer = $$(composebox, '#toolChipsContainer');
+              assertTrue(!!toolChipsContainer);
+              const toolChip =
+                  toolChipsContainer.querySelector('cr-composebox-tool-chip');
+              assertTrue(!!toolChip);
+              const toolChipButton = $$(toolChip, '#toolEnabledButton');
+              assertTrue(!!toolChipButton);
+
+              const carouselContainer = $$(composebox, '#carouselContainer');
+              assertTrue(!!carouselContainer);
+              assertFalse(
+                  !!carouselContainer.querySelector('cr-composebox-submit'));
+
+              const initialTop = toolChipButton.getBoundingClientRect().top;
+              const initialBottom =
+                  toolChipButton.getBoundingClientRect().bottom;
+
+              composebox.input = 'test query';
+              composebox.requestUpdate();
+              await composebox.updateComplete;
+
+              const submitElement =
+                  carouselContainer.querySelector('cr-composebox-submit');
+              assertTrue(!!submitElement);
+              const submitIcon = $$(submitElement, '#submitContainer');
+              assertTrue(!!submitIcon);
+
+              assertNear(
+                  initialTop, toolChipButton.getBoundingClientRect().top,
+                  LAYOUT_TOLERANCE_PX,
+                  'Tool chip top should not shift when submit button appears');
+              assertNear(
+                  initialBottom, toolChipButton.getBoundingClientRect().bottom,
+                  LAYOUT_TOLERANCE_PX,
+                  'Tool chip bottom should not shift when submit button ' +
+                      'appears');
+              assertNear(
+                  toolChipButton.getBoundingClientRect().bottom,
+                  submitIcon.getBoundingClientRect().bottom,
+                  LAYOUT_TOLERANCE_PX,
+                  'Tool chip button and submit button should be bottom ' +
+                      'aligned');
             });
       });
     });
@@ -5561,7 +5695,7 @@ suite('NewTabPageAppTest', () => {
           const searchbox = $$(app, '#searchbox');
           assertTrue(!!searchbox);
           searchbox.dispatchEvent(new Event('open-voice-search'));
-          await app.updateComplete;
+          await microtasksFinished();
 
           const voiceSearch =
               app.shadowRoot.querySelector<ComposeboxVoiceSearchElement>(
@@ -5635,7 +5769,7 @@ suite('NewTabPageAppTest', () => {
           const searchbox = $$(app, '#searchbox');
           assertTrue(!!searchbox);
           searchbox.dispatchEvent(new Event('open-voice-search'));
-          await app.updateComplete;
+          await microtasksFinished();
 
           const voiceSearch =
               app.shadowRoot.querySelector<ComposeboxVoiceSearchElement>(
@@ -5705,7 +5839,7 @@ suite('NewTabPageAppTest', () => {
 
       // Act: Open voice search dialog.
       $$(app, '#searchbox')!.dispatchEvent(new Event('open-voice-search'));
-      await app.updateComplete;
+      await microtasksFinished();
 
       const voiceSearch =
           app.shadowRoot.querySelector<ComposeboxVoiceSearchElement>(
@@ -5745,7 +5879,7 @@ suite('NewTabPageAppTest', () => {
             shiftKey: true,
             code: 'Period',
           }));
-          await app.updateComplete;
+          await microtasksFinished();
 
           const voiceSearch =
               app.shadowRoot.querySelector<ComposeboxVoiceSearchElement>(
@@ -5946,6 +6080,7 @@ suite('NewTabPageAppReducedMotionTest', () => {
     windowProxy =
         installMock(WindowProxy, (mock) => WindowProxy.setInstance(mock));
     windowProxy.setResultFor('waitForLazyRender', Promise.resolve());
+    windowProxy.setResultFor('ensureLazyLoaded', Promise.resolve());
     windowProxy.setResultFor('createIframeSrc', '');
     windowProxy.setResultFor('now', new Date());
     windowProxy.setResultFor('url', url);
@@ -5958,7 +6093,8 @@ suite('NewTabPageAppReducedMotionTest', () => {
     });
     handler = installMock(
         PageHandlerRemote,
-        mock => NewTabPageProxy.setInstance(mock, new PageCallbackRouter()));
+        mock => newTabPageProxyFactory.setInstance(
+            newTabPageProxyFactory.createForTest(mock).instance));
     handler.setResultFor('getMostVisitedSettings', Promise.resolve({
       customLinksEnabled: false,
       shortcutsVisible: false,
@@ -6126,6 +6262,7 @@ suite('NewTabPageAppContextMenuAnimationTest', () => {
     windowProxy =
         installMock(WindowProxy, (mock) => WindowProxy.setInstance(mock));
     windowProxy.setResultFor('waitForLazyRender', Promise.resolve());
+    windowProxy.setResultFor('ensureLazyLoaded', Promise.resolve());
     windowProxy.setResultFor('createIframeSrc', '');
     windowProxy.setResultFor('now', new Date());
     windowProxy.setResultFor('url', new URL(location.href));
@@ -6138,7 +6275,8 @@ suite('NewTabPageAppContextMenuAnimationTest', () => {
     });
     handler = installMock(
         PageHandlerRemote,
-        mock => NewTabPageProxy.setInstance(mock, new PageCallbackRouter()));
+        mock => newTabPageProxyFactory.setInstance(
+            newTabPageProxyFactory.createForTest(mock).instance));
     handler.setResultFor('getMostVisitedSettings', Promise.resolve({
       customLinksEnabled: false,
       shortcutsVisible: false,

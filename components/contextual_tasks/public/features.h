@@ -26,6 +26,7 @@ BASE_DECLARE_FEATURE(kContextualTasksDriveOAuthScope);
 BASE_DECLARE_FEATURE(kEnableContextualTasksPinButtonInToolbar);
 BASE_DECLARE_FEATURE(kEnableContextualTasksPinButtonOnSrp);
 BASE_DECLARE_FEATURE(kContextualTasksPinningV2);
+BASE_DECLARE_FEATURE(kContextualTasksEphemeralPinButtonRefactor);
 BASE_DECLARE_FEATURE(kContextualTasksPinnedButtonActiveIndicator);
 BASE_DECLARE_FEATURE(kContextualTasksUnifyPinButtonLogos);
 BASE_DECLARE_FEATURE(kEphemeralPinningVisibleWhenPermanentlyPinned);
@@ -146,6 +147,11 @@ BASE_DECLARE_FEATURE(kContextualTasksRearchitecture);
 
 // Enables the side panel changes as part of the rearchitecture.
 BASE_DECLARE_FEATURE(kContextualTasksSidePanelRearchitecture);
+
+// Allows the rearchitected side panel to offer expanding the active task into
+// a full tab ("Open in new tab"). Has no effect unless
+// `kContextualTasksSidePanelRearchitecture` is enabled.
+BASE_DECLARE_FEATURE(kContextualTasksSidePanelRearchitectureExpandToFullTab);
 
 // Enables sticky conversation UI that follows the user around.
 BASE_DECLARE_FEATURE(kContextualTasksEnableStickyConversation);
@@ -304,6 +310,10 @@ extern const base::FeatureParam<base::TimeDelta> kPreviousTabRecencyThreshold;
 // Whether Smart Tab Sharing is enabled for the ContextualTasksContext feature.
 extern const base::FeatureParam<bool> kContextualTasksContextSmartTabSharing;
 
+// Whether Smart Tab Sharing is enabled in the Contextual Tasks rearchitecture.
+extern const base::FeatureParam<bool>
+    kContextualTasksContextSmartTabSharingRearchitecture;
+
 // Whether Smart Tab Sharing should toggle off after query submission.
 extern const base::FeatureParam<bool>
     kContextualTasksContextToggleOffAfterSubmit;
@@ -392,6 +402,7 @@ int GetContextualTasksEphemeralButtonAutoDismissTimeMinutes();
 enum class UnifyPinButtonLogoOption {
   kSpark,
   kSuperG,
+  kGraySuperG,
 };
 
 extern const base::FeatureParam<UnifyPinButtonLogoOption>
@@ -404,6 +415,10 @@ bool ShouldUseSparkIconForPinButtons();
 // Returns whether both the toolbar and ephemeral pin buttons should be
 // unified to use the Super G logo.
 bool ShouldUseSuperGIconForPinButtons();
+
+// Returns whether both the toolbar and ephemeral pin buttons should be
+// unified to use the gray (monochrome) Super G logo.
+bool ShouldUseGraySuperGIconForPinButtons();
 
 // UI Options to expand the contextual tasks side panel to tab.
 extern const base::FeatureParam<ExpandButtonOption, true> kExpandButtonOptions;
@@ -615,6 +630,12 @@ extern bool IsContextualTasksPinButtonInToolbarEnabled();
 // toolbar buttons for the right-hand Search in Chrome side panel) is enabled.
 extern bool IsContextualTasksPinningV2Enabled();
 
+// Returns whether the ephemeral pin button refactor is enabled under Pinning
+// V2, routing the unpinned ephemeral toolbar button through
+// PinnedToolbarActions::ShowActionEphemerallyInToolbar instead of
+// ContextualTasksButton.
+extern bool IsContextualTasksEphemeralPinButtonRefactorEnabled();
+
 // Returns whether the permanent pinned contextual tasks toolbar button should
 // show an active indicator when the active tab has an ongoing thread/session.
 extern bool IsContextualTasksPinnedButtonActiveIndicatorEnabled();
@@ -629,6 +650,12 @@ extern const base::FeatureParam<bool>
 // menu should show a "Close/Hide side panel" item when active.
 extern bool ShouldShowCloseSidePanelInPinnedButtonContextMenu();
 
+// Whether the active status indicator on the pin button should use a blue
+// highlight for the circle when the side panel is closed instead of a blue icon
+// and underline pill.
+extern const base::FeatureParam<bool>
+    kContextualTasksPinnedButtonActiveIndicatorCircleHighlight;
+extern bool IsContextualTasksPinnedButtonActiveIndicatorCircleHighlightEnabled();
 // Returns whether the pin button in the side panel header is enabled on SRP.
 extern bool IsContextualTasksPinButtonOnSrpEnabled();
 
@@ -641,6 +668,8 @@ extern bool GetIsWebpageApcComparisonEnabled();
 
 extern bool IsContextualTasksRearchitectureEnabled();
 extern bool IsContextualTasksSidePanelRearchitectureEnabled();
+// Returns whether the rearchitected side panel may expand to a full tab.
+extern bool IsContextualTasksSidePanelRearchitectureExpandToFullTabEnabled();
 extern bool IsContextualTasksClobberActiveTabEnabled();
 extern bool IsContextualTasksTabBasedSuggestionsEnabled();
 extern bool IsContextualTasksUnboundedMenuEnabled();
@@ -688,6 +717,8 @@ extern const char kEnableContextualTasksPinButtonOnSrpName[];
 extern const char kEnableContextualTasksPinButtonOnSrpDescription[];
 extern const char kContextualTasksPinningV2Name[];
 extern const char kContextualTasksPinningV2Description[];
+extern const char kContextualTasksEphemeralPinButtonRefactorName[];
+extern const char kContextualTasksEphemeralPinButtonRefactorDescription[];
 extern const char kContextualTasksPinnedButtonActiveIndicatorName[];
 extern const char kContextualTasksPinnedButtonActiveIndicatorDescription[];
 extern const char kContextualTasksHideMenuOnAiPageName[];
@@ -706,6 +737,8 @@ extern const char kContextualTasksClobberActiveTabName[];
 extern const char kContextualTasksClobberActiveTabDescription[];
 extern const char kContextualTasksTabBasedSuggestionsName[];
 extern const char kContextualTasksTabBasedSuggestionsDescription[];
+extern const char kContextualTasksSidePanelTabStateName[];
+extern const char kContextualTasksSidePanelTabStateDescription[];
 extern const char kContextualTasksBypassDismissedCapName[];
 extern const char kContextualTasksBypassDismissedCapDescription[];
 extern const char kEphemeralPinningVisibleWhenPermanentlyPinnedName[];

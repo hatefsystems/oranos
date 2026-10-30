@@ -70,7 +70,7 @@
 #include "chrome/browser/ui/views/page_info/page_info_bubble_view.h"
 #include "chrome/browser/ui/views/page_info/page_info_bubble_view_base.h"
 #include "chrome/browser/ui/views/page_info/page_info_main_view.h"
-#include "chrome/browser/ui/views/toolbar/pinned_action_toolbar_button.h"
+#include "chrome/browser/ui/views/toolbar/pinned_action_test_accessor.h"
 #include "chrome/browser/ui/views/toolbar/webui_test_utils.h"
 #include "chrome/browser/ui/views/toolbar/webui_toolbar_web_view.h"
 #include "chrome/common/chrome_features.h"
@@ -1043,7 +1043,19 @@ class ConfigurableQueryRouterTestLensSearchController
     if (*use_real_query_flow_router_) {
       return LensSearchController::CreateLensQueryFlowRouter();
     }
-    return lens::TestLensSearchController::CreateLensQueryFlowRouter();
+    auto router = lens::TestLensSearchController::CreateLensQueryFlowRouter();
+    auto* fake_router =
+        static_cast<lens::FakeLensQueryFlowRouter*>(router.get());
+    auto* session_handle =
+        static_cast<contextual_search::MockContextualSearchSessionHandle*>(
+            fake_router->GetContextualSearchSessionHandle());
+    ON_CALL(*session_handle, CreateSearchUrl(::testing::_, ::testing::_))
+        .WillByDefault(
+            ::testing::WithArg<1>([](base::OnceCallback<void(GURL)> callback) {
+              std::move(callback).Run(
+                  GURL("https://www.google.com/search?lns_mode=un&vsrid=123"));
+            }));
+    return router;
   }
 
  private:
@@ -1149,9 +1161,13 @@ IN_PROC_BROWSER_TEST_P(ContextualTasksPinnedToolbarInteractiveUiTest,
 
       // Step 5: Verify the pinned toolbar button reflects the active toggle
       // state.
-      CheckView(
-          kPinnedToolbarActionShowSidePanelContextualTasksElementId,
-          [](PinnedActionToolbarButton* button) { return button->IsActive(); }),
+      CheckResult(
+          [this]() {
+            return PinnedActionTestAccessor(browser(),
+                                            kActionSidePanelShowContextualTasks)
+                .IsHighlighted();
+          },
+          true),
 
       // Step 6: Instrument WebUI app inside side panel to verify load.
       NameViewRelative(kContextualTasksSidePanelWebViewElementId,
@@ -1173,10 +1189,13 @@ IN_PROC_BROWSER_TEST_P(ContextualTasksPinnedToolbarInteractiveUiTest,
           false),
 
       // Step 8: Verify the pinned toolbar button is no longer active.
-      CheckView(kPinnedToolbarActionShowSidePanelContextualTasksElementId,
-                [](PinnedActionToolbarButton* button) {
-                  return !button->IsActive();
-                }));
+      CheckResult(
+          [this]() {
+            return PinnedActionTestAccessor(browser(),
+                                            kActionSidePanelShowContextualTasks)
+                .IsHighlighted();
+          },
+          false));
 }
 
 // This tests the following CUJ:
@@ -3341,7 +3360,6 @@ class ContextualTasksRecontextUiTest
         }
       }
       disabled.push_back(kContextualTasks);
-      enabled.push_back({kContextualTasksSidePanel, {}});
       feature_list_.InitWithFeaturesAndParameters(enabled, disabled);
     } else {
       auto enabled = GetDefaultEnabledFeatures();
@@ -3674,6 +3692,63 @@ IN_PROC_BROWSER_TEST_P(ContextualTasksInteractiveUiTest,
                   SelectTab(kTabStripElementId, 0),
                   OpenContextualTasksInCurrentTab(kInterceptionUrl),
                   WaitForStateChange(kPrimaryTab, composebox_focused));
+}
+
+class ContextualTasksSidePanelOnlyInteractiveUiTest
+    : public ContextualTasksInteractiveUiTestBase {
+ public:
+  void SetUpFeatureList() override {
+    std::vector<base::test::FeatureRefAndParams> enabled;
+    for (const auto& f : GetDefaultEnabledFeatures()) {
+      if (&f.feature.get() != &kContextualTasks) {
+        enabled.push_back(f);
+      }
+    }
+    enabled.push_back({kContextualTasksSidePanel, {}});
+    auto disabled = GetDefaultDisabledFeatures();
+    disabled.push_back(kContextualTasks);
+    feature_list_.InitWithFeaturesAndParameters(enabled, disabled);
+  }
+
+  void SetUpOnMainThread() override {
+    ContextualTasksInteractiveTestBase::SetUpOnMainThread();
+    ON_CALL(*GetMockAimEligibilityService(browser()->GetProfile()),
+            IsCobrowseEligible())
+        .WillByDefault(testing::Return(false));
+  }
+};
+
+// This tests the following CUJ:
+//  (1) User types chrome://contextual-tasks into the Omnibox in a standalone
+//      tab and presses Enter when ContextualTasks is disabled and only the
+//      side panel UI is enabled.
+//  (2) The tab redirects to the AIM page URL rather than hosting the WebUI.
+//  (3) The standalone Contextual Tasks WebUI app is not present in the tab.
+IN_PROC_BROWSER_TEST_F(ContextualTasksSidePanelOnlyInteractiveUiTest,
+                       StandaloneTabDirectNavigationRedirectsToAim) {
+  // TODO(crbug.com/533072196): Clean up this test once the pre-rearchitecture
+  // logic is cleaned up.
+  const GURL expected_aim_url(contextual_tasks::GetContextualTasksAiPageUrl());
+
+  RunTestSequence(
+      InstrumentTab(kPrimaryTab, 0), SelectTab(kTabStripElementId, 0),
+
+      // (1) Navigate the tab to the WebUI URL.
+      Do([this]() {
+        browser()
+            ->tab_strip_model()
+            ->GetActiveWebContents()
+            ->GetController()
+            .LoadURL(GURL(chrome::kChromeUIContextualTasksURL),
+                     content::Referrer(), ui::PAGE_TRANSITION_TYPED,
+                     std::string());
+      }),
+
+      // (2) The tab redirects and commits the AIM page rather than WebUI.
+      WaitForWebContentsNavigation(kPrimaryTab, expected_aim_url),
+
+      // (3) The standalone Contextual Tasks WebUI is not present in the tab.
+      EnsureNotPresent(kPrimaryTab, {"contextual-tasks-app"}));
 }
 
 // CUJ covered by this test:
@@ -4155,6 +4230,11 @@ class ContextualTasksSeparateViewportRequestIdsInteractiveUiTest
     auto disabled = GetDefaultDisabledFeatures();
     enabled.push_back(
         {lens::features::kLensUseSeparateRequestIdForViewportImages, {}});
+    // `kContextualTasksUpdatedEntryPoints` makes `kAppMenu` a region-only
+    // invocation source, preventing page context from being uploaded and
+    // preventing separate viewport and webpage request IDs from being
+    // generated in `LensOverlayRegionSearchHandoff`.
+    disabled.push_back(kContextualTasksUpdatedEntryPoints);
     feature_list_.InitWithFeaturesAndParameters(enabled, disabled);
   }
 };
@@ -4653,14 +4733,8 @@ class ContextualTasksEphemeralToolbarInteractiveUiTest
 //  (6) Contextual Tasks side panel reopens and restores the same task and
 //      side panel contents.
 //  (7) Ephemeral toolbar button hides while the side panel is open.
-// TODO(https://crbug.com/576301341): Flaky on ChromeOS debug builders.
-#if BUILDFLAG(IS_CHROMEOS) && !defined(NDEBUG)
-#define MAYBE_EphemeralToolbarButtonReopen DISABLED_EphemeralToolbarButtonReopen
-#else
-#define MAYBE_EphemeralToolbarButtonReopen EphemeralToolbarButtonReopen
-#endif
 IN_PROC_BROWSER_TEST_P(ContextualTasksEphemeralToolbarInteractiveUiTest,
-                       MAYBE_EphemeralToolbarButtonReopen) {
+                       EphemeralToolbarButtonReopen) {
   DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kOverlayId);
   DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kSidePanelId);
   DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kReopenedSidePanelId);
@@ -4710,45 +4784,61 @@ IN_PROC_BROWSER_TEST_P(ContextualTasksEphemeralToolbarInteractiveUiTest,
       // WebUI hides in response, so do not wait for a JS round trip.
       ClickElement(kSidePanelId, kCloseButton, ExecuteJsMode::kFireAndForget),
 
-      // (4) The side panel closes and the ephemeral button appears.
+      // (4) The side panel closes. In Incognito, the ephemeral button does not
+      // appear and the active tab is disassociated from the task.
       WaitForHide(kContextualTasksSidePanelWebViewElementId),
       UninstrumentWebContents(kSidePanelId,
                               /*fail_if_not_instrumented=*/false),
-      WaitForShow(kContextualTasksEphemeralToolbarButtonElementId),
-      Check([&]() { return GetTaskIdForActiveTab() == task_id_before_close; },
-            "Active tab stays associated with the task after closing"),
+      GetParam() == UserVariation::kIncognito
+          ? Steps(EnsureNotPresent(
+                      kContextualTasksEphemeralToolbarButtonElementId),
+                  Check([&]() { return !GetTaskIdForActiveTab().has_value(); },
+                        "Active tab is disassociated from the task after "
+                        "closing in Incognito"))
+          : Steps(
+                WaitForShow(kContextualTasksEphemeralToolbarButtonElementId),
+                Check(
+                    [&]() {
+                      return GetTaskIdForActiveTab() == task_id_before_close;
+                    },
+                    "Active tab stays associated with the task after closing"),
 
-      // (5) Click the ephemeral toolbar button.
-      PressButton(kContextualTasksEphemeralToolbarButtonElementId),
+                // (5) Click the ephemeral toolbar button.
+                PressButton(kContextualTasksEphemeralToolbarButtonElementId),
 
-      // (6) The side panel reopens and restores the same task and contents.
-      WaitForShow(kContextualTasksSidePanelWebViewElementId),
-      Check(
-          [&]() {
-            return ContextualTasksPanelController::From(browser())
-                ->IsPanelOpenForContextualTask();
-          },
-          "Side panel is open for the contextual task"),
-      Check([&]() { return GetTaskIdForActiveTab() == task_id_before_close; },
-            "Reopened side panel restores the same task"),
-      Check(
-          [&]() {
-            return side_panel_contents_before_close &&
-                   side_panel_contents_before_close.get() ==
-                       GetActiveSidePanelWebContents();
-          },
-          "Reopened side panel restores the same WebContents"),
-      NameViewRelative(kContextualTasksSidePanelWebViewElementId,
-                       "EphemeralReopenedSidePanelContents",
-                       [](ContextualTasksWebView* web_view) -> views::View* {
-                         return web_view->content_web_view();
-                       }),
-      InstrumentNonTabWebView(kReopenedSidePanelId,
-                              "EphemeralReopenedSidePanelContents"),
-      WaitForElementVisible(kReopenedSidePanelId, kCloseButton),
+                // (6) The side panel reopens and restores the same task and
+                // contents.
+                WaitForShow(kContextualTasksSidePanelWebViewElementId),
+                Check(
+                    [&]() {
+                      return ContextualTasksPanelController::From(browser())
+                          ->IsPanelOpenForContextualTask();
+                    },
+                    "Side panel is open for the contextual task"),
+                Check(
+                    [&]() {
+                      return GetTaskIdForActiveTab() == task_id_before_close;
+                    },
+                    "Reopened side panel restores the same task"),
+                Check(
+                    [&]() {
+                      return side_panel_contents_before_close &&
+                             side_panel_contents_before_close.get() ==
+                                 GetActiveSidePanelWebContents();
+                    },
+                    "Reopened side panel restores the same WebContents"),
+                NameViewRelative(
+                    kContextualTasksSidePanelWebViewElementId,
+                    "EphemeralReopenedSidePanelContents",
+                    [](ContextualTasksWebView* web_view) -> views::View* {
+                      return web_view->content_web_view();
+                    }),
+                InstrumentNonTabWebView(kReopenedSidePanelId,
+                                        "EphemeralReopenedSidePanelContents"),
+                WaitForElementVisible(kReopenedSidePanelId, kCloseButton),
 
-      // (7) The ephemeral button hides while the side panel is open.
-      WaitForHide(kContextualTasksEphemeralToolbarButtonElementId));
+                // (7) The ephemeral button hides while the side panel is open.
+                WaitForHide(kContextualTasksEphemeralToolbarButtonElementId)));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -5265,9 +5355,11 @@ class ContextualTasksExtensionTabPickerInteractiveUiTest
 //  (2) User clicks the pinned Contextual Tasks toolbar button to open the
 //      Contextual Tasks side panel on an AI Mode page.
 //  (3) The AI Mode page mounts the Contextual Tasks extension's
-//      tab_picker.html iframe.
-//  (4) User clicks the tab picker trigger to open the tab menu and selects
-//      the open browser tab to attach its context.
+//      tab_picker.html iframe, which shows the active tab implicitly
+//      pre-selected.
+//  (4) User opens the tab picker menu, clicks the pre-selected active tab to
+//      unselect it, and clicks it again to explicitly select and upload its
+//      context.
 //  (5) The tab item shows as selected in the tab picker and the AI Mode page
 //      receives an OnSuggestInputsChanged message with the uploaded tab's
 //      AddedContext.
@@ -5306,9 +5398,9 @@ IN_PROC_BROWSER_TEST_P(
                               "TabPickerSidePanelContentWebViewName"),
       WaitForWebContentsReady(kSidePanelWebContentsId),
 
-      // (3)-(5) Mount tab_picker.html in the AI Mode page, open the tab menu,
-      // select the tab, and verify the UI selection state and emitted
-      // OnSuggestInputsChanged message.
+      // (3)-(5) Mount tab_picker.html in the AI Mode page, verify the active
+      // tab starts implicitly selected, unselect it, then select it explicitly
+      // and verify the emitted `OnSuggestInputsChanged` message.
       Do([&]() {
         content::WebContents* side_panel_contents =
             ContextualTasksPanelController::From(browser())
@@ -5318,10 +5410,43 @@ IN_PROC_BROWSER_TEST_P(
         ASSERT_NE(tab_picker_rfh, nullptr);
 
         EXPECT_EQ(true, content::EvalJs(tab_picker_rfh, R"(
+          new Promise((resolve) => {
+            const check = () => {
+              const app = document.querySelector('tab-picker-app');
+              const item = app?.shadowRoot?.querySelector(
+                  'button.dropdown-item[data-index="0"]');
+              if (app?.selectedTabs.length === 1 &&
+                  item?.querySelector('.share-tabs-check')) {
+                resolve(true);
+                return;
+              }
+              setTimeout(check, 10);
+            };
+            check();
+          })
+        )"));
+
+        EXPECT_EQ(true, content::EvalJs(tab_picker_rfh, R"(
           (async () => {
             const app = document.querySelector('tab-picker-app');
             const trigger = app.shadowRoot.querySelector('#shareTabsTrigger');
             trigger.click();
+            const item = app.shadowRoot.querySelector(
+                'button.dropdown-item[data-index="0"]');
+            item.click();
+            await app.updateComplete;
+            await app.browserProxy_.getRecentTabs();
+            return app.selectedTabs.length === 0 &&
+                !item.querySelector('.share-tabs-check');
+          })();
+        )"));
+
+        EXPECT_TRUE(content::ExecJs(side_panel_contents,
+                                    "window.receivedSearchMessages = [];"));
+
+        EXPECT_EQ(true, content::EvalJs(tab_picker_rfh, R"(
+          (async () => {
+            const app = document.querySelector('tab-picker-app');
             const item = app.shadowRoot.querySelector(
                 'button.dropdown-item[data-index="0"]');
             item.click();

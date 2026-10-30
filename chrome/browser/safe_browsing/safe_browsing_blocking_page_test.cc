@@ -145,7 +145,7 @@
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "third_party/blink/public/common/features.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/window_open_disposition.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/events/test/test_event.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/styled_label.h"
@@ -790,7 +790,7 @@ class SafeBrowsingBlockingPageBrowserTest
                                             BrowserWindowInterface* browser) {
     SetURLThreatType(url, GetThreatType());
     ui_test_utils::NavigateToURLWithDisposition(
-        browser, url, WindowOpenDisposition::kNewForegroundTab,
+        browser, url, ui::mojom::WindowOpenDisposition::kNewForegroundTab,
         ui_test_utils::BROWSER_TEST_WAIT_FOR_TAB);
     content::TestNavigationObserver observer(
         browser->GetTabStripModel()->GetActiveWebContents());
@@ -3136,7 +3136,7 @@ class SafeBrowsingBlockingPageAsyncChecksTimingTestBase
     content::TestNavigationManager navigation_manager(
         browser()->tab_strip_model()->GetActiveWebContents(), original_url);
     ui_test_utils::NavigateToURLWithDisposition(
-        browser(), original_url, WindowOpenDisposition::kCurrentTab,
+        browser(), original_url, ui::mojom::WindowOpenDisposition::kCurrentTab,
         ui_test_utils::BROWSER_TEST_NO_WAIT);
     EXPECT_TRUE(navigation_manager.WaitForResponse());
 
@@ -3145,8 +3145,7 @@ class SafeBrowsingBlockingPageAsyncChecksTimingTestBase
     AsyncCheckTracker* tracker =
         safe_browsing::AsyncCheckTracker::GetOrCreateForWebContents(
             browser()->tab_strip_model()->GetActiveWebContents(),
-            factory_.test_safe_browsing_service()->ui_manager().get(),
-            /*should_sync_checker_check_allowlist=*/false);
+            factory_.test_safe_browsing_service()->ui_manager().get());
     EXPECT_EQ(tracker->PendingCheckersSizeForTesting(), 1u);
 
     GURL interstitial_url;
@@ -3191,7 +3190,7 @@ class SafeBrowsingBlockingPageAsyncChecksTimingTestBase
     content::TestNavigationManager navigation_manager(
         browser()->tab_strip_model()->GetActiveWebContents(), original_url);
     ui_test_utils::NavigateToURLWithDisposition(
-        browser(), original_url, WindowOpenDisposition::kCurrentTab,
+        browser(), original_url, ui::mojom::WindowOpenDisposition::kCurrentTab,
         ui_test_utils::BROWSER_TEST_NO_WAIT);
     EXPECT_TRUE(navigation_manager.WaitForNavigationFinished());
   }
@@ -3209,8 +3208,7 @@ class SafeBrowsingBlockingPageAsyncChecksTimingTestBase
     AsyncCheckTracker* tracker =
         safe_browsing::AsyncCheckTracker::GetOrCreateForWebContents(
             browser()->tab_strip_model()->GetActiveWebContents(),
-            factory_.test_safe_browsing_service()->ui_manager().get(),
-            /*should_sync_checker_check_allowlist=*/false);
+            factory_.test_safe_browsing_service()->ui_manager().get());
     EXPECT_EQ(tracker->PendingCheckersSizeForTesting(), 1u);
 
     for (const auto& url_and_server_redirect : url_and_server_redirects) {
@@ -3891,15 +3889,15 @@ class SafeBrowsingBlockingPageEnterpriseIsolatedModeTestBase
     if (is_isolated_mode_enabled) {
       EXPECT_TRUE(chrome_browser_interstitials::IsShowingInterstitial(
           incognito_browser->GetTabStripModel()->GetActiveWebContents()));
-      histogram_tester.ExpectUniqueSample(
-          "SafeBrowsing.RT.EnterpriseRealTimePolicyEnabled.HasDmToken",
-          /*sample=*/true,
-          /*expected_bucket_count=*/1);
+      histogram_tester.ExpectTotalCount(
+          "SafeBrowsing.BrowserThrottle.TotalDelay2.EnterpriseFullUrlLookup",
+          /*expected_count=*/1);
     } else {
       EXPECT_FALSE(chrome_browser_interstitials::IsShowingInterstitial(
           incognito_browser->GetTabStripModel()->GetActiveWebContents()));
       histogram_tester.ExpectTotalCount(
-          "SafeBrowsing.RT.EnterpriseRealTimePolicyEnabled.HasDmToken", 0);
+          "SafeBrowsing.BrowserThrottle.TotalDelay2.EnterpriseFullUrlLookup",
+          /*expected_count=*/0);
     }
   }
 };
@@ -3951,10 +3949,8 @@ class SafeBrowsingBlockingPageEnterpriseIsolatedModeDisabledTest
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-// TODO(crbug.com/576842164): Re-enable this test.
-IN_PROC_BROWSER_TEST_F(
-    SafeBrowsingBlockingPageEnterpriseIsolatedModeTest,
-    DISABLED_EnterpriseRealTimeUrlCheck_IsolatedModeProfile) {
+IN_PROC_BROWSER_TEST_F(SafeBrowsingBlockingPageEnterpriseIsolatedModeTest,
+                       EnterpriseRealTimeUrlCheck_IsolatedModeProfile) {
   TestEnterpriseRealTimeUrlCheck(/*is_isolated_mode_enabled=*/true);
 }
 

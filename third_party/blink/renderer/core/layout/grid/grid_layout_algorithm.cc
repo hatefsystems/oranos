@@ -8,6 +8,7 @@
 #include "third_party/blink/renderer/core/layout/constraint_space_builder.h"
 #include "third_party/blink/renderer/core/layout/disable_layout_side_effects_scope.h"
 #include "third_party/blink/renderer/core/layout/fragmentation_utils.h"
+#include "third_party/blink/renderer/core/layout/gap/grid_gap_geometry.h"
 #include "third_party/blink/renderer/core/layout/grid/grid_baseline_accumulator.h"
 #include "third_party/blink/renderer/core/layout/grid/grid_break_token_data.h"
 #include "third_party/blink/renderer/core/layout/grid/grid_gap_accumulator.h"
@@ -104,7 +105,7 @@ const LayoutResult* GridLayoutAlgorithm::LayoutInternal() {
   Vector<EBreakBetween> row_break_between;
   // Holds the gap geometry for the unfragmented grid pass before fragmentation
   // is applied, if applicable.
-  const GapGeometry* full_gap_geometry = nullptr;
+  const GridGapGeometry* full_gap_geometry = nullptr;
   Vector<wtf_size_t> track_idx_to_set_idx;
   Vector<wtf_size_t> column_gaps_segment_ranges_start_indices;
   LayoutUnit cumulative_gap_offset_adjustment = LayoutUnit();
@@ -1546,7 +1547,7 @@ void GridLayoutAlgorithm::PlaceGridItems(
     const GridLayoutSubtree& layout_subtree,
     Vector<EBreakBetween>* out_row_break_between,
     Vector<GridItemPlacementData>* out_grid_items_placement_data,
-    const GapGeometry** out_unfragmented_gap_geometry,
+    const GridGapGeometry** out_unfragmented_gap_geometry,
     Vector<wtf_size_t>* out_track_idx_to_set_idx) {
   DCHECK(out_row_break_between);
 
@@ -1633,12 +1634,12 @@ void GridLayoutAlgorithm::PlaceGridItems(
             grid_item.Alignment(kForRows), grid_item.IsOverflowSafe(kForRows)));
 
     // Grid is special in that %-based offsets resolve against the grid-area.
-    // Determine the relative offset here (instead of in the builder). This is
+    // Determine the relative insets here (instead of in the builder). This is
     // safe as grid *also* has special inflow-bounds logic (otherwise this
     // wouldn't work).
-    LogicalOffset relative_offset = LogicalOffset();
+    PhysicalBoxStrut relative_insets;
     if (item_style.GetPosition() == EPosition::kRelative) {
-      relative_offset += ComputeRelativeOffsetForBoxFragment(
+      relative_insets = ComputeRelativeInsetsForBoxFragment(
           physical_fragment, container_writing_direction,
           containing_grid_area.size);
     }
@@ -1650,10 +1651,10 @@ void GridLayoutAlgorithm::PlaceGridItems(
       out_grid_items_placement_data->emplace_back(
           containing_grid_area.offset,
           result->HasDescendantThatDependsOnPercentageBlockSize(),
-          relative_offset);
+          relative_insets);
     } else {
       container_builder_.AddResult(*result, containing_grid_area.offset,
-                                   margins, relative_offset);
+                                   margins, relative_insets);
       baseline_accumulator.Accumulate(grid_item, fragment,
                                       containing_grid_area.offset.block_offset);
     }
@@ -1710,21 +1711,21 @@ struct ResultAndOffsets {
  public:
   ResultAndOffsets(const LayoutResult* result,
                    LogicalOffset offset,
-                   std::optional<LogicalOffset> relative_offset)
-      : result(result), offset(offset), relative_offset(relative_offset) {}
+                   std::optional<PhysicalBoxStrut> relative_insets)
+      : result(result), offset(offset), relative_insets(relative_insets) {}
 
   void Trace(Visitor* visitor) const { visitor->Trace(result); }
 
   Member<const LayoutResult> result;
   LogicalOffset offset;
-  std::optional<LogicalOffset> relative_offset;
+  std::optional<PhysicalBoxStrut> relative_insets;
 };
 
 void GridLayoutAlgorithm::PlaceGridItemsForFragmentation(
     const GridItems& grid_items,
     const GridLayoutSubtree& layout_subtree,
     const Vector<EBreakBetween>& row_break_between,
-    const GapGeometry* full_gap_geometry,
+    const GridGapGeometry* full_gap_geometry,
     const Vector<wtf_size_t>* track_idx_to_set_idx,
     Vector<wtf_size_t>* column_gaps_segment_ranges_start_indices,
     Vector<GridItemPlacementData>* grid_items_placement_data,
@@ -1913,7 +1914,7 @@ void GridLayoutAlgorithm::PlaceGridItemsForFragmentation(
           result,
           LogicalOffset(item_placement_data.offset.inline_offset,
                         child_block_offset),
-          item_placement_data.relative_offset);
+          item_placement_data.relative_insets);
 
       const LogicalBoxFragment fragment(
           container_writing_direction,
@@ -2270,9 +2271,10 @@ void GridLayoutAlgorithm::PlaceGridItemsForFragmentation(
         fragment_block_end = max_item_block_end;
       }
 
-      GapGeometry* fragment_gap_geometry = MakeGarbageCollected<GapGeometry>(
-          *full_gap_geometry, std::move(fragment_main_gaps),
-          fragment_block_start, fragment_block_end);
+      GridGapGeometry* fragment_gap_geometry =
+          MakeGarbageCollected<GridGapGeometry>(
+              *full_gap_geometry, std::move(fragment_main_gaps),
+              fragment_block_start, fragment_block_end);
 
       fragment_gap_geometry->AdjustCrossGapsRangesForFragmentation(
           initial_unprocessed_row_gap_idx, *first_unprocessed_row_gap_idx,
@@ -2311,7 +2313,7 @@ void GridLayoutAlgorithm::PlaceGridItemsForFragmentation(
   for (auto& result_and_offset : result_and_offsets) {
     container_builder_.AddResult(
         *result_and_offset.result, result_and_offset.offset,
-        /* margins */ std::nullopt, result_and_offset.relative_offset);
+        /* margins */ std::nullopt, result_and_offset.relative_insets);
   }
 
   // Propagate the baselines.

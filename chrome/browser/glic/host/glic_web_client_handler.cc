@@ -100,12 +100,11 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "media/base/media_switches.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/base_window.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/page_transition_types.h"
-#include "ui/base/window_open_disposition.h"
 #include "ui/display/screen.h"
 
 #if !BUILDFLAG(IS_ANDROID)
@@ -482,7 +481,7 @@ class GlicWebClientHandler
 
     std::unique_ptr<NavigateParams> params = std::make_unique<NavigateParams>(
         profile_, url, ui::PAGE_TRANSITION_LINK);
-    params->disposition = WindowOpenDisposition::kNewPopup;
+    params->disposition = ui::mojom::WindowOpenDisposition::kNewPopup;
     params->opened_by_another_window = true;
     params->window_features.bounds = gfx::Rect(x, y, popup_width, popup_height);
     glic::NavigateAsync(std::move(params), base::DoNothing());
@@ -688,16 +687,13 @@ class GlicWebClientHandler
     LogApiRequest(GlicHostApiRequestId::kCreateTab);
     bool open_in_background = create_options->open_in_background;
     std::optional<int32_t> window_id = create_options->window_id;
-    if (base::FeatureList::IsEnabled(media::kMediaLinkHelpers)) {
-      if (auto* tab = GetSharingManagerInternal().GetFocusedTabData().focus()) {
-        const bool replaced =
-            GlicMediaLinkHelper(tab->GetContents()).MaybeReplaceNavigation(url);
-        metric_reporter_.RecordBoolean("MaybeReplaceNavigation.Result",
-                                       replaced);
-        if (replaced) {
-          std::move(callback).Run(nullptr);
-          return;
-        }
+    if (auto* tab = GetSharingManagerInternal().GetFocusedTabData().focus()) {
+      const bool replaced =
+          GlicMediaLinkHelper(tab->GetContents()).MaybeReplaceNavigation(url);
+      metric_reporter_.RecordBoolean("MaybeReplaceNavigation.Result", replaced);
+      if (replaced) {
+        std::move(callback).Run(nullptr);
+        return;
       }
     }
     host().instance_delegate().CreateTab(url, open_in_background, window_id,
@@ -1182,9 +1178,11 @@ class GlicWebClientHandler
       // "focusable" by Glic (e.g. chrome:// pages).
       tab = focus.is_focus() ? focus.focus() : focus.unfocused_tab();
     }
-    SelectionOverlayController::CaptureRegion(tab, GetSharingManagerInternal(),
-                                              std::move(observer),
-                                              std::move(tab_context_options));
+    bool capture_region_handoff =
+        params ? params->capture_region_handoff : false;
+    SelectionOverlayController::CaptureRegion(
+        tab, GetSharingManagerInternal(), std::move(observer),
+        std::move(tab_context_options), capture_region_handoff);
 #else
     NOTIMPLEMENTED();
 #endif
@@ -1525,6 +1523,11 @@ class GlicWebClientHandler
   void OnOptinImpression() override {
     LogApiRequest(GlicHostApiRequestId::kOnOptinImpression);
     host().instance_metrics().OnOptinImpression();
+  }
+
+  void OnInputFocused() override {
+    LogApiRequest(GlicHostApiRequestId::kOnInputFocused);
+    host().instance_metrics().OnInputFocused();
   }
 
   void OnUserInputSubmitted(mojom::WebClientMode mode,

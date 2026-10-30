@@ -54,14 +54,16 @@ class FeatureListTest;
 // state is fixed at initialization time, and one for runtime mutable features,
 // whose state may be updated at runtime as new Variations seeds are received.
 //
-// TODO: http://crbug.com/482450632 - Runtime mutable features are not fully
-// implemented or supported; they are not yet ready for general use. Update
-// documentation when they are ready for general use.
+// TODO(crbug.com/482450632): Runtime mutable features are currently only
+// supported in the browser process (see crbug.com/536851532 for child-process
+// support).
 //
 // The feature state of runtime mutable features, and any related parameters,
-// may only be queried from the main thread. Additionally, runtime mutable
+// may only be queried from the main sequence. Additionally, runtime mutable
 // features must have their runtime mutability explicitly enabled via the
-// `FeatureList::EnableRuntimeMutability()` function call.
+// `FeatureList::EnableRuntimeMutability()` function call (see
+// `PlatformFieldTrials::EnableRuntimeMutableFeatures()` and its
+// platform-specific overrides).
 //
 // This macro can be used in two ways:
 //
@@ -123,7 +125,8 @@ class FeatureListTest;
   extern constinit const base::FeatureParam<T> feature_object_name
 
 // Provides a definition for `feature_object_name` with `T`, `feature`, `name`
-// and `default_value`, with an internal parsed value cache.
+// and `default_value`, with an internal parsed value cache (bypassed if
+// `feature` is defined with `BASE_RUNTIME_MUTABLE_FEATURE`).
 //
 // This macro can be used in two ways:
 //
@@ -253,10 +256,10 @@ struct BASE_EXPORT LOGICALLY_CONST Feature {
   // "MyGreatFeature".
   const char* const name;
 
-  // The default state (i.e. enabled or disabled) for this feature.
+  // Returns the default state (i.e. enabled or disabled) for this feature.
   // NOTE: The actual runtime state may be different, due to a field trial or a
   // command line switch.
-  const FeatureState default_state;
+  FeatureState GetDefaultState() const { return default_state_; }
 
  protected:
   // Base constructor that performs initialization and checks, with an option to
@@ -267,7 +270,7 @@ struct BASE_EXPORT LOGICALLY_CONST Feature {
                     internal::FeatureMacroHandshake handshake,
                     bool is_country_specific)
       : name(name),
-        default_state(default_state),
+        default_state_(default_state),
         cached_value(is_runtime_mutable ? kRuntimeMutabilityMask : 0) {
     if (is_country_specific != IsCountrySpecificFeatureState(default_state)) {
       LOG(FATAL) << "Pass a country-specific default state if and only if you "
@@ -288,6 +291,8 @@ struct BASE_EXPORT LOGICALLY_CONST Feature {
 
   // Keep this in sync with base/feature_list_internal.h:kRuntimeMutabilityMask
   enum { kRuntimeMutabilityMask = 1 << 18 };
+
+  const FeatureState default_state_;
 
   // A packed value where bits 24 and 25 hold the resolved enabled state and
   // whether the feature was explicitly overridden, bits 16 through 23 hold

@@ -146,14 +146,6 @@ void OffscreenCanvasRenderingContext2D::FinalizeFrame(FlushReason reason) {
 }
 
 // BaseRenderingContext2D implementation
-bool OffscreenCanvasRenderingContext2D::OriginClean() const {
-  return Host()->OriginClean();
-}
-
-void OffscreenCanvasRenderingContext2D::SetOriginTainted() {
-  Host()->SetOriginTainted();
-}
-
 int OffscreenCanvasRenderingContext2D::Width() const {
   return Host()->Size().width();
 }
@@ -227,11 +219,20 @@ bool OffscreenCanvasRenderingContext2D::InitializeBacking() {
       shared_image_usage_flags |= gpu::SHARED_IMAGE_USAGE_SCANOUT;
     }
 #if BUILDFLAG(IS_MAC)
-    // VideoToolbox encoding requires an image that can be reached via
-    // ProduceOverlay() and wrapped in a CVPixelBuffer, and the usage must be
-    // decided at allocation time. All SharedImages are IOSurface-backed on
-    // macOS, so this flag only marks the image as eligible to be handed to
-    // VideoToolbox rather than adding an allocation constraint.
+    // VTVideoEncodeAccelerator encodes an opaque SharedImage without readback
+    // only if it carries SCANOUT or MACOS_VIDEO_TOOLBOX usage, and reaches its
+    // IOSurface via ProduceVideo(). A standalone OffscreenCanvas has no
+    // SCANOUT, so MACOS_VIDEO_TOOLBOX marks it as eligible. The usage must be
+    // decided at allocation time, and it is not allocation-neutral:
+    // BaseRenderingContext2D::CreateSharedImageProvider() allocates BGRA_8888
+    // instead of RGBA_8888 when it is present, which ANGLE and
+    // VTVideoEncodeAccelerator require for an IOSurface, and on
+    // Graphite-Dawn-Vulkan it forces an IOSurface backing instead of
+    // WrappedSkImage.
+    // TODO(crbug.com/576960275): Use
+    // SHARED_IMAGE_USAGE_VIDEO_ENCODE_ACCELERATOR once
+    // IOSurfaceImageBackingFactory supports it. MACOS_VIDEO_TOOLBOX is
+    // documented as marking CVPixelBuffer-backed IOSurfaces from VideoToolbox.
     if (base::FeatureList::IsEnabled(features::kWebRtcMacSharedImageEncode)) {
       shared_image_usage_flags |= gpu::SHARED_IMAGE_USAGE_MACOS_VIDEO_TOOLBOX;
     }
@@ -257,8 +258,7 @@ bool OffscreenCanvasRenderingContext2D::InitializeBacking() {
   }
 
   if (HasBacking()) {
-    ConfigureRecorder(host->Size(), GetSharedImageProvider() &&
-                                        GetSharedImageProvider()->IsGraphite());
+    ConfigureRecorder(host->Size(), IsGraphite());
   } else {
     ResetRecorder();
   }
@@ -287,13 +287,13 @@ void OffscreenCanvasRenderingContext2D::Reshape(gfx::Size old_size,
   DidDraw(CanvasPerformanceMonitor::DrawType::kOther);
 }
 
-scoped_refptr<CanvasResource>
+scoped_refptr<ExportedCanvasResource>
 OffscreenCanvasRenderingContext2D::ProduceCanvasResource(FlushReason reason) {
   if (!InitializeBacking()) {
     return nullptr;
   }
 
-  scoped_refptr<CanvasResource> frame =
+  scoped_refptr<ExportedCanvasResource> frame =
       PaintRenderingResultsToResource(kBackBuffer, reason);
   if (!frame)
     return nullptr;
@@ -302,12 +302,12 @@ OffscreenCanvasRenderingContext2D::ProduceCanvasResource(FlushReason reason) {
   return frame;
 }
 
-scoped_refptr<CanvasResource>
+scoped_refptr<ExportedCanvasResource>
 OffscreenCanvasRenderingContext2D::GetResourceForPushFrame(
     bool& should_call_push_frame) {
   should_call_push_frame = true;
   FinalizeFrame(FlushReason::kOther);
-  scoped_refptr<CanvasResource> resource =
+  scoped_refptr<ExportedCanvasResource> resource =
       ProduceCanvasResource(FlushReason::kOther);
   GetOffscreenFontCache().PruneLocalFontCache(kMaxCachedFonts);
   return resource;

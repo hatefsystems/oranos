@@ -296,16 +296,17 @@ export class OsSettingsInputPageElement extends OsSettingsInputPageElementBase {
         allowedInputMethodsPref.value.length > 0;
   }
 
-  private inputMethodsEnabledByPolicy_(): boolean {
+  private inputMethodsForceEnabledByPolicy_(): boolean {
     const allowedInputMethodsForceEnabled = this.getPref<boolean>(
         'settings.language.allowed_input_methods_force_enabled');
     return !!allowedInputMethodsForceEnabled &&
-        allowedInputMethodsForceEnabled.value;
+        allowedInputMethodsForceEnabled.value &&
+        this.inputMethodsLimitedByPolicy_();
   }
 
   private addInputMethodButtonDisabled_(): boolean {
     // Disable if all input methods are enabled by policy.
-    if (this.inputMethodsEnabledByPolicy_()) {
+    if (this.inputMethodsForceEnabledByPolicy_()) {
       return true;
     }
     // Disable if all allowed input methods are already enabled.
@@ -460,7 +461,7 @@ export class OsSettingsInputPageElement extends OsSettingsInputPageElementBase {
 
   private disableRemoveInputMethod_(
       targetInputMethod: chrome.languageSettingsPrivate.InputMethod): boolean {
-    if (this.inputMethodsEnabledByPolicy_()) {
+    if (this.inputMethodsForceEnabledByPolicy_()) {
       return true;
     }
 

@@ -29,10 +29,15 @@
 #import "ios/chrome/browser/shared/coordinator/scene/scene_controller.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/coordinator/scene/test/fake_scene_state.h"
+#import "ios/chrome/browser/shared/model/browser/browser.h"
+#import "ios/chrome/browser/shared/model/browser/browser_provider.h"
+#import "ios/chrome/browser/shared/model/browser/browser_provider_interface.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
+#import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
+#import "ios/chrome/browser/shared/public/commands/google_one_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_params.h"
 #import "ios/chrome/common/app_group/app_group_constants.h"
@@ -40,6 +45,7 @@
 #import "testing/gtest/include/gtest/gtest.h"
 #import "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
+#import "third_party/ocmock/gtest_support.h"
 
 class TaskRequestForURLContextTest : public PlatformTest {
  protected:
@@ -104,8 +110,9 @@ class TaskRequestForURLContextTest : public PlatformTest {
   std::unique_ptr<TestBrowser> browser_;
 };
 
-// Test that Startup.MobileSessionStartFromApps is logged with the expected
-// caller app, including uppercase schemes and first-party bundle IDs.
+// Tests that Startup.MobileSessionStartFromApps is logged during execute with
+// the expected caller app, including uppercase schemes and first-party bundle
+// IDs.
 TEST_F(TaskRequestForURLContextTest, TestStartupMobileSessionStartFromApps) {
   struct TestCase {
     NSString* url_string;
@@ -132,14 +139,17 @@ TEST_F(TaskRequestForURLContextTest, TestStartupMobileSessionStartFromApps) {
                                                  sceneState:scene_state_
                                                 isColdStart:YES];
     EXPECT_NE(request, nil);
+    histogram_tester.ExpectTotalCount("Startup.MobileSessionStartFromApps", 0);
+
+    [request execute];
 
     histogram_tester.ExpectUniqueSample("Startup.MobileSessionStartFromApps",
                                         test_case.expected_caller_app, 1);
   }
 }
 
-// Tests that Startup.ShowDefaultPromoFromApps is logged when URL contains the
-// default browser settings query item.
+// Tests that Startup.ShowDefaultPromoFromApps is logged during execute when URL
+// contains the default browser settings query item.
 TEST_F(TaskRequestForURLContextTest, TestStartupShowDefaultPromoFromApps) {
   base::HistogramTester histogram_tester;
   NSURL* url = [NSURL
@@ -151,6 +161,9 @@ TEST_F(TaskRequestForURLContextTest, TestStartupShowDefaultPromoFromApps) {
                                                sceneState:scene_state_
                                               isColdStart:YES];
   EXPECT_NE(request, nil);
+  histogram_tester.ExpectTotalCount("Startup.ShowDefaultPromoFromApps", 0);
+
+  [request execute];
 
   histogram_tester.ExpectTotalCount("Startup.ShowDefaultPromoFromApps", 1);
   histogram_tester.ExpectBucketCount("Startup.ShowDefaultPromoFromApps",
@@ -181,7 +194,8 @@ TEST_F(TaskRequestForURLContextTest, TestFirstRunLaunchSource) {
                                      first_run::LAUNCH_BY_OTHERS, 1);
 }
 
-// Tests that WidgetKit URLs log the launch source and WidgetKit action metrics.
+// Tests that WidgetKit URLs log the launch source and WidgetKit action metrics
+// during execute.
 TEST_F(TaskRequestForURLContextTest, TestWidgetKitActionMetrics) {
   struct TestCase {
     NSString* url_string;
@@ -207,6 +221,11 @@ TEST_F(TaskRequestForURLContextTest, TestWidgetKitActionMetrics) {
                                                  sceneState:scene_state_
                                                 isColdStart:YES];
     EXPECT_NE(request, nil);
+    histogram_tester.ExpectTotalCount(kUMAMobileSessionStartActionHistogram, 0);
+    histogram_tester.ExpectTotalCount(kAppLaunchSource, 0);
+    histogram_tester.ExpectTotalCount(kWidgetKitActionHistogram, 0);
+
+    [request execute];
 
     histogram_tester.ExpectUniqueSample(kUMAMobileSessionStartActionHistogram,
                                         START_ACTION_WIDGET_KIT_COMMAND, 1);
@@ -218,7 +237,7 @@ TEST_F(TaskRequestForURLContextTest, TestWidgetKitActionMetrics) {
 }
 
 // Tests that X-Callback URLs log the launch source and X-Callback action
-// metrics.
+// metrics during execute.
 TEST_F(TaskRequestForURLContextTest, TestXCallbackURLMetrics) {
   struct TestCase {
     NSString* url_string;
@@ -241,6 +260,10 @@ TEST_F(TaskRequestForURLContextTest, TestXCallbackURLMetrics) {
                                                  sceneState:scene_state_
                                                 isColdStart:YES];
     EXPECT_NE(request, nil);
+    histogram_tester.ExpectTotalCount(kUMAMobileSessionStartActionHistogram, 0);
+    histogram_tester.ExpectTotalCount(kAppLaunchSource, 0);
+
+    [request execute];
 
     histogram_tester.ExpectUniqueSample(kUMAMobileSessionStartActionHistogram,
                                         test_case.expected_action, 1);
@@ -249,8 +272,9 @@ TEST_F(TaskRequestForURLContextTest, TestXCallbackURLMetrics) {
   }
 }
 
-// Tests that X-Callback app-group-command URLs log the application group
-// command delay metric.
+// Tests that X-Callback app-group-command URLs cache `commandTime` on
+// initialization and log the application group command delay metric during
+// execute.
 TEST_F(TaskRequestForURLContextTest, TestXCallbackAppGroupCommandDelayMetric) {
   base::HistogramTester histogram_tester;
 
@@ -284,6 +308,15 @@ TEST_F(TaskRequestForURLContextTest, TestXCallbackAppGroupCommandDelayMetric) {
                                                sceneState:scene_state_
                                               isColdStart:YES];
   EXPECT_NE(request, nil);
+  histogram_tester.ExpectTotalCount(kUMAMobileSessionStartActionHistogram, 0);
+  histogram_tester.ExpectTotalCount(kAppLaunchSource, 0);
+  histogram_tester.ExpectTotalCount("Startup.ApplicationGroupCommandDelay", 0);
+
+  // Clear shared defaults before execution to verify `commandTime` was cached
+  // at initialization time.
+  [sharedDefaults removeObjectForKey:commandDictionaryPreference];
+
+  [request execute];
 
   histogram_tester.ExpectUniqueSample(kUMAMobileSessionStartActionHistogram,
                                       START_ACTION_XCALLBACK_APPGROUP_COMMAND,
@@ -291,17 +324,14 @@ TEST_F(TaskRequestForURLContextTest, TestXCallbackAppGroupCommandDelayMetric) {
   histogram_tester.ExpectUniqueSample(kAppLaunchSource,
                                       AppLaunchSource::X_CALLBACK, 1);
 
-  // Verify that the command delay was recorded.
+  // Verify that the command delay was recorded during execute.
   histogram_tester.ExpectTotalCount("Startup.ApplicationGroupCommandDelay", 1);
   histogram_tester.ExpectUniqueSample("Startup.ApplicationGroupCommandDelay", 5,
                                       1);
-
-  // Clean up.
-  [sharedDefaults removeObjectForKey:commandDictionaryPreference];
 }
 
 // Tests that standard HTTP/HTTPS, File, and External Action URLs log launch
-// source, startup metrics, and user actions.
+// source, startup metrics, and user actions during execute.
 TEST_F(TaskRequestForURLContextTest, TestSimpleURLMetrics) {
   struct TestCase {
     NSString* url_string;
@@ -334,6 +364,14 @@ TEST_F(TaskRequestForURLContextTest, TestSimpleURLMetrics) {
                                                  sceneState:scene_state_
                                                 isColdStart:YES];
     EXPECT_NE(request, nil);
+    histogram_tester.ExpectTotalCount(kUMAMobileSessionStartActionHistogram, 0);
+    histogram_tester.ExpectTotalCount(kAppLaunchSource, 0);
+    if (test_case.expected_user_action) {
+      EXPECT_EQ(
+          user_action_tester.GetActionCount(test_case.expected_user_action), 0);
+    }
+
+    [request execute];
 
     histogram_tester.ExpectUniqueSample(kUMAMobileSessionStartActionHistogram,
                                         test_case.expected_action, 1);
@@ -349,7 +387,8 @@ TEST_F(TaskRequestForURLContextTest, TestSimpleURLMetrics) {
 }
 
 // Tests that External Action URLs correctly parse path components, handle
-// feature flags, and log IOS.ExternalAction metrics and user actions.
+// feature flags, and log IOS.ExternalAction metrics and user actions during
+// execute.
 TEST_F(TaskRequestForURLContextTest, TestExternalActionMetrics) {
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitWithFeatures(
@@ -388,6 +427,12 @@ TEST_F(TaskRequestForURLContextTest, TestExternalActionMetrics) {
                                                  sceneState:scene_state_
                                                 isColdStart:YES];
     EXPECT_NE(request, nil);
+    histogram_tester.ExpectTotalCount(kExternalActionHistogram, 0);
+    histogram_tester.ExpectTotalCount(kAppLaunchSource, 0);
+    EXPECT_EQ(
+        user_action_tester.GetActionCount("MobileExternalActionURLOpened"), 0);
+
+    [request execute];
 
     histogram_tester.ExpectUniqueSample(kExternalActionHistogram,
                                         test_case.expected_action, 1);
@@ -670,4 +715,171 @@ TEST_F(TaskRequestForURLContextTest, TestStandardURLContextExecution) {
   scene_state_.controller = tab_opener;
   [unknown_request execute];
   EXPECT_TRUE(tab_opener.urlLoadParams.web_params.url.is_empty());
+}
+
+// Tests that Google One deep links do not open the URL in a tab and invoke
+// GoogleOneCommands with the normalized HTTPS URL when
+// kSupportGoogleOneDeepLink is enabled.
+TEST_F(TaskRequestForURLContextTest, TestGoogleOneDeepLinkEnabled) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(kSupportGoogleOneDeepLink);
+
+  CommandDispatcher* dispatcher =
+      scene_state_.browserProviderInterface.currentBrowserProvider.browser
+          ->GetCommandDispatcher();
+  id mock_google_one_handler = OCMProtocolMock(@protocol(GoogleOneCommands));
+  [dispatcher startDispatchingToTarget:mock_google_one_handler
+                           forProtocol:@protocol(GoogleOneCommands)];
+
+  NSArray<NSString*>* url_strings = @[
+    @"https://one.google.com/deeplink",
+    [NSString stringWithFormat:@"%s://one.google.com/deeplink",
+                               BUILDFLAG(SECURE_CUSTOM_SCHEME)],
+  ];
+
+  for (NSString* url_string in url_strings) {
+    SCOPED_TRACE(base::SysNSStringToUTF8(url_string));
+    NSURL* url = [NSURL URLWithString:url_string];
+    UIOpenURLContext* context = CreateMockURLContext(url);
+
+    TaskRequestForURLContext* request =
+        [TaskRequestForURLContext taskRequestWithURLContext:context
+                                                 sceneState:scene_state_
+                                                isColdStart:YES];
+    ASSERT_NE(request, nil);
+
+    TaskRequestURLContextTestTabOpener* tab_opener =
+        [[TaskRequestURLContextTestTabOpener alloc]
+            initWithSceneState:scene_state_];
+    scene_state_.controller = tab_opener;
+
+    __block GURL shown_url;
+    OCMExpect([[mock_google_one_handler ignoringNonObjectArgs]
+                  showGoogleOneForURL:GURL()])
+        .andDo(^(NSInvocation* invocation) {
+          const GURL* url_arg = nullptr;
+          [invocation getArgument:&url_arg atIndex:2];
+          shown_url = *url_arg;
+        });
+
+    [request execute];
+
+    EXPECT_EQ(tab_opener.targetMode,
+              ApplicationModeForTabOpening::UNDETERMINED);
+    EXPECT_TRUE(tab_opener.urlLoadParams.web_params.url.is_empty());
+    EXPECT_FALSE(tab_opener.completionActionExecuted);
+    EXPECT_TRUE(tab_opener.dismissOmnibox);
+    EXPECT_EQ(shown_url, GURL("https://one.google.com/deeplink"));
+    EXPECT_OCMOCK_VERIFY(mock_google_one_handler);
+  }
+
+  [dispatcher stopDispatchingToTarget:mock_google_one_handler];
+}
+
+// Tests that Google One deep links open the URL normally when
+// kSupportGoogleOneDeepLink is disabled.
+TEST_F(TaskRequestForURLContextTest, TestGoogleOneDeepLinkDisabled) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndDisableFeature(kSupportGoogleOneDeepLink);
+
+  NSURL* url = [NSURL URLWithString:@"https://one.google.com/deeplink"];
+  UIOpenURLContext* context = CreateMockURLContext(url);
+
+  TaskRequestForURLContext* request =
+      [TaskRequestForURLContext taskRequestWithURLContext:context
+                                               sceneState:scene_state_
+                                              isColdStart:YES];
+  ASSERT_NE(request, nil);
+
+  TaskRequestURLContextTestTabOpener* tab_opener =
+      [[TaskRequestURLContextTestTabOpener alloc]
+          initWithSceneState:scene_state_];
+  scene_state_.controller = tab_opener;
+
+  [request execute];
+
+  EXPECT_EQ(tab_opener.targetMode, ApplicationModeForTabOpening::UNDETERMINED);
+  EXPECT_EQ(tab_opener.urlLoadParams.web_params.url,
+            GURL("https://one.google.com/deeplink"));
+  EXPECT_EQ(tab_opener.completionAction,
+            TabOpeningPostOpeningAction::NO_ACTION);
+  EXPECT_TRUE(tab_opener.dismissOmnibox);
+}
+
+// Tests that X-Callback `/open` URLs open the `url` parameter in a new tab and
+// map the `poa` parameter to the expected post-opening action.
+TEST_F(TaskRequestForURLContextTest, TestXCallbackOpenCommandExecution) {
+  struct TestCase {
+    NSString* url_string;
+    TabOpeningPostOpeningAction expected_action;
+  } test_cases[] = {
+      {@"googlechrome://x-callback-url/open?url=https%3A%2F%2Fwww.example.com",
+       TabOpeningPostOpeningAction::NO_ACTION},
+      {@"googlechrome://x-callback-url/open?url=https%3A%2F%2Fwww.example.com"
+       @"&poa=default-browser-settings",
+       TabOpeningPostOpeningAction::SHOW_DEFAULT_BROWSER_SETTINGS},
+      {@"googlechrome://x-callback-url/open?url=https%3A%2F%2Fwww.example.com"
+       @"&poa=unknown",
+       TabOpeningPostOpeningAction::NO_ACTION},
+  };
+
+  for (const auto& test_case : test_cases) {
+    SCOPED_TRACE(base::SysNSStringToUTF8(test_case.url_string));
+    UIOpenURLContext* context =
+        CreateMockURLContext([NSURL URLWithString:test_case.url_string]);
+    TaskRequestForURLContext* request =
+        [TaskRequestForURLContext taskRequestWithURLContext:context
+                                                 sceneState:scene_state_
+                                                isColdStart:YES];
+    ASSERT_NE(request, nil);
+
+    TaskRequestURLContextTestTabOpener* tab_opener =
+        [[TaskRequestURLContextTestTabOpener alloc]
+            initWithSceneState:scene_state_];
+    scene_state_.controller = tab_opener;
+
+    [request execute];
+
+    EXPECT_EQ(tab_opener.targetMode,
+              ApplicationModeForTabOpening::UNDETERMINED);
+    EXPECT_EQ(tab_opener.urlLoadParams.web_params.url,
+              GURL("https://www.example.com"));
+    EXPECT_TRUE(tab_opener.urlLoadParams.web_params.virtual_url.is_empty());
+    EXPECT_TRUE(tab_opener.dismissOmnibox);
+    EXPECT_EQ(tab_opener.completionAction, test_case.expected_action);
+    EXPECT_TRUE(tab_opener.completionActionExecuted);
+  }
+}
+
+// Tests that X-Callback URLs with a missing or non-http(s) `url` parameter, or
+// with an unsupported command, do not open a tab.
+TEST_F(TaskRequestForURLContextTest, TestXCallbackInvalidCommandIgnored) {
+  NSString* url_strings[] = {
+      @"googlechrome://x-callback-url/open",
+      @"googlechrome://x-callback-url/open?url=invalid",
+      @"googlechrome://x-callback-url/open?url=chrome%3A%2F%2Fsettings",
+      @"googlechrome://x-callback-url/open?url=javascript%3Aalert(1)",
+      @"googlechrome://x-callback-url/other?url=https%3A%2F%2Fwww.example.com",
+  };
+
+  for (NSString* url_string : url_strings) {
+    SCOPED_TRACE(base::SysNSStringToUTF8(url_string));
+    UIOpenURLContext* context =
+        CreateMockURLContext([NSURL URLWithString:url_string]);
+    TaskRequestForURLContext* request =
+        [TaskRequestForURLContext taskRequestWithURLContext:context
+                                                 sceneState:scene_state_
+                                                isColdStart:YES];
+    ASSERT_NE(request, nil);
+
+    TaskRequestURLContextTestTabOpener* tab_opener =
+        [[TaskRequestURLContextTestTabOpener alloc]
+            initWithSceneState:scene_state_];
+    scene_state_.controller = tab_opener;
+
+    [request execute];
+
+    EXPECT_TRUE(tab_opener.urlLoadParams.web_params.url.is_empty());
+    EXPECT_FALSE(tab_opener.completionActionExecuted);
+  }
 }

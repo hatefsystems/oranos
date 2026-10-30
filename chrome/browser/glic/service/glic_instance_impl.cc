@@ -76,7 +76,6 @@
 #include "components/user_education/common/feature_promo/feature_promo_controller.h"
 #include "components/user_education/common/user_education_features.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/visibility.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
@@ -90,7 +89,6 @@
 #endif
 
 #if BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/actor/android/background_tabs/offscreen_rendering_manager_android.h"
 #include "chrome/browser/glic/host/context/glic_empty_pinned_tab_manager.h"
 #include "chrome/browser/glic/widget/conversions.h"
 #include "chrome/browser/glic/widget/glic_floating_ui_android.h"
@@ -333,7 +331,7 @@ GlicInstanceImpl::~GlicInstanceImpl() {
   // the coordinator while this instance is being destroyed.
   coordinator_delegate_ = nullptr;
   tab_group_binding_.reset();
-  StopOffscreenRendering();
+  offscreen_rendering_controller_.Stop();
   // Destroying the web contents may result in calls back here, so do it first.
   host_.Hibernate();
 
@@ -439,16 +437,16 @@ bool GlicInstanceImpl::IsLiveMode() const {
 
 bool GlicInstanceImpl::ShouldShowInactiveSidePanel(
     const SidePanelShowOptions& options) const {
+  EmbedderKey key = SidePanelEmbedderKey(options.tab);
+  if (IsActiveEmbedder(key)) {
+    return false;
+  }
+
   if (!options.tab->IsActivated()) {
     return true;
   }
 
   if (!options.prefer_peek) {
-    return false;
-  }
-
-  EmbedderKey key = SidePanelEmbedderKey(options.tab);
-  if (IsActiveEmbedder(key)) {
     return false;
   }
 
@@ -503,7 +501,7 @@ void GlicInstanceImpl::Show(ShowOptions options) {
     DeactivateCurrentEmbedder();
     // Ensure that there is a WebContents for the embedder to use.
     EnsureHostAwake();
-    StopOffscreenRendering();
+    offscreen_rendering_controller_.Stop();
     GlicUiEmbedder* embedder = CreateActiveEmbedder(options);
     CHECK(embedder);
     host_.SetDelegate(embedder->GetHostEmbedderDelegate());
@@ -884,11 +882,9 @@ void GlicInstanceImpl::FocusIfActive() {
   if (!IsActive()) {
     return;
   }
-  content::WebContents* web_contents = host_.webui_contents();
-  if (!web_contents) {
-    return;
+  if (auto* embedder = GetActiveEmbedder()) {
+    embedder->Focus();
   }
-  web_contents->Focus();
 }
 
 void GlicInstanceImpl::NotifyActorTaskListRowClicked(int32_t task_id) {
@@ -951,57 +947,22 @@ void GlicInstanceImpl::UpdateSkillPreviews(
   skills_manager().UpdateSkillPreviews(updated_tab);
 }
 
-// TODO(b/572001459): Extract Android offscreen rendering management out of
-// GlicInstanceImpl into a dedicated helper class owned by this instance.
 void GlicInstanceImpl::SetHiddenInitializing(bool initializing) {
-  if (is_hidden_initializing_ == initializing) {
-    return;
-  }
-  is_hidden_initializing_ = initializing;
-  UpdateOffscreenRenderingState();
+  offscreen_rendering_controller_.SetHiddenInitializing(initializing);
 }
 
 void GlicInstanceImpl::OnActuatingChanged(bool actuating) {
   host_.OnActuatingChanged(actuating);
-  UpdateOffscreenRenderingState();
+  offscreen_rendering_controller_.UpdateState();
 }
 
-void GlicInstanceImpl::UpdateOffscreenRenderingState() {
-#if BUILDFLAG(IS_ANDROID)
-  if (!base::FeatureList::IsEnabled(features::kGlicAndroidOffscreenRendering)) {
-    return;
-  }
-
-  const bool should_render_offscreen =
-      !HasActiveEmbedder() &&
-      (is_hidden_initializing_ ||
-       (actor_task_manager_ && actor_task_manager_->IsActuating()));
-
-  if (should_render_offscreen == is_offscreen_rendering_active_) {
-    return;
-  }
-
-  if (should_render_offscreen) {
-    EnsureHostAwake();
-    if (content::WebContents* contents = host_.webui_contents()) {
-      actor::StartOffscreenRenderingForWebContents(contents);
-      is_offscreen_rendering_active_ = true;
-    }
-  } else {
-    StopOffscreenRendering();
-  }
-#endif
-}
-
-void GlicInstanceImpl::StopOffscreenRendering() {
-#if BUILDFLAG(IS_ANDROID)
-  if (is_offscreen_rendering_active_) {
-    if (content::WebContents* contents = host_.webui_contents()) {
-      actor::StopOffscreenRenderingForWebContents(contents);
-    }
-    is_offscreen_rendering_active_ = false;
-  }
-#endif
+// Returns the WebContents to render offscreen: the WebUI contents in webview
+// mode, or the guest contents that hosts the web client in NoWebview mode.
+// TODO(b/534807813): Remove this helper once webview is deleted and have
+// callers use host_.web_client_contents() directly.
+content::WebContents* GlicInstanceImpl::GetOffscreenRenderingContents() const {
+  return service_->IsNoWebviewEnabled() ? host_.web_client_contents()
+                                        : host_.webui_contents();
 }
 
 void GlicInstanceImpl::FetchZeroStateSuggestions(
@@ -1629,6 +1590,7 @@ void GlicInstanceImpl::MaybeInitializeHiddenClient(
     EnsureHostAwake();
   }
 
+  host_.NotifyWindowIntentToShow();
   NotifyPanelWillOpen(invocation_source, std::nullopt, fre_override);
 }
 
@@ -1638,18 +1600,17 @@ void GlicInstanceImpl::DidCloseFor(EmbedderKey key,
   // Must be called early to avoid use-after-free if instance is deleted.
   if (reason == EmbedderCloseReason::kExplicitlyClosed) {
     OnEmbedderClosed(key);
-    // The user dismissed the UI this instance was showing before the client
-    // became usable, so an invocation that only came to show that UI is
-    // abandoned rather than left to time out. Only the active embedder
-    // counts: closing an inactive one, or the old embedder while moving the
-    // conversation to another surface (detach/attach), does not take the UI
-    // away. Invocations that will send something to the client keep running,
-    // as the client may still act on them (and keep the instance alive, see
-    // MaybeRemoveBlankInstanceOnClose()).
-    if (IsActiveEmbedder(key) &&
-        host_.client_load_state() != ClientLoadState::kReady &&
-        coordinator_delegate_) {
-      coordinator_delegate_->CancelShowOnlyInvokes(
+    // The user dismissed the UI this instance was showing before the
+    // invocation could finish, so an invocation that only came to show that UI
+    // before the client became usable, or any invocation still waiting on FRE
+    // completion in that UI, is abandoned rather than left to time out. Only
+    // the active embedder counts: closing an inactive one, or the old embedder
+    // while moving the conversation to another surface (detach/attach), does
+    // not take the UI away. Invocations that will send something to a
+    // consented client keep running, as the client may still act on them (and
+    // keep the instance alive, see MaybeRemoveBlankInstanceOnClose()).
+    if (IsActiveEmbedder(key) && coordinator_delegate_) {
+      coordinator_delegate_->CancelInvokesOnPanelClose(
           this, GlicInvokeError::kPanelClosed);
     }
   }
@@ -1744,7 +1705,7 @@ void GlicInstanceImpl::OnAllEmbeddersInactive() {
 
   NotifyInstanceActivationChanged(false);
   host_.SetDebouncedVisibility(false);
-  UpdateOffscreenRenderingState();
+  offscreen_rendering_controller_.UpdateState();
   if (actor_task_manager_) {
     // Attempt to show toast on UI deactivated (and not replaced by anything
     // else).
@@ -2025,12 +1986,8 @@ void GlicInstanceImpl::OnTaskIdChanged(std::optional<int> task_id) {
 }
 
 bool GlicInstanceImpl::HasFocus() {
-  if (auto* web_contents = host().webui_contents()) {
-    content::RenderWidgetHostView* rwhv =
-        web_contents->GetRenderWidgetHostView();
-    return rwhv->HasFocus();
-  }
-  return false;
+  auto* embedder = GetActiveEmbedder();
+  return embedder && embedder->HasFocus();
 }
 
 tabs::TabInterface* GlicInstanceImpl::GetActiveEmbedderTabForTesting() {

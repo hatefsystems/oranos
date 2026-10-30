@@ -13,13 +13,11 @@
 #include "chrome/browser/ui/read_anything/read_anything_enums.h"
 #include "chrome/browser/ui/read_anything/read_anything_immersive_activation_observer.h"
 #include "chrome/browser/ui/read_anything/read_anything_prefs.h"
-#include "chrome/browser/ui/read_anything/read_anything_service_factory.h"
 #include "chrome/browser/ui/side_panel/mock_side_panel_ui.h"
 #include "chrome/browser/ui/side_panel/side_panel_enums.h"
 #include "chrome/browser/ui/side_panel/side_panel_registry.h"
 #include "chrome/common/read_anything/read_anything.mojom.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
-#include "chrome/test/user_education/mock_browser_user_education_interface.h"
 #include "components/prefs/pref_service.h"
 #include "components/tabs/public/mock_tab_interface.h"
 #include "pdf/buildflags.h"
@@ -30,8 +28,6 @@
 #include "url/gurl.h"
 #endif  // BUILDFLAG(ENABLE_PDF)
 
-using read_anything::mojom::DistillationStatus;
-using read_anything::mojom::ReadAnythingDistillationState;
 using read_anything::mojom::ReadAnythingOpenTrigger;
 using read_anything::mojom::ReadAnythingPresentationState;
 
@@ -51,11 +47,6 @@ class ReadAnythingControllerUnitTest : public ChromeRenderViewHostTestHarness {
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
 
-    // OnEntryShown() calls into ReadAnythingService, which loads extensions
-    // that aren't available in unit tests. Use a null service instead.
-    ReadAnythingServiceFactory::GetInstance()->SetTestingFactory(
-        profile(), BrowserContextKeyedServiceFactory::TestingFactory());
-
     mock_browser_window_interface_ =
         std::make_unique<testing::NiceMock<MockBrowserWindowInterface>>();
     ON_CALL(*mock_browser_window_interface_, GetProfile())
@@ -64,10 +55,6 @@ class ReadAnythingControllerUnitTest : public ChromeRenderViewHostTestHarness {
     browser_window_features_ = std::make_unique<BrowserWindowFeatures>();
     ON_CALL(*mock_browser_window_interface_, GetFeatures())
         .WillByDefault(testing::ReturnRef(*browser_window_features_));
-
-    mock_user_education_interface_ =
-        std::make_unique<testing::NiceMock<MockBrowserUserEducationInterface>>(
-            mock_browser_window_interface_.get());
 
     mock_side_panel_ui_ = std::make_unique<testing::NiceMock<MockSidePanelUI>>(
         mock_browser_window_interface_->GetUnownedUserDataHost());
@@ -116,7 +103,6 @@ class ReadAnythingControllerUnitTest : public ChromeRenderViewHostTestHarness {
     controller_.reset();
     side_panel_registry_.reset();
     mock_side_panel_ui_.reset();
-    mock_user_education_interface_.reset();
     mock_tab_.reset();
     browser_window_features_.reset();
     mock_browser_window_interface_.reset();
@@ -143,8 +129,6 @@ class ReadAnythingControllerUnitTest : public ChromeRenderViewHostTestHarness {
   std::unique_ptr<testing::NiceMock<MockBrowserWindowInterface>>
       mock_browser_window_interface_;
   std::unique_ptr<BrowserWindowFeatures> browser_window_features_;
-  std::unique_ptr<testing::NiceMock<MockBrowserUserEducationInterface>>
-      mock_user_education_interface_;
   std::unique_ptr<testing::NiceMock<MockSidePanelUI>> mock_side_panel_ui_;
   std::unique_ptr<tabs::MockTabInterface> mock_tab_;
   std::unique_ptr<SidePanelRegistry> side_panel_registry_;
@@ -154,7 +138,7 @@ class ReadAnythingControllerUnitTest : public ChromeRenderViewHostTestHarness {
 };
 
 TEST_F(ReadAnythingControllerUnitTest,
-       OnDistillationStateChanged_EmptyContentInImmersive_TogglesToSidePanel) {
+       OnEmptyStateChanged_EmptyInImmersive_TogglesToSidePanel) {
   base::HistogramTester histogram_tester;
   ShowImmersiveUI(ReadAnythingOpenTrigger::kOmniboxChip);
   EXPECT_EQ(controller_->GetPresentationState(),
@@ -164,8 +148,7 @@ TEST_F(ReadAnythingControllerUnitTest,
   EXPECT_CALL(*mock_side_panel_ui_,
               Show(SidePanelEntryId::kReadAnything, testing::_, testing::_))
       .Times(1);
-  controller_->OnDistillationStateChanged(
-      ReadAnythingDistillationState::kDistillationEmpty);
+  controller_->OnEmptyStateChanged(/*is_empty=*/true);
 
   EXPECT_EQ(controller_->GetPresentationState(),
             ReadAnythingPresentationState::kInSidePanel);
@@ -175,7 +158,7 @@ TEST_F(ReadAnythingControllerUnitTest,
 }
 
 TEST_F(ReadAnythingControllerUnitTest,
-       OnDistillationStateChanged_WithContentInImmersive_StaysImmersive) {
+       OnEmptyStateChanged_NotEmptyInImmersive_StaysImmersive) {
   ShowImmersiveUI(ReadAnythingOpenTrigger::kOmniboxChip);
   EXPECT_EQ(controller_->GetPresentationState(),
             ReadAnythingPresentationState::kInImmersiveOverlay);
@@ -184,21 +167,19 @@ TEST_F(ReadAnythingControllerUnitTest,
   EXPECT_CALL(*mock_side_panel_ui_,
               Show(SidePanelEntryId::kReadAnything, testing::_, testing::_))
       .Times(0);
-  controller_->OnDistillationStateChanged(
-      ReadAnythingDistillationState::kDistillationWithContent);
+  controller_->OnEmptyStateChanged(/*is_empty=*/false);
 
   EXPECT_EQ(controller_->GetPresentationState(),
             ReadAnythingPresentationState::kInImmersiveOverlay);
 }
 
 TEST_F(ReadAnythingControllerUnitTest,
-       OnDistillationStateChanged_EmptyInSidePanel_StaysInSidePanel) {
+       OnEmptyStateChanged_EmptyInSidePanel_StaysInSidePanel) {
   base::HistogramTester histogram_tester;
   SetPresentationState(ReadAnythingPresentationState::kInSidePanel);
 
   EXPECT_CALL(mock_immersive_observer_, OnCloseImmersive).Times(0);
-  controller_->OnDistillationStateChanged(
-      ReadAnythingDistillationState::kDistillationEmpty);
+  controller_->OnEmptyStateChanged(/*is_empty=*/true);
 
   EXPECT_EQ(controller_->GetPresentationState(),
             ReadAnythingPresentationState::kInSidePanel);
@@ -207,14 +188,13 @@ TEST_F(ReadAnythingControllerUnitTest,
 }
 
 TEST_F(ReadAnythingControllerUnitTest,
-       OnDistillationStateChanged_OpenWithDistillationEmpty_OpensInSidePanel) {
+       OnEmptyStateChanged_OpenWithEmptyState_OpensInSidePanel) {
   base::HistogramTester histogram_tester;
   SetPresentationState(ReadAnythingPresentationState::kInactive);
 
-  controller_->OnDistillationStateChanged(
-      ReadAnythingDistillationState::kDistillationEmpty);
+  controller_->OnEmptyStateChanged(/*is_empty=*/true);
 
-  // Opening immersive when distillation is empty should redirect to side panel
+  // Opening immersive when in the empty state should redirect to side panel
   // without notifying the immersive activation observer.
   EXPECT_CALL(mock_immersive_observer_, OnShowImmersive).Times(0);
   EXPECT_CALL(mock_immersive_observer_, OnCloseImmersive).Times(0);
@@ -241,8 +221,7 @@ TEST_F(ReadAnythingControllerUnitTest, AutomaticToggleDoesNotUpdatePreference) {
   EXPECT_EQ(controller_->GetPresentationState(),
             ReadAnythingPresentationState::kInImmersiveOverlay);
 
-  controller_->OnDistillationStateChanged(
-      ReadAnythingDistillationState::kDistillationEmpty);
+  controller_->OnEmptyStateChanged(/*is_empty=*/true);
 
   EXPECT_EQ(
       prefs->GetInteger(
@@ -352,108 +331,6 @@ TEST_F(ReadAnythingControllerUnitTest,
   ShowImmersiveUI(ReadAnythingOpenTrigger::kOmniboxChip);
   EXPECT_EQ(controller_->GetPresentationState(),
             ReadAnythingPresentationState::kInImmersiveOverlay);
-}
-
-TEST_F(ReadAnythingControllerUnitTest,
-       OnDistillationStatus_AfterShownWithOmnibox_LogsStatus) {
-  base::HistogramTester histogram_tester;
-  auto status = DistillationStatus::kSuccess;
-  int word_count = 3001;
-  controller_->OnEntryShown(ReadAnythingOpenTrigger::kOmniboxChip);
-
-  controller_->OnDistillationStatus(status, word_count);
-
-  histogram_tester.ExpectUniqueSample(
-      "Accessibility.ReadAnything.DistillationStatusAfterOmnibox", status, 1);
-  histogram_tester.ExpectUniqueSample(
-      "Accessibility.ReadAnything.WordsDistilledAfterOmnibox", word_count, 1);
-}
-
-TEST_F(ReadAnythingControllerUnitTest,
-       OnDistillationStatus_AfterShownWithOtherEntrypoint_DoesNotLogStatus) {
-  base::HistogramTester histogram_tester;
-  auto status = DistillationStatus::kSuccess;
-  int word_count = 3002;
-  controller_->OnEntryShown(ReadAnythingOpenTrigger::kReadAnythingContextMenu);
-
-  controller_->OnDistillationStatus(status, word_count);
-
-  histogram_tester.ExpectTotalCount(
-      "Accessibility.ReadAnything.DistillationStatusAfterOmnibox", 0);
-  histogram_tester.ExpectTotalCount(
-      "Accessibility.ReadAnything.WordsDistilledAfterOmnibox", 0);
-}
-
-TEST_F(ReadAnythingControllerUnitTest,
-       OnDistillationStatus_StillRunning_DoesNotLogUntilFinished) {
-  base::HistogramTester histogram_tester;
-  controller_->OnEntryShown(ReadAnythingOpenTrigger::kOmniboxChip);
-
-  controller_->OnDistillationStatus(DistillationStatus::kStillRunning, 10);
-  histogram_tester.ExpectTotalCount(
-      "Accessibility.ReadAnything.DistillationStatusAfterOmnibox", 0);
-
-  auto status = DistillationStatus::kSuccess;
-  int word_count = 3007;
-  controller_->OnDistillationStatus(status, word_count);
-
-  histogram_tester.ExpectUniqueSample(
-      "Accessibility.ReadAnything.DistillationStatusAfterOmnibox", status, 1);
-  histogram_tester.ExpectUniqueSample(
-      "Accessibility.ReadAnything.WordsDistilledAfterOmnibox", word_count, 1);
-}
-
-TEST_F(ReadAnythingControllerUnitTest,
-       OnDistillationStatus_AfterAlreadyLogged_DoesNotLogStatusAgain) {
-  base::HistogramTester histogram_tester;
-  auto status1 = DistillationStatus::kSuccess;
-  auto status2 = DistillationStatus::kFailure;
-  int word_count1 = 3003;
-  int word_count2 = 3004;
-  controller_->OnEntryShown(ReadAnythingOpenTrigger::kOmniboxChip);
-
-  controller_->OnDistillationStatus(status1, word_count1);
-  controller_->OnDistillationStatus(status2, word_count2);
-
-  histogram_tester.ExpectUniqueSample(
-      "Accessibility.ReadAnything.DistillationStatusAfterOmnibox", status1, 1);
-  histogram_tester.ExpectUniqueSample(
-      "Accessibility.ReadAnything.WordsDistilledAfterOmnibox", word_count1, 1);
-}
-
-TEST_F(ReadAnythingControllerUnitTest,
-       OnDistillationStatus_AfterHidden_StillLogsStatus) {
-  base::HistogramTester histogram_tester;
-  auto status = DistillationStatus::kSuccess;
-  int word_count = 3005;
-  controller_->OnEntryShown(ReadAnythingOpenTrigger::kOmniboxChip);
-
-  controller_->OnEntryHidden();
-  controller_->OnDistillationStatus(status, word_count);
-
-  histogram_tester.ExpectUniqueSample(
-      "Accessibility.ReadAnything.DistillationStatusAfterOmnibox", status, 1);
-  histogram_tester.ExpectUniqueSample(
-      "Accessibility.ReadAnything.WordsDistilledAfterOmnibox", word_count, 1);
-}
-
-TEST_F(
-    ReadAnythingControllerUnitTest,
-    OnDistillationStatus_AfterHiddenAndStatusAlreadyLogged_DoesNotLogStatus) {
-  base::HistogramTester histogram_tester;
-  auto status = DistillationStatus::kSuccess;
-  int word_count = 3006;
-  controller_->OnEntryShown(ReadAnythingOpenTrigger::kOmniboxChip);
-
-  controller_->OnDistillationStatus(status, word_count);
-
-  controller_->OnEntryHidden();
-  controller_->OnDistillationStatus(status, word_count);
-
-  histogram_tester.ExpectUniqueSample(
-      "Accessibility.ReadAnything.DistillationStatusAfterOmnibox", status, 1);
-  histogram_tester.ExpectUniqueSample(
-      "Accessibility.ReadAnything.WordsDistilledAfterOmnibox", word_count, 1);
 }
 
 #if BUILDFLAG(ENABLE_PDF)

@@ -66,7 +66,7 @@
 #include "ui/views/style/typography_provider.h"
 #include "ui/views/vector_icons.h"
 #include "ui/views/view_class_properties.h"
-#include "ui/views/view_tracker.h"
+#include "ui/views/view_guard.h"
 #include "ui/views/view_utils.h"
 #include "ui/views/widget/widget.h"
 
@@ -278,7 +278,7 @@ bool MenuItemView::HandleAccessibleAction(const ui::AXActionData& action_data) {
 
   switch (action_data.action) {
     case ax::mojom::Action::kExpand: {
-      DCHECK(HasSubmenu());
+      CHECK(HasSubmenu(), base::NotFatalUntil::M163);
       GetMenuController()->SelectItemAndOpenSubmenu(this);
       return true;
     }
@@ -303,7 +303,7 @@ bool MenuItemView::HandleAccessibleAction(const ui::AXActionData& action_data) {
     }
 
     case ax::mojom::Action::kCollapse: {
-      DCHECK(HasSubmenu());
+      CHECK(HasSubmenu(), base::NotFatalUntil::M163);
       GetMenuController()->CloseSubmenu();
       return true;
     }
@@ -447,8 +447,8 @@ MenuItemView* MenuItemView::AddMenuItemViewImpl(
     std::optional<ui::ColorId> submenu_arrow_color_id) {
   CHECK(item);
   const Type type = item->GetType();
-  DCHECK_NE(type, Type::kEmpty);
-  DCHECK_NE(type, Type::kSeparator);
+  CHECK_NE(type, Type::kEmpty, base::NotFatalUntil::M163);
+  CHECK_NE(type, Type::kSeparator, base::NotFatalUntil::M163);
   if (!submenu_) {
     CreateSubmenu();
     // Set the submenu border color to be the same as the first submenu
@@ -460,7 +460,8 @@ MenuItemView* MenuItemView::AddMenuItemViewImpl(
     }
   }
   const size_t insert_index = index.value_or(submenu_->children().size());
-  DCHECK_LE(insert_index, submenu_->children().size());
+  CHECK_LE(insert_index, submenu_->children().size(),
+           base::NotFatalUntil::M163);
 
   item->SetForegroundColorId(foreground_color);
   item->SetSelectedColorId(selected_color_id);
@@ -475,6 +476,12 @@ MenuItemView* MenuItemView::AddMenuItemViewImpl(
   if (GetDelegate() && !GetDelegate()->IsCommandVisible(item->GetCommand())) {
     item->SetVisible(false);
   }
+
+  // There are cases where menu insertions can lead to synchronous accessibility
+  // events, which can in turn lead to a miscalibrated or malicious
+  // accessibility tool attempting to close the menu mid-insertion. Guard
+  // against the item being destroyed while it is being added.
+  ViewGuard item_guard(*item);
 
   auto* added_item = submenu_->AddChildViewAt(std::move(item), insert_index);
 
@@ -505,22 +512,23 @@ void MenuItemView::SetIsPinned(bool is_pinned) {
 }
 
 void MenuItemView::RemoveMenuItem(View* item) {
-  DCHECK(item);
-  DCHECK(submenu_);
+  CHECK(item, base::NotFatalUntil::M163);
+  CHECK(submenu_, base::NotFatalUntil::M163);
   View* const parent = item->parent();
   // Pinned items live in the scroll view container's header/footer containers
   // rather than directly in the SubmenuView.
   const MenuScrollViewContainer* const container =
       submenu_->scroll_view_container();
-  DCHECK(parent == submenu_.get() ||
-         (container && (parent == container->header_container() ||
-                        parent == container->footer_container())));
+  CHECK(parent == submenu_.get() ||
+            (container && (parent == container->header_container() ||
+                           parent == container->footer_container())),
+        base::NotFatalUntil::M163);
   removed_items_.push_back(item);
   parent->RemoveChildView(item);
 }
 
 void MenuItemView::RemoveAllMenuItems() {
-  DCHECK(submenu_);
+  CHECK(submenu_, base::NotFatalUntil::M163);
 
   // Pinned items live in the scroll view container's header/footer containers
   // rather than directly in the SubmenuView.
@@ -577,7 +585,7 @@ MenuSeparator* MenuItemView::AddSeparatorAt(size_t index,
   if (!submenu_) {
     CreateSubmenu();
   }
-  DCHECK_LE(index, submenu_->children().size());
+  CHECK_LE(index, submenu_->children().size(), base::NotFatalUntil::M163);
   auto separator = std::make_unique<MenuSeparator>(type);
   return submenu_->AddChildViewAt(std::move(separator), index);
 }
@@ -717,7 +725,7 @@ base::CallbackListSubscription MenuItemView::AddSelectedChangedCallback(
 
 void MenuItemView::SetSelectionOfActionableSubmenu(
     bool submenu_area_of_actionable_submenu_selected) {
-  DCHECK_EQ(Type::kActionableSubMenu, type_);
+  CHECK_EQ(Type::kActionableSubMenu, type_, base::NotFatalUntil::M163);
   if (submenu_area_of_actionable_submenu_selected_ ==
       submenu_area_of_actionable_submenu_selected) {
     return;
@@ -730,7 +738,7 @@ void MenuItemView::SetSelectionOfActionableSubmenu(
 
 void MenuItemView::SetTooltip(const std::u16string& tooltip, int item_id) {
   MenuItemView* item = GetMenuItemByID(item_id);
-  DCHECK(item);
+  CHECK(item, base::NotFatalUntil::M163);
   item->UpdateTooltipText(tooltip);
 }
 
@@ -812,7 +820,7 @@ gfx::Size MenuItemView::CalculatePreferredSize(
 }
 
 gfx::Rect MenuItemView::GetSubmenuAreaOfActionableSubmenu() const {
-  DCHECK_EQ(Type::kActionableSubMenu, type_);
+  CHECK_EQ(Type::kActionableSubMenu, type_, base::NotFatalUntil::M163);
   const MenuConfig& config = MenuConfig::instance();
   return gfx::Rect(gfx::Point(vertical_separator_->bounds().right(), 0),
                    gfx::Size(config.actionable_submenu_width, height()));
@@ -822,7 +830,7 @@ const MenuItemView::MenuItemDimensions& MenuItemView::GetDimensions() const {
   if (!is_dimensions_valid()) {
     dimensions_ = CalculateDimensions();
   }
-  DCHECK(is_dimensions_valid());
+  CHECK(is_dimensions_valid(), base::NotFatalUntil::M163);
   return dimensions_;
 }
 
@@ -969,7 +977,7 @@ void MenuItemView::ChildrenChanged() {
 ProposedLayout MenuItemView::CalculateProposedLayout(
     const SizeBounds& size_bounds) const {
   ProposedLayout layout;
-  DCHECK(size_bounds.is_fully_bounded());
+  CHECK(size_bounds.is_fully_bounded(), base::NotFatalUntil::M163);
   layout.host_size =
       gfx::Size(size_bounds.width().value(), size_bounds.height().value());
 
@@ -1082,7 +1090,7 @@ void MenuItemView::SetForcedVisualSelection(bool selected) {
 
 void MenuItemView::SetBottomCornersRadius(int lower_left_radius,
                                           int lower_right_radius) {
-  DCHECK_EQ(Type::kHighlighted, type_);
+  CHECK_EQ(Type::kHighlighted, type_, base::NotFatalUntil::M163);
   bottom_rounded_corners_ =
       gfx::RoundedCornersF(0, 0, lower_left_radius, lower_right_radius);
   invalidate_dimensions();  // Triggers preferred size recalculation.
@@ -1165,7 +1173,7 @@ MenuItemView::MenuItemView(MenuItemView* parent,
 
 void MenuItemView::PrepareForRun(bool has_mnemonics, bool show_mnemonics) {
   // Currently we only support showing the root.
-  DCHECK(!parent_menu_item_);
+  CHECK(!parent_menu_item_, base::NotFatalUntil::M163);
 
   // Force us to have a submenu.
   CreateSubmenu();
@@ -1229,9 +1237,12 @@ void MenuItemView::UpdateEmptyMenusAndMetrics() {
   const Views children = submenu_->children();
   bool has_visible_menu_items = false;
 
-  // Making changes to selection, etc. can cause `this` to be deleted. Track the
-  // continued existence of this object while updating.
-  ViewTracker tracker(this);
+  // Making changes to selection, accessible text, etc. can cause `this` to be
+  // deleted via malicious or poorly-coded accessibility callbacks. Rather than
+  // risk the entire tree being deleted out from under us (and having to check
+  // the validity of all pointers in every call triggered below), just CHECK()
+  // if `this` disappears under us.
+  ViewGuard guard(*this);
 
   for (View* child : children) {
     MenuItemView* const child_menu = AsViewClass<MenuItemView>(child);
@@ -1243,15 +1254,11 @@ void MenuItemView::UpdateEmptyMenusAndMetrics() {
       // Prevent view destruction until selection is updated.
       // We remove the child before updating selection in case of re-entrancy.
       std::unique_ptr<View> removed_child = submenu_->RemoveChildViewT(child);
-      if (tracker && selected) {
+      if (selected) {
         // Update selection to this menu before deleting the currently
         // selected child.
         GetMenuController()->SetSelection(
             this, MenuController::SELECTION_UPDATE_IMMEDIATELY);
-        // This can also delete `this`, so check for that.
-        if (!tracker) {
-          return;
-        }
       }
       // TODO(https://crbug.com/537701460): Remove after SubmenuView gets a
       // proper layout.
@@ -1293,7 +1300,8 @@ void MenuItemView::OnPaintImpl(gfx::Canvas* canvas, PaintMode mode) {
   const bool paint_as_selected = ShouldPaintAsSelected(mode);
   // If these are out of sync, UpdateSelectionBasedStateIfChanged() was not
   // called.
-  DCHECK_EQ(paint_as_selected, last_paint_as_selected_);
+  CHECK_EQ(paint_as_selected, last_paint_as_selected_,
+           base::NotFatalUntil::M163);
 
   // Render the background. As MenuScrollViewContainer draws the background, we
   // only need the background when we want it to look different, as when we're
@@ -1422,7 +1430,7 @@ void MenuItemView::PaintBackground(gfx::Canvas* canvas,
           color_provider->GetColor(ui::kColorMenuItemBackgroundAlertedTarget));
     }
 
-    DCHECK_NE(color, gfx::kPlaceholderColor);
+    CHECK_NE(color, gfx::kPlaceholderColor, base::NotFatalUntil::M163);
 
     cc::PaintFlags flags;
     flags.setAntiAlias(true);
@@ -1435,13 +1443,8 @@ void MenuItemView::PaintBackground(gfx::Canvas* canvas,
     SkVector radii[4]{{0, 0}, {0, 0}, {0, 0}, {0, 0}};
     bool clip_to_background = false;
     if (menu_item_background_.has_value()) {
-      const int horizontal_margin =
-          menu_item_background_->horizontal_margin.value_or(
-              GetItemHorizontalBorder());
       // The highlight covers only the row, not the background's padding.
-      highlight_bounds.Inset(gfx::InsetsF::TLBR(
-          menu_item_background_->top_padding, horizontal_margin,
-          menu_item_background_->bottom_padding, horizontal_margin));
+      highlight_bounds.Inset(gfx::InsetsF(GetHighlightInsets()));
       const SkScalar top_r = SkIntToScalar(menu_item_background_->top_radius);
       const SkScalar bot_r =
           SkIntToScalar(menu_item_background_->bottom_radius);
@@ -1475,14 +1478,7 @@ void MenuItemView::PaintBackground(gfx::Canvas* canvas,
     }
   } else if (paint_as_selected) {
     gfx::Rect item_bounds = GetLocalBounds();
-    if (menu_item_background_.has_value()) {
-      const int horizontal_margin =
-          menu_item_background_->horizontal_margin.value_or(
-              GetItemHorizontalBorder());
-      item_bounds.Inset(gfx::Insets::TLBR(
-          menu_item_background_->top_padding, horizontal_margin,
-          menu_item_background_->bottom_padding, horizontal_margin));
-    }
+    item_bounds.Inset(GetHighlightInsets());
     if (type_ == Type::kActionableSubMenu) {
       if (submenu_area_of_actionable_submenu_selected_) {
         item_bounds = GetSubmenuAreaOfActionableSubmenu();
@@ -1840,7 +1836,7 @@ bool MenuItemView::IsContainer() const {
 }
 
 gfx::Insets MenuItemView::GetContainerMargins() const {
-  DCHECK(IsContainer());
+  CHECK(IsContainer(), base::NotFatalUntil::M163);
 
   // Use the child's preferred margins but take the standard top and bottom
   // margins as minimums.
@@ -1882,7 +1878,7 @@ void MenuItemView::UpdateSelectionBasedStateIfChanged(PaintMode mode) {
 void MenuItemView::UpdateSelectionBasedState(bool paint_as_selected) {
   // This code makes use of the NativeTheme, which should only be accessed
   // when in a Widget.
-  DCHECK(GetWidget());
+  CHECK(GetWidget(), base::NotFatalUntil::M163);
   last_paint_as_selected_ = paint_as_selected;
   const Colors colors = CalculateColors(paint_as_selected);
   if (submenu_arrow_image_view_) {
@@ -1970,7 +1966,7 @@ bool MenuItemView::IsScheduledForDeletion() const {
 }
 
 int MenuItemView::CalculateIconX(const ImageView* icon_view) const {
-  DCHECK(icon_view);
+  CHECK(icon_view, base::NotFatalUntil::M163);
 
   const SubmenuView* const submenu = GetContainingSubmenu();
 
@@ -2032,6 +2028,17 @@ gfx::Insets MenuItemView::GetBackgroundPadding() const {
   }
   return gfx::Insets::TLBR(menu_item_background_->top_padding, 0,
                            menu_item_background_->bottom_padding, 0);
+}
+
+gfx::Insets MenuItemView::GetHighlightInsets() const {
+  if (!menu_item_background_.has_value()) {
+    return gfx::Insets();
+  }
+  // Used by PaintBackground() and for positioning child menus.
+  const int horizontal_margin =
+      menu_item_background_->horizontal_margin.value_or(
+          GetItemHorizontalBorder());
+  return GetBackgroundPadding() + gfx::Insets::VH(0, horizontal_margin);
 }
 
 ViewAccessibility* MenuItemView::GetSubmenuViewAccessibility() {

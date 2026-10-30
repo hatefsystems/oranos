@@ -168,8 +168,10 @@ AudioParameters GetFallbackLowLatencyOutputParams(
 #endif
 
 // This enum must match the numbering for
-// AudioOutputResamplerOpenLowLatencyStreamResult in enums.xml. Do not reorder
-// or remove items, only add new items before OPEN_STREAM_MAX.
+// AudioOutputResamplerLowLatencyOpenStreamResult in
+// tools/metrics/histograms/metadata/media/enums.xml. Do not reorder or remove
+// items, only add new items before kMaxValue.
+// LINT.IfChange(OpenStreamResult)
 enum class OpenStreamResult {
   kFail = 0,
   kFallbackToFake = 1,
@@ -185,6 +187,7 @@ enum class OpenStreamResult {
   kOffloadSuccess = 11,
   kMaxValue = kOffloadSuccess,
 };
+// LINT.ThenChange(//tools/metrics/histograms/metadata/media/enums.xml:AudioOutputResamplerLowLatencyOpenStreamResult)
 
 OpenStreamResult GetSubsequentStreamCreationResultBucket(
     const AudioParameters& current_params,
@@ -467,6 +470,13 @@ void AudioOutputResampler::FlushStream(AudioOutputProxy* stream_proxy) {
   DCHECK(dispatcher_);
 
   dispatcher_->FlushStream(stream_proxy);
+}
+
+void AudioOutputResampler::CloseAllIdleStreams() {
+  DCHECK(audio_manager()->GetTaskRunner()->BelongsToCurrentThread());
+  if (dispatcher_) {
+    dispatcher_->CloseAllIdleStreams();
+  }
 }
 
 void AudioOutputResampler::StopStreamInternal(

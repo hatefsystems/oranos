@@ -17,6 +17,7 @@
 #include "base/check_deref.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/i18n/rtl.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
@@ -169,6 +170,7 @@
 #include "components/omnibox/browser/autocomplete_classifier.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_prefs.h"
+#include "components/omnibox/browser/omnibox_text_util.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/reading_list/core/reading_list_entry.h"
@@ -195,7 +197,6 @@
 #include "components/zoom/page_zoom.h"
 #include "components/zoom/zoom_controller.h"
 #include "content/public/browser/browsing_data_remover.h"
-#include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
@@ -210,6 +211,7 @@
 #include "pdf/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "rlz/buildflags/buildflags.h"
+#include "third_party/metrics_proto/omnibox_event.pb.h"
 #include "third_party/omnibox_proto/chrome_aim_entry_point.pb.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/clipboard_buffer.h"
@@ -1419,32 +1421,38 @@ void NewTabToRight(BrowserWindowInterface* browser) {
 
 void NewTabFromClipboardURL(BrowserWindowInterface* browser) {
 #if BUILDFLAG(IS_LINUX)
-  if (ui::Clipboard::IsSupportedClipboardBuffer(
+  if (ui::Clipboard::IsMiddleClickPasteEnabled() &&
+      ui::Clipboard::IsSupportedClipboardBuffer(
           ui::ClipboardBuffer::kSelection)) {
-    ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
+    ui::Clipboard* const clipboard = ui::Clipboard::GetForCurrentThread();
     CHECK(clipboard)
         << "Clipboard instance is not available, cannot proceed with "
            "middle mouse button action.";
     clipboard->ReadText(
-        ui::ClipboardBuffer::kSelection, /* data_dst = */ std::nullopt,
+        ui::ClipboardBuffer::kSelection, /*data_dst=*/std::nullopt,
         base::BindOnce(
             [](base::WeakPtr<BrowserWindowInterface> browser_weak,
                std::u16string text) {
-              if (!browser_weak || text.empty()) {
+              const std::u16string sanitized_text =
+                  omnibox::SanitizeTextForPaste(text);
+              if (!browser_weak || sanitized_text.empty()) {
+                return;
+              }
+              AutocompleteClassifier* const autocomplete_classifier =
+                  AutocompleteClassifierFactory::GetForProfile(
+                      browser_weak->GetProfile());
+              if (!autocomplete_classifier) {
                 return;
               }
               base::RecordAction(
                   base::UserMetricsAction("NewTabButton_PasteAndNavigate"));
               AutocompleteMatch match;
-              AutocompleteClassifierFactory::GetForProfile(
-                  browser_weak->GetProfile())
-                  ->Classify(text, false, false,
-                             metrics::OmniboxEventProto::BLANK, &match,
-                             nullptr);
+              autocomplete_classifier->Classify(
+                  sanitized_text, /*in_keyword_mode=*/false,
+                  /*allow_exact_keyword_match=*/false,
+                  metrics::OmniboxEventProto::BLANK, &match, nullptr);
               if (match.destination_url.is_valid() &&
-                  content::ChildProcessSecurityPolicy::GetInstance()
-                      ->IsWebSafeScheme(
-                          std::string(match.destination_url.scheme()))) {
+                  match.destination_url.SchemeIsHTTPOrHTTPS()) {
                 browser_weak->GetTabStripModel()->delegate()->AddTabAt(
                     match.destination_url, -1, true);
               }
@@ -1839,14 +1847,15 @@ void CreateNewTabGroup(BrowserWindowInterface* browser) {
 }
 
 void CloseTabGroup(BrowserWindowInterface* browser) {
-  const int index = browser->GetTabStripModel()->active_index();
+  TabStripModel* const tab_strip_model = browser->GetTabStripModel();
+  const int index = tab_strip_model->active_index();
   std::optional<tab_groups::TabGroupId> group_id =
-      browser->GetTabStripModel()->GetTabGroupForTab(index);
-  if (!group_id) {
+      tab_strip_model->GetTabGroupForTab(index);
+  if (!group_id || tab_strip_model->IsEphemeralTabGroup(group_id.value())) {
     return;
   }
 
-  browser->GetTabStripModel()->CloseAllTabsInGroup(group_id.value());
+  tab_strip_model->CloseAllTabsInGroup(group_id.value());
 }
 
 void FocusNextTabGroup(BrowserWindowInterface* browser) {
@@ -2591,13 +2600,6 @@ void ToggleContextualTasksSidePanelZeroState(BrowserWindowInterface* browser) {
     // If there is an active task, toggle the side panel.
     controller->Show(
         /*transition_from_tab=*/false,
-        omnibox::ChromeAimEntryPoint::
-            DESKTOP_CHROME_COBROWSE_PINNED_TOOLBAR_BUTTON);
-  } else if (contextual_tasks::AreContextualTasksUpdatedEntryPointsEnabled(
-                 browser ? browser->GetProfile() : nullptr)) {
-    ExecAskGoogleAboutThisPage(
-        browser,
-        lens::LensOverlayInvocationSource::kCobrowsePinnedToolbarButton,
         omnibox::ChromeAimEntryPoint::
             DESKTOP_CHROME_COBROWSE_PINNED_TOOLBAR_BUTTON);
   } else {

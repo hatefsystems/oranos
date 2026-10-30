@@ -8,7 +8,6 @@
 #include "chrome/browser/ui/actions/chrome_action_id.h"
 #include "chrome/browser/ui/autofill/autofill_bubble_base.h"
 #include "chrome/browser/ui/autofill/autofill_bubble_handler.h"
-#include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -91,7 +90,9 @@ void FilledCardInformationBubbleControllerImpl::SetupAndShowBubble(
 void FilledCardInformationBubbleControllerImpl::SetupBubbleState(
     FilledCardInformationBubbleOptions options) {
   was_bubble_shown_ = false;
-  CHECK(options.IsValid(), base::NotFatalUntil::M162);
+  // TODO(crbug.com/578555608): CHECK-exclusion: Convert to a CHECK once we are
+  // confident it won't be triggered.
+  DCHECK(options.IsValid());
   options_ = std::move(options);
   is_user_gesture_ = false;
   should_icon_be_visible_ = true;
@@ -421,13 +422,8 @@ void FilledCardInformationBubbleControllerImpl::DoShowBubble() {
   // clicks the icon during the delay.
   weak_ptr_factory_.InvalidateWeakPtrs();
 
-  BrowserWindowInterface* browser =
-      GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
-          web_contents());
-  SetBubbleView(*BrowserWindow::FromBrowser(browser)
-                     ->GetAutofillBubbleHandler()
-                     ->ShowFilledCardInformationBubble(web_contents(), this,
-                                                       is_user_gesture_));
+  SetBubbleView(*GetAutofillBubbleHandler()->ShowFilledCardInformationBubble(
+      web_contents(), this, is_user_gesture_));
   CHECK(bubble_view(), base::NotFatalUntil::M162);
   bubble_has_been_shown_ = true;
 

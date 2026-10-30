@@ -16,8 +16,8 @@
 #include "chrome/browser/net/stub_resolver_config_reader.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/safe_browsing/advanced_protection_status_manager.h"
-#include "chrome/browser/safe_browsing/advanced_protection_status_manager_factory.h"
+#include "chrome/browser/safe_browsing/advanced_protection/advanced_protection_status_manager.h"
+#include "chrome/browser/safe_browsing/advanced_protection/advanced_protection_status_manager_factory.h"
 #include "chrome/browser/safe_browsing/safe_browsing_metrics_collector_factory.h"
 #include "chrome/browser/ssl/https_only_mode_controller_client.h"
 #include "chrome/browser/ssl/https_upgrades_util.h"
@@ -48,7 +48,7 @@
 #include "components/security_interstitials/content/captive_portal_helper_android.h"
 #include "content/public/common/referrer.h"
 #include "net/android/network_library.h"
-#include "ui/base/window_open_disposition.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #endif
 
 #if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
@@ -90,7 +90,7 @@ void OpenLoginPage(content::WebContents* web_contents) {
       base::android::AttachCurrentThread());
   content::OpenURLParams params =
       content::OpenURLParams::CreateBrowserInitiated(
-          GURL(url), WindowOpenDisposition::kNewForegroundTab,
+          GURL(url), ui::mojom::WindowOpenDisposition::kNewForegroundTab,
           ui::PAGE_TRANSITION_LINK);
   web_contents->OpenURL(params, /*navigation_handle_callback=*/{});
 #else
@@ -364,13 +364,13 @@ void OpenLoginTab(BrowserWindowInterface* browser,
       CaptivePortalServiceFactory::GetForProfile(browser->GetProfile())
           ->test_url(),
       ui::PAGE_TRANSITION_TYPED);
-  WindowOpenDisposition disposition;
+  ui::mojom::WindowOpenDisposition disposition;
   switch (portal_type) {
     case captive_portal::CaptivePortalWindowType::kPopup:
-      disposition = WindowOpenDisposition::kNewPopup;
+      disposition = ui::mojom::WindowOpenDisposition::kNewPopup;
       break;
     case captive_portal::CaptivePortalWindowType::kTab:
-      disposition = WindowOpenDisposition::kNewForegroundTab;
+      disposition = ui::mojom::WindowOpenDisposition::kNewForegroundTab;
       break;
     default:
       NOTREACHED() << "Invalid captive portal window type";

@@ -28,6 +28,7 @@
 
 #include <utility>
 
+#include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
@@ -53,9 +54,6 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/worker_pool.h"
-#include "third_party/blink/renderer/platform/wtf/cross_thread_copier.h"
-#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
-#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_mojo.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/deque.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
@@ -349,6 +347,10 @@ const FontCustomPlatformData* FontResource::GetCustomFontData() {
       observer->FontResourceDataWillBeCleared();
     }
     ClearData();
+    if (base::FeatureList::IsEnabled(
+            features::kFontResourceDecodedMemoryAccounting)) {
+      SetDecodedSize(font_data_->DataSize());
+    }
   }
   return font_data_;
 }

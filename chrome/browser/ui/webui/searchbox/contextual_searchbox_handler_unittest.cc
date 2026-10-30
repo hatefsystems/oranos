@@ -13,6 +13,7 @@
 #include "base/base64.h"
 #include "base/callback_list.h"
 #include "base/compiler_specific.h"
+#include "base/containers/to_vector.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/strcat.h"
@@ -187,6 +188,7 @@ class FakeContextualTasksUIInterface
                              bool replace_navigation_entry) override {}
   void PrepareForTaskChange() override {}
   void OnTaskChanged() override {}
+  void MaybeTriggerPinningPromo() override {}
 
   // ContextualTasksUIInterface:
   mojo::Remote<contextual_tasks::mojom::Page>& GetPageRemote() override {
@@ -230,7 +232,9 @@ class FakeContextualTasksUIInterface
       override {
     return nullptr;
   }
-  std::vector<int32_t> GetRestoredTabIds() override { return {}; }
+  const std::vector<int32_t>& GetRestoredTabIds() override {
+    return restored_tab_ids_;
+  }
   void OnRestoredTabsFetched(
       std::vector<searchbox::mojom::TabInfoPtr> tabs) override {}
   void SetComposeboxHandler(
@@ -247,6 +251,7 @@ class FakeContextualTasksUIInterface
   void set_is_history_thread_loading(bool loading) override {}
 
  private:
+  std::vector<int32_t> restored_tab_ids_;
   mojo::Remote<contextual_tasks::mojom::Page> page_remote_;
   mojo::PendingReceiver<contextual_tasks::mojom::Page> page_receiver_;
 };
@@ -3042,7 +3047,9 @@ class ContextualSearchboxHandlerTestTabsTest
 
     owned_tabs_.push_back(std::move(tab_model));
     all_tabs_.push_back(tab_interface);
-    ON_CALL(*tab_list_, GetAllTabs()).WillByDefault(testing::Return(all_tabs_));
+    ON_CALL(*tab_list_, GetAllTabs())
+        .WillByDefault(testing::Return(
+            base::ToVector(all_tabs_, &raw_ptr<tabs::TabInterface>::get)));
     ON_CALL(*tab_list_, GetTabCount())
         .WillByDefault(testing::Return(static_cast<int>(all_tabs_.size())));
     ON_CALL(*tab_list_, GetIndexOfTab(tab_interface->GetHandle()))
@@ -3057,7 +3064,7 @@ class ContextualSearchboxHandlerTestTabsTest
  protected:
   base::TimeTicks last_active_time_ticks_;
   std::vector<std::unique_ptr<tabs::TabModel>> owned_tabs_;
-  std::vector<tabs::TabInterface*> all_tabs_;
+  std::vector<raw_ptr<tabs::TabInterface>> all_tabs_;
   std::unique_ptr<MockTabListInterface> tab_list_;
   std::unique_ptr<ui::ScopedUnownedUserData<TabListInterface>>
       tab_list_registration_;
@@ -4255,6 +4262,39 @@ TEST_F(ContextualSearchboxHandlerTestTabsTest, GetRecentTabs) {
 }
 
 TEST_F(ContextualSearchboxHandlerTestTabsTest,
+       GetRecentTabs_FiltersAiModeTabs) {
+  auto* regular_search_tab =
+      AddTab(GURL("https://www.google.com/search?q=test"));
+  auto* aim_search_tab =
+      AddTab(GURL("https://www.google.com/search?q=test&udm=50"));
+  AddTab(GURL("https://www.google.com/?udm=50"));
+  AddTab(GURL("https://www.google.com/search?udm=50"));
+
+  // Verify that when an AI Mode search tab is active, it is filtered out and
+  // only the regular Google search tab is returned.
+  ON_CALL(*tab_list(), GetActiveTab())
+      .WillByDefault(testing::Return(aim_search_tab));
+  {
+    base::test::TestFuture<std::vector<searchbox::mojom::TabInfoPtr>> future;
+    handler().GetRecentTabs(future.GetCallback());
+    auto tabs = future.Take();
+    ASSERT_EQ(tabs.size(), 1u);
+    EXPECT_EQ(tabs[0]->tab_id, regular_search_tab->GetHandle().raw_value());
+  }
+
+  // Verify that when AI Mode tabs are inactive, they remain filtered out.
+  ON_CALL(*tab_list(), GetActiveTab())
+      .WillByDefault(testing::Return(regular_search_tab));
+  {
+    base::test::TestFuture<std::vector<searchbox::mojom::TabInfoPtr>> future;
+    handler().GetRecentTabs(future.GetCallback());
+    auto tabs = future.Take();
+    ASSERT_EQ(tabs.size(), 1u);
+    EXPECT_EQ(tabs[0]->tab_id, regular_search_tab->GetHandle().raw_value());
+  }
+}
+
+TEST_F(ContextualSearchboxHandlerTestTabsTest,
        GetRecentTabs_ActiveTabPrioritizedOverNewerBackgroundTab) {
   auto* active_tab = AddTab(GURL("https://www.example.com"));
   // Simulate opening a duplicate URL tab in the background (e.g., via
@@ -4302,7 +4342,9 @@ TEST_F(ContextualSearchboxHandlerTestTabsTest,
   ON_CALL(*unloaded_mock_tab, GetTabHandle).WillByDefault(testing::Return(999));
 
   all_tabs_.push_back(unloaded_tab);
-  ON_CALL(*tab_list(), GetAllTabs()).WillByDefault(testing::Return(all_tabs_));
+  ON_CALL(*tab_list(), GetAllTabs())
+      .WillByDefault(testing::Return(
+          base::ToVector(all_tabs_, &raw_ptr<tabs::TabInterface>::get)));
 
   base::test::TestFuture<std::vector<searchbox::mojom::TabInfoPtr>> future;
   handler().GetRecentTabs(future.GetCallback());
@@ -4358,6 +4400,90 @@ TEST_F(ContextualSearchboxHandlerTestTabsTest,
   EXPECT_CALL(mock_searchbox_page_, OnTabStripChanged).Times(1);
   navigation->Commit();
   mock_searchbox_page_.FlushForTesting();
+}
+
+TEST_F(ContextualSearchboxHandlerTestTabsTest,
+       AddTabContext_NotifiesPageWhenReloadStartsAndStops) {
+  auto* stale_tab = AddTab(GURL("https://www.google.com"));
+  // Keep `stale_tab` inactive so the active-tab navigation observer does not
+  // also notify the page when the navigation commits.
+  AddTab(GURL("https://www.youtube.com"));
+  const int stale_tab_id = stale_tab->GetHandle().raw_value();
+
+  std::unique_ptr<content::NavigationSimulator> reload_navigation;
+  lens::TabContextualizationController::GetPageContextCallback
+      pending_page_context_callback;
+  MockTabContextualizationController* tab_contextualization_controller =
+      static_cast<MockTabContextualizationController*>(
+          lens::TabContextualizationController::From(stale_tab));
+  EXPECT_CALL(*tab_contextualization_controller, GetPageContext(testing::_))
+      .WillOnce([&reload_navigation, &pending_page_context_callback, stale_tab](
+                    lens::TabContextualizationController::GetPageContextCallback
+                        callback) {
+        // Simulate `GetPageContext()` starting an in-place reload of the tab.
+        reload_navigation =
+            content::NavigationSimulator::CreateBrowserInitiated(
+                GURL("https://www.google.com"), stale_tab->GetContents());
+        reload_navigation->Start();
+        pending_page_context_callback = std::move(callback);
+      });
+
+  // `OnTabStripChanged()` should be called immediately when `GetPageContext()`
+  // transitions the tab into a loading state.
+  EXPECT_CALL(mock_searchbox_page_, OnTabStripChanged).Times(1);
+  EXPECT_CALL(mock_searchbox_page_, OnInputStateChanged).Times(1);
+  base::test::TestFuture<base::expected<
+      base::UnguessableToken, contextual_search::ContextUploadErrorType>>
+      future;
+  handler().AddTabContext(stale_tab_id, /*delay_upload=*/false,
+                          searchbox::mojom::TabAttachmentSource::kContextMenu,
+                          future.GetCallback());
+  mock_searchbox_page_.FlushForTesting();
+  ASSERT_TRUE(future.Get().has_value());
+  testing::Mock::VerifyAndClearExpectations(&mock_searchbox_page_);
+
+  // When the reload finishes (`DidStopLoading()`), `TabLoadStopObserver` must
+  // notify the page again so the loading spinner clears, and the pending page
+  // context callback proceeds to upload the extracted context.
+  EXPECT_CALL(mock_searchbox_page_, OnTabStripChanged).Times(1);
+  EXPECT_CALL(
+      query_controller(),
+      StartFileUploadFlow(future.Get().value(), testing::NotNull(), testing::_))
+      .Times(1);
+  reload_navigation->Commit();
+  std::move(pending_page_context_callback)
+      .Run(std::make_unique<lens::ContextualInputData>());
+  mock_searchbox_page_.FlushForTesting();
+}
+
+TEST_F(ContextualSearchboxHandlerTestTabsTest,
+       AddTabContext_AlreadyLoadingTabDoesNotNotifyOnStart) {
+  auto* loading_tab = AddTab(GURL("https://www.google.com"));
+  AddTab(GURL("https://www.youtube.com"));
+  const int loading_tab_id = loading_tab->GetHandle().raw_value();
+
+  auto navigation = content::NavigationSimulator::CreateBrowserInitiated(
+      GURL("https://www.google.com/search"), loading_tab->GetContents());
+  navigation->Start();
+
+  MockTabContextualizationController* tab_contextualization_controller =
+      static_cast<MockTabContextualizationController*>(
+          lens::TabContextualizationController::From(loading_tab));
+  EXPECT_CALL(*tab_contextualization_controller, GetPageContext(testing::_))
+      .Times(1);
+
+  // Because the tab was already loading before `GetPageContext()` was called,
+  // `OnTabStripChanged()` should not fire on start.
+  EXPECT_CALL(mock_searchbox_page_, OnTabStripChanged).Times(0);
+  EXPECT_CALL(mock_searchbox_page_, OnInputStateChanged).Times(1);
+  base::test::TestFuture<base::expected<
+      base::UnguessableToken, contextual_search::ContextUploadErrorType>>
+      future;
+  handler().AddTabContext(loading_tab_id, /*delay_upload=*/false,
+                          searchbox::mojom::TabAttachmentSource::kContextMenu,
+                          future.GetCallback());
+  mock_searchbox_page_.FlushForTesting();
+  ASSERT_TRUE(future.Get().has_value());
 }
 
 TEST_F(ContextualSearchboxHandlerTestTabsTest, GetRecentTabs_UsesServerLimit) {

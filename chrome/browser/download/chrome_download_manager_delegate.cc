@@ -101,8 +101,8 @@
 #include "net/base/mime_util.h"
 #include "net/base/network_change_notifier.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/page_transition_types.h"
-#include "ui/base/window_open_disposition.h"
 #include "ui/display/types/display_constants.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -173,7 +173,7 @@
 #include "chrome/browser/safe_browsing/download_protection/download_protection_util.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "components/safe_browsing/content/browser/download/download_stats.h"
-#include "components/safe_browsing/content/common/file_type_policies.h"
+#include "components/safe_browsing/content/common/file_type_policies/file_type_policies.h"
 #endif
 
 #if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
@@ -1099,12 +1099,7 @@ bool ChromeDownloadManagerDelegate::IsDownloadReadyForCompletion(
       return false;
     }
 #if BUILDFLAG(IS_ANDROID)
-  } else if (ShouldShowSafeBrowsingAndroidDownloadWarnings() &&
-             IsApkFile(item) && state->is_complete() && !item->IsDangerous() &&
-             item->GetDangerType() !=
-                 download::DOWNLOAD_DANGER_TYPE_USER_VALIDATED &&
-             !item->IsUserConfirmed() &&
-             download_prefs_->download_restriction() != policy::DownloadRestriction::MALICIOUS_FILES) {
+  } else if (ShouldShowNonDangerousApkSafeBrowsingWarning(item, *state)) {
     // Don't complete the download of a non-dangerous file until the user
     // consents.
     if (DownloadController::GetInstance()->ShowDangerousDownloadDialog(item)) {
@@ -1123,6 +1118,38 @@ bool ChromeDownloadManagerDelegate::IsDownloadReadyForCompletion(
 #endif  // BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
   return true;
 }
+
+#if BUILDFLAG(IS_ANDROID) && BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
+bool ChromeDownloadManagerDelegate::
+    ShouldShowNonDangerousApkSafeBrowsingWarning(
+        download::DownloadItem* item,
+        const SafeBrowsingState& state) const {
+  // The download of the APK should be complete before a warning is shown.
+  if (!ShouldShowSafeBrowsingAndroidDownloadWarnings() || !IsApkFile(item) ||
+      !state.is_complete()) {
+    return false;
+  }
+
+  // Dangerous downloads are handled separately by DownloadController, and
+  // already-validated or user-confirmed downloads do not need another prompt.
+  if (item->IsDangerous() ||
+      item->GetDangerType() == download::DOWNLOAD_DANGER_TYPE_USER_VALIDATED ||
+      item->IsUserConfirmed()) {
+    return false;
+  }
+
+  // Suppress the confirmation dialog when enterprise policy only restricts
+  // malicious files or when the APK is from a registered app store.
+  if (download_prefs_->download_restriction() ==
+          policy::DownloadRestriction::MALICIOUS_FILES ||
+      safe_browsing::DownloadProtectionService::WasFromRegisteredAppStore(
+          item)) {
+    return false;
+  }
+
+  return true;
+}
+#endif  // BUILDFLAG(IS_ANDROID) && BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
 
 #if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS) || BUILDFLAG(IS_ANDROID)
 void ChromeDownloadManagerDelegate::OnDeobfuscationComplete(
@@ -1302,9 +1329,6 @@ bool ChromeDownloadManagerDelegate::InterceptDownloadIfApplicable(
     if (!blink::IsSupportedMimeType(mime_type) &&
         !IsPdfAndSupported(mime_type, web_contents)) {
       download_message_bridge_->ShowUnsupportedDownloadMessage(web_contents);
-      base::UmaHistogramEnumeration(
-          "Download.Blocked.ContentType.Automotive",
-          download::DownloadContentFromMimeType(mime_type, false));
       return true;
     }
   }
@@ -1423,6 +1447,26 @@ void ChromeDownloadManagerDelegate::OpenDownloadUsingPlatformHandler(
                           platform_util::OpenOperationCallback());
 }
 
+#if BUILDFLAG(IS_WIN)
+void ChromeDownloadManagerDelegate::OpenDownloadWithDialog(
+    DownloadItem* download) {
+  CHECK_EQ(DownloadItem::COMPLETE, download->GetState());
+  if (!download->CanShowInFolder()) {
+    return;
+  }
+  if (!IsMostRecentDownloadItemAtFilePath(download)) {
+    return;
+  }
+  MaybeSendDangerousDownloadOpenedReport(download,
+                                         /*show_download_in_folder=*/false);
+
+  base::FilePath platform_path(
+      GetPlatformDownloadPath(download, PLATFORM_CURRENT_PATH));
+  CHECK(!platform_path.empty());
+  platform_util::OpenFileWithDialog(platform_path);
+}
+#endif  // BUILDFLAG(IS_WIN)
+
 void ChromeDownloadManagerDelegate::OpenDownload(DownloadItem* download) {
   CHECK_EQ(DownloadItem::COMPLETE, download->GetState(),
            base::NotFatalUntil::M161);
@@ -1456,7 +1500,8 @@ void ChromeDownloadManagerDelegate::OpenDownload(DownloadItem* download) {
   content::OpenURLParams params =
       content::OpenURLParams::CreateBrowserInitiated(
           net::FilePathToFileURL(download->GetTargetFilePath()),
-          WindowOpenDisposition::kNewForegroundTab, ui::PAGE_TRANSITION_LINK);
+          ui::mojom::WindowOpenDisposition::kNewForegroundTab,
+          ui::PAGE_TRANSITION_LINK);
 
   if (download->GetMimeType() == "application/x-x509-user-cert") {
     chrome::ShowSettingsSubPage(browser, "certificates");

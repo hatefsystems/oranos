@@ -18,6 +18,7 @@ class Profile;
 namespace ttc {
 
 class Conversation;
+class DebugSink;
 class SessionJournal;
 
 // High-level lifecycle coordinator for a TTC session. Manages the lifetime
@@ -37,6 +38,7 @@ class SessionController {
     virtual void OnInputTranscription(const std::string& text) {}
     virtual void OnOutputTranscription(const std::string& text) {}
     virtual void OnModelAudioEnvelopeReady(const AudioEnvelope& envelope) {}
+    virtual void OnUserAudioLevelUpdate(float audio_level) {}
   };
 
   virtual ~SessionController() = default;
@@ -61,6 +63,10 @@ class SessionController {
   // The profile this session belongs to.
   virtual Profile* GetProfile() = 0;
 
+  // Instrumentation for chrome://ttc-internals. Null unless the TTC debug
+  // tools are enabled. Valid for the lifetime of this object.
+  virtual DebugSink* GetDebugSink() = 0;
+
   // The journal this session's events are recorded in.
   virtual SessionJournal& GetJournal() = 0;
 
@@ -82,14 +88,21 @@ class SessionController {
   // changes. `audio_level` is normalized to the [0, 1] range.
   virtual void UserAudioLevelUpdate(float audio_level) = 0;
 
-  // Called by Conversation to notify about model turn lifecycle and
+  // Called by `Conversation` to notify about model turn lifecycle and
   // transcripts.
   virtual void OnModelTurnStarted() = 0;
   virtual void OnModelTurnComplete() = 0;
   virtual void OnModelInterrupted() = 0;
+  // The backend streams each turn's transcription in increments: `text` is the
+  // next piece of the user's (input) or the model's (output) transcription,
+  // not the whole transcription so far.
   virtual void OnInputTranscription(const std::string& text) = 0;
   virtual void OnOutputTranscription(const std::string& text) = 0;
   virtual void OnModelAudioEnvelopeReady(const AudioEnvelope& envelope) = 0;
+
+  // Called by `Conversation` when the party currently speaking in the
+  // conversation changes.
+  virtual void OnSpeakerChanged(Speaker speaker) = 0;
 };
 
 }  // namespace ttc

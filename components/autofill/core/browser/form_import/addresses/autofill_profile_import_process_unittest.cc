@@ -674,6 +674,88 @@ TEST_F(AutofillProfileImportProcessTest, SilentlyUpdateProfile) {
               testing::UnorderedElementsAre(updated_profile));
 }
 
+// Tests that merging an observed profile with a country and contact details
+// into a country-less stored profile requires user confirmation when the
+// visible-type sets differ (e.g. empty country vs. AT). Stored profiles with a
+// country already set reject merges with conflicting countries, so differing
+// visible-type sets during import only arise when `ADDRESS_HOME_COUNTRY` is
+// empty (such as legacy country-less or `kAccountNameEmail` profiles).
+TEST_F(
+    AutofillProfileImportProcessTest,
+    MergeIntoCountrylessProfileRequiresConfirmation_DifferentVisibleTypeSets) {
+  AutofillProfile existing_profile(
+      i18n_model_definition::kLegacyHierarchyCountryCode);
+  test::SetProfileInfo(&existing_profile, test::SetProfileInfoOptionsBuilder()
+                                              .with_first_name("Max")
+                                              .with_last_name("Mustermann")
+                                              .with_address1("Hauptstrasse 5")
+                                              .with_zipcode("1010")
+                                              .with_city("Wien")
+                                              .Build());
+  address_data_manager().AddProfile(existing_profile);
+
+  AutofillProfile observed_at_profile(AddressCountryCode("AT"));
+  test::SetProfileInfo(&observed_at_profile,
+                       test::SetProfileInfoOptionsBuilder()
+                           .with_first_name("Max")
+                           .with_last_name("Mustermann")
+                           .with_address1("Hauptstrasse 5")
+                           .with_zipcode("1010")
+                           .with_city("Wien")
+                           .with_country("AT")
+                           .with_email("attacker@evil.example")
+                           .with_phone("+43 660 1234567")
+                           .with_company("Evil GmbH")
+                           .Build());
+  ASSERT_NE(existing_profile.GetUserVisibleTypes(),
+            observed_at_profile.GetUserVisibleTypes());
+
+  ProfileImportProcess at_import = CreateProfileImportProcess(
+      observed_at_profile, /*allow_only_silent_updates=*/false);
+  EXPECT_EQ(at_import.import_type(),
+            AutofillProfileImportType::kConfirmableMerge);
+  EXPECT_TRUE(at_import.requires_user_prompt());
+  EXPECT_TRUE(at_import.silently_updated_profiles().empty());
+}
+
+// Tests that merging an observed profile that only adds a country into a
+// country-less stored profile requires user confirmation even when the
+// visible-type sets match (e.g. empty country vs. GB).
+TEST_F(
+    AutofillProfileImportProcessTest,
+    MergeIntoCountrylessProfileRequiresConfirmation_MatchingVisibleTypeSets) {
+  AutofillProfile existing_profile(
+      i18n_model_definition::kLegacyHierarchyCountryCode);
+  test::SetProfileInfo(&existing_profile, test::SetProfileInfoOptionsBuilder()
+                                              .with_first_name("Max")
+                                              .with_last_name("Mustermann")
+                                              .with_address1("Hauptstrasse 5")
+                                              .with_zipcode("1010")
+                                              .with_city("Wien")
+                                              .Build());
+  address_data_manager().AddProfile(existing_profile);
+
+  AutofillProfile observed_gb_profile(AddressCountryCode("GB"));
+  test::SetProfileInfo(&observed_gb_profile,
+                       test::SetProfileInfoOptionsBuilder()
+                           .with_first_name("Max")
+                           .with_last_name("Mustermann")
+                           .with_address1("Hauptstrasse 5")
+                           .with_zipcode("1010")
+                           .with_city("Wien")
+                           .with_country("GB")
+                           .Build());
+  ASSERT_EQ(existing_profile.GetUserVisibleTypes(),
+            observed_gb_profile.GetUserVisibleTypes());
+
+  ProfileImportProcess gb_import = CreateProfileImportProcess(
+      observed_gb_profile, /*allow_only_silent_updates=*/false);
+  EXPECT_EQ(gb_import.import_type(),
+            AutofillProfileImportType::kConfirmableMerge);
+  EXPECT_TRUE(gb_import.requires_user_prompt());
+  EXPECT_TRUE(gb_import.silently_updated_profiles().empty());
+}
+
 // Tests the scenario in which an observed profile can be merged with an
 // existing profile for which updates are blocked.
 TEST_F(AutofillProfileImportProcessTest, BlockedMerge) {
@@ -1550,6 +1632,91 @@ TEST_F(AutofillProfileImportProcessTest,
 
   histogram_tester.ExpectTotalCount(
       "Autofill.ProfileImport.SilentUpdateFieldMergeCategoryBitmask", 0);
+}
+
+// Tests that when an observed profile differs from an existing profile only in
+// whitespace/formatting that is normalized away by `GetEnvelopeStyleAddress()`,
+// the import is classified as a silent update rather than a confirmable merge
+// (which would show an empty update prompt).
+TEST_F(AutofillProfileImportProcessTest,
+       WhitespaceOnlyAddressDifferenceIsSilentlyUpdated) {
+  AutofillProfile existing_profile = test::StandardProfile();
+  address_data_manager().AddProfile(existing_profile);
+
+  AutofillProfile observed_profile = test::StandardProfile();
+  observed_profile.SetRawInfoWithVerificationStatus(
+      ADDRESS_HOME_STREET_ADDRESS, u"123  Mainstreet",
+      VerificationStatus::kObserved);
+  observed_profile.usage_history().set_use_date(base::Time::Now() +
+                                                base::Days(1));
+  observed_profile.FinalizeAfterImport();
+
+  // With the kill switch disabled, the raw string discrepancy causes a
+  // confirmable merge despite having no UI-visible differences.
+  {
+    base::test::ScopedFeatureList feature_list;
+    feature_list.InitAndDisableFeature(
+        features::kAutofillGuardEmptyUpdatePrompts);
+    ProfileImportProcess import_data = CreateProfileImportProcess(
+        observed_profile, /*allow_only_silent_updates=*/false);
+    EXPECT_EQ(import_data.import_type(),
+              AutofillProfileImportType::kConfirmableMerge);
+  }
+
+  // With `kAutofillGuardEmptyUpdatePrompts` enabled (default), the import is
+  // classified as a silent update.
+  ProfileImportProcess import_data = CreateProfileImportProcess(
+      observed_profile, /*allow_only_silent_updates=*/false);
+  EXPECT_EQ(import_data.import_type(),
+            AutofillProfileImportType::kSilentUpdate);
+  EXPECT_FALSE(import_data.merge_candidate().has_value());
+  EXPECT_EQ(import_data.silently_updated_profiles().size(), 1u);
+
+  import_data.AcceptWithoutPrompt();
+  EXPECT_TRUE(import_data.ProfilesChanged());
+
+  AutofillProfile expected_profile = observed_profile;
+  test::CopyGUID(existing_profile, &expected_profile);
+  EXPECT_THAT(ApplyImportAndGetProfiles(import_data),
+              testing::UnorderedElementsAre(expected_profile));
+}
+
+// Tests that a whitespace-only address difference on a `kAccountHome` profile
+// is treated as a silent update in place rather than `kHomeAndWorkSuperset`
+// (which would replace and remove the `kAccountHome` profile).
+TEST_F(AutofillProfileImportProcessTest,
+       WhitespaceOnlyAddressDifferenceOnHomeProfileIsSilentlyUpdated) {
+  address_data_manager().SetIsEligibleForAddressAccountStorage(true);
+
+  AutofillProfile home_profile = test::StandardProfile();
+  test_api(home_profile)
+      .set_record_type(AutofillProfile::RecordType::kAccountHome);
+  address_data_manager().AddProfile(home_profile);
+
+  AutofillProfile observed_profile = test::StandardProfile();
+  observed_profile.SetRawInfoWithVerificationStatus(
+      ADDRESS_HOME_STREET_ADDRESS, u"123  Mainstreet",
+      VerificationStatus::kObserved);
+  observed_profile.usage_history().set_use_date(base::Time::Now() +
+                                                base::Days(1));
+  observed_profile.FinalizeAfterImport();
+
+  ProfileImportProcess import_data = CreateProfileImportProcess(
+      observed_profile, /*allow_only_silent_updates=*/false);
+  EXPECT_EQ(import_data.import_type(),
+            AutofillProfileImportType::kSilentUpdate);
+  EXPECT_FALSE(import_data.merge_candidate().has_value());
+
+  import_data.AcceptWithoutPrompt();
+  EXPECT_TRUE(import_data.ProfilesChanged());
+
+  AutofillProfile expected_profile = observed_profile;
+  test::CopyGUID(home_profile, &expected_profile);
+  test_api(expected_profile)
+      .set_record_type(AutofillProfile::RecordType::kAccountHome);
+  EXPECT_THAT(
+      ApplyImportAndGetProfiles(import_data),
+      testing::UnorderedPointwise(CompareWithRecordType(), {expected_profile}));
 }
 
 }  // namespace

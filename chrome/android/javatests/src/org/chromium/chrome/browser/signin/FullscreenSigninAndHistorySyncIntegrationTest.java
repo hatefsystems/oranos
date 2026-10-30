@@ -52,9 +52,9 @@ import org.mockito.quality.Strictness;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseActivityTestRule;
 import org.chromium.base.test.util.ApplicationTestUtils;
+import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisableIf;
-import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.DisableFeatures;
@@ -86,6 +86,7 @@ import org.chromium.components.policy.test.annotations.Policies.Item;
 import org.chromium.components.signin.SigninFeatures;
 import org.chromium.components.signin.metrics.AccountConsistencyPromoAction;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
+import org.chromium.components.signin.metrics.SigninFunnelEvent;
 import org.chromium.components.signin.test.util.TestAccounts;
 import org.chromium.components.sync.DataType;
 import org.chromium.components.sync.SyncService;
@@ -101,7 +102,7 @@ import org.chromium.ui.test.util.ViewUtils;
 
 /** Integration tests for the re-FRE. */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@DoNotBatch(reason = "This test relies on native initialization")
+@Batch(Batch.PER_CLASS)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @Restriction({GmsCoreVersionRestriction.RESTRICTION_TYPE_VERSION_GE_20W02})
 public class FullscreenSigninAndHistorySyncIntegrationTest {
@@ -111,12 +112,12 @@ public class FullscreenSigninAndHistorySyncIntegrationTest {
     @Rule
     public final RenderTestRule mRenderTestRule =
             RenderTestRule.Builder.withPublicCorpus()
-                    .setRevision(1)
+                    .setRevision(2)
                     .setBugComponent(RenderTestRule.Component.SERVICES_SIGN_IN)
                     .build();
 
     @Rule(order = 0)
-    public final SigninTestRule mSigninTestRule = new SigninTestRule();
+    public final SigninTestRule mSigninTestRule = SigninTestRule.createWithCleanups();
 
     @Rule(order = 1)
     public final BaseActivityTestRule<BlankUiTestActivity> mBlankUiActivityTestRule =
@@ -209,6 +210,156 @@ public class FullscreenSigninAndHistorySyncIntegrationTest {
         ApplicationTestUtils.waitForActivityState(mActivity, Stage.DESTROYED);
         assertNull(mSigninTestRule.getPrimaryAccount());
         assertFalse(SyncTestUtil.isHistorySyncEnabled());
+    }
+
+    @Test
+    @MediumTest
+    public void testSigninFunnelHistogram_promoShownWithAccount() {
+        HistogramWatcher signinFunnelWatcher =
+                HistogramWatcher.newSingleRecordWatcher(
+                        "Signin.SigninFunnel.FullscreenSigninPromo",
+                        SigninFunnelEvent.PROMO_SHOWN_WITH_ACCOUNT);
+
+        launchActivity();
+
+        // Verify that the fullscreen sign-in promo is shown.
+        onView(withId(R.id.fullscreen_signin)).check(matches(isDisplayed()));
+        signinFunnelWatcher.assertExpected();
+    }
+
+    @Test
+    @MediumTest
+    public void testSigninFunnelHistogram_nonDefaultAccountSelected() {
+        mSigninTestRule.addAccount(TestAccounts.ACCOUNT2);
+        HistogramWatcher signinFunnelWatcher =
+                HistogramWatcher.newBuilder()
+                        .expectIntRecords(
+                                "Signin.SigninFunnel.FullscreenSigninPromo",
+                                SigninFunnelEvent.PROMO_SHOWN_WITH_ACCOUNT,
+                                SigninFunnelEvent.CHOOSE_OTHER_ACCOUNT_CLICKED,
+                                SigninFunnelEvent.ACCOUNT_PICKER_SHOWN,
+                                SigninFunnelEvent.NON_DEFAULT_ACCOUNT_SELECTED)
+                        .build();
+
+        launchActivity();
+
+        // Open the account picker and select the non-default account.
+        onViewWaiting(withText(TestAccounts.AADC_ADULT_ACCOUNT.getFullName())).perform(click());
+        onViewWaiting(withText(TestAccounts.ACCOUNT2.getFullName())).perform(click());
+
+        // Verify that the fullscreen sign-in promo is shown with the newly selected account.
+        onViewWaiting(withText(TestAccounts.ACCOUNT2.getFullName())).check(matches(isDisplayed()));
+        signinFunnelWatcher.assertExpected();
+    }
+
+    @Test
+    @MediumTest
+    public void testSigninFunnelHistogram_defaultAccountSelected() {
+        mSigninTestRule.addAccount(TestAccounts.ACCOUNT2);
+        HistogramWatcher signinFunnelWatcher =
+                HistogramWatcher.newBuilder()
+                        .expectIntRecords(
+                                "Signin.SigninFunnel.FullscreenSigninPromo",
+                                SigninFunnelEvent.PROMO_SHOWN_WITH_ACCOUNT,
+                                SigninFunnelEvent.CHOOSE_OTHER_ACCOUNT_CLICKED,
+                                SigninFunnelEvent.ACCOUNT_PICKER_SHOWN,
+                                SigninFunnelEvent.DEFAULT_ACCOUNT_SELECTED)
+                        .build();
+
+        launchActivity();
+
+        // Open the account picker and re-select the default account.
+        onViewWaiting(withText(TestAccounts.AADC_ADULT_ACCOUNT.getFullName())).perform(click());
+        onViewWaiting(withText(TestAccounts.AADC_ADULT_ACCOUNT.getFullName())).perform(click());
+
+        // Verify that the fullscreen sign-in promo is shown with the default account.
+        onViewWaiting(withText(TestAccounts.AADC_ADULT_ACCOUNT.getFullName()))
+                .check(matches(isDisplayed()));
+        signinFunnelWatcher.assertExpected();
+    }
+
+    @Test
+    @MediumTest
+    public void testSigninFunnelHistogram_accountPickerDismissed() {
+        HistogramWatcher signinFunnelWatcher =
+                HistogramWatcher.newBuilder()
+                        .expectIntRecords(
+                                "Signin.SigninFunnel.FullscreenSigninPromo",
+                                SigninFunnelEvent.PROMO_SHOWN_WITH_ACCOUNT,
+                                SigninFunnelEvent.CHOOSE_OTHER_ACCOUNT_CLICKED,
+                                SigninFunnelEvent.ACCOUNT_PICKER_SHOWN,
+                                SigninFunnelEvent.ACCOUNT_PICKER_DISMISSED)
+                        .build();
+
+        launchActivity();
+
+        // Open the account picker and dismiss it.
+        onViewWaiting(withText(TestAccounts.AADC_ADULT_ACCOUNT.getFullName())).perform(click());
+        onView(withText(R.string.signin_add_account_to_device)).check(matches(isDisplayed()));
+        Espresso.pressBack();
+
+        signinFunnelWatcher.assertExpected();
+    }
+
+    @Test
+    @MediumTest
+    // TODO(crbug.com/579453374): Fails on Desktop form factor.
+    @DisableIf.Device(DeviceFormFactor.DESKTOP_FREEFORM)
+    public void testSigninFunnelHistogram_addAccountClicked_noAccount() {
+        mSigninTestRule.removeAccount(TestAccounts.AADC_ADULT_ACCOUNT.getId());
+        HistogramWatcher signinFunnelWatcher =
+                HistogramWatcher.newBuilder()
+                        .expectIntRecords(
+                                "Signin.SigninFunnel.FullscreenSigninPromo",
+                                SigninFunnelEvent.PROMO_SHOWN_NO_ACCOUNT,
+                                SigninFunnelEvent.ADD_ACCOUNT_CLICKED,
+                                SigninFunnelEvent.ACCOUNT_ADDED)
+                        .build();
+
+        launchActivity();
+
+        // Without an account, the continue button starts the add account flow.
+        onView(withId(R.id.fullscreen_signin)).check(matches(isDisplayed()));
+        mSigninTestRule.setAddAccountFlowResult(TestAccounts.ACCOUNT2);
+        onView(withId(R.id.signin_fre_continue_button)).perform(scrollTo(), click());
+        onViewWaiting(SigninTestRule.ADD_ACCOUNT_BUTTON_MATCHER).perform(click());
+
+        // Verify that the fullscreen sign-in promo is shown with the newly added account.
+        onViewWaiting(withText(TestAccounts.ACCOUNT2.getFullName())).check(matches(isDisplayed()));
+        signinFunnelWatcher.assertExpected();
+    }
+
+    @Test
+    @MediumTest
+    @DisableFeatures(SigninFeatures.SUPPORT_FORCED_SIGNIN_POLICY)
+    @DisableIf.Device(DeviceFormFactor.DESKTOP_FREEFORM) // crbug.com/511288677
+    public void testSigninFunnelHistogram_promoShownRecordedAgainOnBackFromHistorySync() {
+        when(mHistorySyncHelperMock.shouldDisplayHistorySync()).thenReturn(true);
+        HistogramWatcher signinFunnelWatcher =
+                HistogramWatcher.newBuilder()
+                        .expectIntRecord(
+                                "Signin.SigninFunnel.FullscreenSigninPromo",
+                                SigninFunnelEvent.SIGNIN_BUTTON_CLICKED)
+                        .expectIntRecordTimes(
+                                "Signin.SigninFunnel.FullscreenSigninPromo",
+                                SigninFunnelEvent.PROMO_SHOWN_WITH_ACCOUNT,
+                                /* times= */ 2)
+                        .build();
+
+        launchActivity();
+
+        // Sign in from the fullscreen sign-in promo.
+        onView(withId(R.id.fullscreen_signin)).check(matches(isDisplayed()));
+        onView(withId(R.id.signin_fre_continue_button)).perform(scrollTo(), click());
+        SigninTestUtil.completeDeviceLockIfOnAutomotive(mDeviceLockActivityLauncher);
+        mSigninTestRule.waitForSignin(TestAccounts.AADC_ADULT_ACCOUNT);
+
+        // Go back from the history sync screen to the fullscreen sign-in promo.
+        onView(withId(R.id.history_sync)).check(matches(isDisplayed()));
+        Espresso.pressBack();
+        onView(withId(R.id.fullscreen_signin)).check(matches(isDisplayed()));
+
+        signinFunnelWatcher.assertExpected();
     }
 
     @Test
@@ -379,7 +530,7 @@ public class FullscreenSigninAndHistorySyncIntegrationTest {
     public void testHistorySyncSuppressed_historySyncRequired() {
         when(mHistorySyncHelperMock.shouldDisplayHistorySync()).thenReturn(false);
         mHistoryOptInMode = HistorySyncConfig.OptInMode.REQUIRED;
-        mSigninAccessPoint = SigninAccessPoint.RECENT_TABS;
+        mSigninAccessPoint = SigninAccessPoint.DEEP_LINK_DEFAULT;
 
         launchActivity();
 
@@ -587,6 +738,16 @@ public class FullscreenSigninAndHistorySyncIntegrationTest {
     // TODO(crbug.com/557319722): Fails on Desktop form factor.
     @DisableIf.Device(DeviceFormFactor.DESKTOP_FREEFORM)
     public void testAddAccount() {
+        HistogramWatcher signinFunnelWatcher =
+                HistogramWatcher.newBuilder()
+                        .expectIntRecords(
+                                "Signin.SigninFunnel.FullscreenSigninPromo",
+                                SigninFunnelEvent.PROMO_SHOWN_WITH_ACCOUNT,
+                                SigninFunnelEvent.CHOOSE_OTHER_ACCOUNT_CLICKED,
+                                SigninFunnelEvent.ACCOUNT_PICKER_SHOWN,
+                                SigninFunnelEvent.ACCOUNT_PICKER_ADD_ACCOUNT_CLICKED,
+                                SigninFunnelEvent.ACCOUNT_ADDED)
+                        .build();
         launchActivity();
 
         // Verify that the fullscreen sign-in promo is shown with the default account.
@@ -603,6 +764,7 @@ public class FullscreenSigninAndHistorySyncIntegrationTest {
         // Verify that the fullscreen sign-in promo is shown with the newly added account.
         onViewWaiting(withId(R.id.fullscreen_signin)).check(matches(isDisplayed()));
         onViewWaiting(withText(TestAccounts.ACCOUNT2.getFullName())).check(matches(isDisplayed()));
+        signinFunnelWatcher.assertExpected();
     }
 
     @Test
@@ -1019,7 +1181,7 @@ public class FullscreenSigninAndHistorySyncIntegrationTest {
     @MediumTest
     @EnableFeatures(SigninFeatures.ENABLE_ACCOUNT_PREVIEW_PREFERRED_ACCOUNT)
     public void testFullscreenSigninWithPreferredAccount_otherAccessPoint_defaultSubtitle() {
-        mSigninAccessPoint = SigninAccessPoint.POST_DEVICE_RESTORE_SIGNIN_PROMO;
+        mSigninAccessPoint = SigninAccessPoint.COLLABORATION_JOIN_TAB_GROUP;
         mSigninTestRule.addAccount(TestAccounts.ACCOUNT2);
         AccountPreviewPreference preference =
                 new AccountPreviewPreference(

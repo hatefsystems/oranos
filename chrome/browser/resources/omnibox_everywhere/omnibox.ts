@@ -16,6 +16,7 @@ import {HelpBubbleMixinLit} from '//resources/cr_components/help_bubble/help_bub
 import {ComposeboxContextAddedMethod, GlowAnimationState} from '//resources/cr_components/search/constants.js';
 import {DragAndDropHandler} from '//resources/cr_components/search/drag_drop_handler.js';
 import type {DragAndDropHost} from '//resources/cr_components/search/drag_drop_host.js';
+import {PlaceholderTextCycler} from '//resources/cr_components/searchbox/placeholder_text_cycler.js';
 import {SearchboxBrowserProxy} from '//resources/cr_components/searchbox/searchbox_browser_proxy.js';
 import type {ComposeClickEventDetail} from '//resources/cr_components/searchbox/searchbox_compose_button.js';
 import type {SearchboxDropdownElement} from '//resources/cr_components/searchbox/searchbox_dropdown.js';
@@ -39,6 +40,12 @@ import {getCss} from './omnibox.css.js';
 import {getHtml} from './omnibox.html.js';
 import type {OmniboxEverywhereProfileIconElement} from './profile_icon.js';
 
+
+// Default hold and cross-fade durations for rotating placeholder hints,
+// matching `NTPComposeboxConfig_PlaceholderConfig` defaults (4000ms hold, 250ms
+// fade).
+const DEFAULT_PLACEHOLDER_CHANGE_INTERVAL_MS = 4000;
+const DEFAULT_PLACEHOLDER_FADE_DURATION_MS = 250;
 
 export interface OmniboxEverywhereOmniboxElement {
   $: {
@@ -214,6 +221,11 @@ export class OmniboxEverywhereOmniboxElement extends
   private inputStateListenerId_: number|null = null;
   private aimPopupEligibilityListenerId_: number|null = null;
   private screenshotMenuClosedListenerId_: number|null = null;
+  private placeholderCycler_: PlaceholderTextCycler|null = null;
+  private currentCyclerTextsKey_: string = '';
+  private currentCyclerInputEl_: HTMLInputElement|HTMLTextAreaElement|null =
+      null;
+  private isPlaceholderCycling_: boolean = false;
 
   constructor() {
     super();
@@ -291,6 +303,24 @@ export class OmniboxEverywhereOmniboxElement extends
       this.callbackRouter_.removeListener(this.screenshotMenuClosedListenerId_);
       this.screenshotMenuClosedListenerId_ = null;
     }
+    this.placeholderCycler_?.stop();
+    this.isPlaceholderCycling_ = false;
+    this.removeAttribute('has-expanded');
+  }
+
+  override willUpdate(changedProperties: PropertyValues<this>) {
+    super.willUpdate(changedProperties);
+    // `has-expanded` marks that the omnibox has been expanded at least once in
+    // the current session so collapsing back to `!dropdownIsVisible &&
+    // !hasUserInput_` plays the collapse animation on `#bottomControls`
+    // (whereas initial mount does not). `willUpdate()` re-applies
+    // `has-expanded` on every subsequent expansion after it is cleared by
+    // voice search or `onBottomControlsAnimationEnd_()`.
+    if (this.inVoiceSearchMode) {
+      this.removeAttribute('has-expanded');
+    } else if (this.dropdownIsVisible || this.hasUserInput_) {
+      this.toggleAttribute('has-expanded', true);
+    }
   }
 
   override firstUpdated(changedProperties: PropertyValues<this>) {
@@ -308,6 +338,11 @@ export class OmniboxEverywhereOmniboxElement extends
             },
           });
     }
+  }
+
+  override updated(changedProperties: PropertyValues<this>) {
+    super.updated(changedProperties);
+    this.updatePlaceholderCycler_();
   }
 
   focusInput() {
@@ -471,6 +506,79 @@ export class OmniboxEverywhereOmniboxElement extends
     return this.i18n('searchBoxHint');
   }
 
+  protected onSearchboxInputEmptyChanged_(e: CustomEvent<{value: boolean}>) {
+    // `SearchboxMixin` clears `<cr-searchbox-input>` directly via
+    // `getInputElement().setInput({text: '', inline: ''})` on `Escape` and
+    // `focusout` without firing `searchbox-input-text-updated`. Reset
+    // `hasUserInput_` whenever the input becomes empty so the omnibox does not
+    // stay stuck in the 2-line expanded `[has-user-input]` state.
+    if (e.detail.value) {
+      this.hasUserInput_ = false;
+    }
+  }
+
+  private computeCyclingPlaceholderTexts_(): string[] {
+    if (this.placeholderText || !this.isFuseboxEnabled) {
+      return [];
+    }
+    const texts: string[] = [this.i18n('searchBoxHintAskOrType')];
+    if (this.showLensSearchButton_()) {
+      texts.push(this.i18n('searchBoxHintLens'));
+    }
+    texts.push(this.i18n('searchBoxHintFileOrImage'));
+    if (this.canAddFileContext_()) {
+      texts.push(this.i18n('searchBoxHintDragAndDrop'));
+    }
+    return texts.filter(Boolean);
+  }
+
+  private updatePlaceholderCycler_() {
+    const inputEl =
+        this.$.input?.shadowRoot
+            ?.querySelector<HTMLInputElement|HTMLTextAreaElement>('#input') ??
+        null;
+    if (!inputEl) {
+      this.$.input?.updateComplete.then(() => {
+        if (this.isConnected) {
+          this.updatePlaceholderCycler_();
+        }
+      });
+      return;
+    }
+
+    const texts = this.computeCyclingPlaceholderTexts_();
+    const shouldCycle = texts.length > 1 && this.isActive &&
+        !this.hasUserInput_ && !this.inKeywordMode && !this.inVoiceSearchMode;
+
+    if (!shouldCycle) {
+      if (this.isPlaceholderCycling_) {
+        this.placeholderCycler_?.stop();
+        this.isPlaceholderCycling_ = false;
+      }
+      inputEl.placeholder = this.inKeywordMode ?
+          (this.inputKeywordModel?.placeholder || '') :
+          this.computePlaceholderText_();
+      return;
+    }
+
+    const textsKey = texts.join('\n');
+    if (!this.placeholderCycler_ || this.currentCyclerTextsKey_ !== textsKey ||
+        this.currentCyclerInputEl_ !== inputEl) {
+      this.placeholderCycler_?.stop();
+      this.placeholderCycler_ = new PlaceholderTextCycler(
+          inputEl, texts, DEFAULT_PLACEHOLDER_CHANGE_INTERVAL_MS,
+          DEFAULT_PLACEHOLDER_FADE_DURATION_MS);
+      this.currentCyclerTextsKey_ = textsKey;
+      this.currentCyclerInputEl_ = inputEl;
+      this.isPlaceholderCycling_ = false;
+    }
+
+    if (!this.isPlaceholderCycling_) {
+      this.isPlaceholderCycling_ = true;
+      this.placeholderCycler_.start();
+    }
+  }
+
   protected onSearchboxInputTextUpdated_(
       e: CustomEvent<{value: string, isComposing: boolean}>) {
     this.hasUserInput_ = !!e.detail.value.trim();
@@ -511,6 +619,7 @@ export class OmniboxEverywhereOmniboxElement extends
         'kOmniboxEverywhereLensButtonElementId');
     this.hideHelpBubble('kOmniboxEverywhereLensButtonElementId');
     this.isScreenshotMenuOpen = true;
+    this.finishAnimations_();
     const anchor = e.currentTarget as HTMLElement;
     const rect = anchor.getBoundingClientRect();
     this.pageHandler_.showScreenshotMenu({
@@ -535,6 +644,29 @@ export class OmniboxEverywhereOmniboxElement extends
   // Mode is available and policy allows sharing context with search.
   protected canAddFileContext_(): boolean {
     return this.fileContextEnabled_ && this.isFuseboxEnabled;
+  }
+
+  protected onInputWrapperDragover_(e: DragEvent) {
+    this.dragAndDropHandler.handleDragOver(e);
+    // Keep calling preventDefault() via `handleDragOver` so Blink treats the
+    // drag as handled by the page (instead of navigating the WebContents on
+    // drop), and set `dropEffect = 'none'` when file context cannot be added so
+    // the OS shows the no-drop cursor instead of the copy (+) cursor.
+    if (!this.canAddFileContext_() && e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'none';
+    }
+  }
+
+  // The drag-and-drop handler stays enabled when AI Mode is unavailable, so it
+  // keeps calling preventDefault() on drops and a drop can't navigate this
+  // WebContents to the file. Hide its glow in that case, since the drop does
+  // nothing.
+  protected computeGlowAnimationState_(): GlowAnimationState {
+    if (this.animationState === GlowAnimationState.DRAGGING &&
+        !this.canAddFileContext_()) {
+      return GlowAnimationState.NONE;
+    }
+    return this.animationState;
   }
 
   protected processFiles_(
@@ -601,6 +733,7 @@ export class OmniboxEverywhereOmniboxElement extends
   }>) {
     this.pageHandler().activateMetricsFunnel('PlusButton');
     this.isContextMenuOpen = true;
+    this.finishAnimations_();
     // `anchorRect` is in WebUI viewport coordinates (CSS DIPs). Forward the
     // full bounding box so C++ can translate it to screen coordinates and
     // position the native context menu.
@@ -615,6 +748,24 @@ export class OmniboxEverywhereOmniboxElement extends
             height: Math.round(rect.height),
           });
     }
+  }
+
+  // `#bottomControls` animates on both expand (`loomniboxBottomControlsExpand`)
+  // and collapse (`loomniboxTopControlsEnter`). Clear `has-expanded` only when
+  // the collapse animation finishes (`!dropdownIsVisible && !hasUserInput_`) so
+  // the 1-line pill is back at rest until the next expansion.
+  protected onBottomControlsAnimationEnd_(e: AnimationEvent) {
+    if (e.target === e.currentTarget &&
+        e.animationName === 'loomniboxTopControlsEnter' &&
+        !this.dropdownIsVisible && !this.hasUserInput_) {
+      this.removeAttribute('has-expanded');
+    }
+  }
+
+  // Fast-forwards active shadow root animations so native menu anchor rects are
+  // sampled at their final resting positions.
+  private finishAnimations_() {
+    this.shadowRoot?.getAnimations().forEach(a => a.finish());
   }
 
   onContextMenuClosed() {

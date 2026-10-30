@@ -86,7 +86,7 @@ public class OmniboxFeatures {
     public static final CachedFlag sPrefetchSelectedSuggestionsOmtAndroid =
             newFlag(
                     OmniboxFeatureList.OMNIBOX_PREFETCH_SELECTED_SUGGESTIONS_OMT_ANDROID,
-                    FeatureState.DISABLED_IN_PROD);
+                    FeatureState.ENABLED_IN_TEST);
 
     public static final CachedFlag sOmniboxSearchPrefetchOnEnterKeyDown =
             newFlag(
@@ -100,6 +100,11 @@ public class OmniboxFeatures {
 
     public static final CachedFlag sUrlBarWithoutLigatures =
             newFlag(OmniboxFeatureList.URL_BAR_WITHOUT_LIGATURES, FeatureState.ENABLED_IN_PROD);
+
+    public static final CachedFlag sUrlBarNoHandwritingBoundsAbove =
+            newFlag(
+                    OmniboxFeatureList.URL_BAR_NO_HANDWRITING_BOUNDS_ABOVE,
+                    FeatureState.ENABLED_IN_PROD);
 
     public static final CachedFlag sXGeoFailClosedOnPreciseLeak =
             newFlag(
@@ -116,6 +121,9 @@ public class OmniboxFeatures {
             newFlag(
                     OmniboxFeatureList.OMNIBOX_FUSEBOX_ASYNC_INFLATION,
                     FeatureState.ENABLED_IN_TEST);
+
+    public static final CachedFlag sEarlyInflation =
+            newFlag(OmniboxFeatureList.OMNIBOX_EARLY_INFLATION, FeatureState.DISABLED_IN_PROD);
 
     public static final CachedFlag sOmniboxAimImageDownscaling =
             newFlag(OmniboxFeatureList.OMNIBOX_AIM_IMAGE_DOWNSCALING, FeatureState.ENABLED_IN_PROD);
@@ -136,6 +144,13 @@ public class OmniboxFeatures {
 
     public static final CachedFlag sStarterPackExpansion =
             newFlag(OmniboxFeatureList.STARTER_PACK_EXPANSION, FeatureState.ENABLED_IN_PROD);
+
+    /**
+     * Opens AI Mode queries submitted from the Omnibox while on a web page in a new tab, instead of
+     * navigating away from the current page.
+     */
+    private static final CachedFlag sOmniboxAimOpenInNewTab =
+            newFlag(OmniboxFeatureList.OMNIBOX_AIM_OPEN_IN_NEW_TAB, FeatureState.DISABLED_IN_PROD);
 
     public static final CachedFlag sOmniboxSessionlessVoiceSearch =
             newFlag(
@@ -269,6 +284,15 @@ public class OmniboxFeatures {
     public static final CachedFlag sResetSuggestionsScroll =
             newFlag(OmniboxFeatureList.RESET_SUGGESTIONS_SCROLL, FeatureState.DISABLED_IN_PROD);
 
+    /**
+     * Starts the typed-text autocomplete request right after the next frame is drawn rather than
+     * after a fixed delay. See b/578525544.
+     */
+    private static final CachedFlag sOmniboxPostFrameAutocompleteStart =
+            newFlag(
+                    OmniboxFeatureList.OMNIBOX_POST_FRAME_AUTOCOMPLETE_START,
+                    FeatureState.ENABLED_IN_TEST);
+
     public static final CachedFlag sOmniboxDisableTabsForCanvas =
             newFlag(
                     OmniboxFeatureList.OMNIBOX_DISABLE_TABS_FOR_CANVAS,
@@ -279,6 +303,13 @@ public class OmniboxFeatures {
             newFlag(
                     OmniboxFeatureList.ANDROID_TAB_SEARCH_CLOSE_TAB_BUTTON,
                     FeatureState.DISABLED_IN_PROD);
+
+    /**
+     * Delegates Omnibox, New Tab Page and toolbar mic voice capture and transcription to the Google
+     * app Voice Plate.
+     */
+    public static final CachedFlag sOmniboxVoicePlateIntent =
+            newFlag(OmniboxFeatureList.OMNIBOX_VOICE_PLATE_INTENT, FeatureState.DISABLED_IN_PROD);
 
     public static final IntCachedFeatureParam sTouchDownTriggerMaxPrefetchesPerSession =
             newIntParam(
@@ -392,6 +423,11 @@ public class OmniboxFeatures {
         return sAim3pEntrypoint.isEnabled();
     }
 
+    /** Returns whether AI Mode queries submitted from a web page should open in a new tab. */
+    public static boolean isAimOpenInNewTabEnabled() {
+        return sOmniboxAimOpenInNewTab.isEnabled();
+    }
+
     private static @Nullable Boolean sDebounceKeyboardVisibilityForTesting;
 
     /** Returns whether keyboard visibility transitions should be debounced. */
@@ -414,6 +450,14 @@ public class OmniboxFeatures {
      */
     public static boolean isZeroSuggestPrefetchOnPageLoadAndTabSwitchEnabled() {
         return sZeroSuggestPrefetchOnPageLoadAndTabSwitch.isEnabled();
+    }
+
+    /**
+     * Returns whether the typed-text autocomplete request should be started right after the next
+     * frame is drawn, rather than after a fixed delay.
+     */
+    public static boolean isPostFrameAutocompleteStartEnabled() {
+        return sOmniboxPostFrameAutocompleteStart.isEnabled();
     }
 
     /**

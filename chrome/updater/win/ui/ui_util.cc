@@ -14,23 +14,68 @@
 #include <cmath>
 #include <cstdlib>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "base/check.h"
+#include "base/check_op.h"
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_gdi_object.h"
 #include "base/win/scoped_hdc.h"
+#include "chrome/updater/app/app_install_progress.h"
+#include "chrome/updater/app/app_install_util_win.h"
 #include "chrome/updater/util/win_util.h"
 #include "chrome/updater/win/ui/l10n_util.h"
 #include "chrome/updater/win/ui/resources/updater_installer_strings.h"
 
 namespace updater::ui {
+
+CompletionCodes GetBundleCompletionCode(const ObserverCompletionInfo& info) {
+  if (info.completion_code == CompletionCodes::COMPLETION_CODE_ERROR ||
+      info.completion_code ==
+          CompletionCodes::COMPLETION_CODE_INSTALL_FINISHED_BEFORE_CANCEL) {
+    return info.completion_code;
+  }
+
+  CHECK_EQ(info.completion_code, CompletionCodes::COMPLETION_CODE_SUCCESS);
+
+  return info.apps_info.empty()
+             ? kCompletionCodesActionPriority[0]
+             : std::ranges::max_element(
+                   info.apps_info,
+                   [](const auto& app_info1, const auto& app_info2) {
+                     return GetPriority(app_info1.completion_code) <
+                            GetPriority(app_info2.completion_code);
+                   })
+                   ->completion_code;
+}
+
+std::wstring GetBundleCompletionErrorMessages(
+    const ObserverCompletionInfo& info) {
+  // Combine non-empty app installation completion messages. App-specific
+  // installation error message usually gives more details than the generic one.
+  std::vector<std::u16string> completion_texts;
+  for (const AppCompletionInfo& app_info : info.apps_info) {
+    if (!app_info.completion_message.empty()) {
+      completion_texts.push_back(app_info.completion_message);
+    }
+  }
+
+  // Or fallback to the default bundle failure message if nothing is available.
+  if (completion_texts.empty() && !info.completion_text.empty()) {
+    completion_texts.push_back(info.completion_text);
+  }
+
+  return base::UTF16ToWide(base::JoinString(completion_texts, u"\n"));
+}
 
 namespace {
 
@@ -816,16 +861,78 @@ SIZE GetBaseLogoDimensions(int target_w, int target_h) {
   };
 }
 
+namespace {
+
+template <typename T>
+T GetUser32Proc(const char* proc_name) {
+  // Resolve from the already-loaded `user32.dll` via `GetModuleHandleW` rather
+  // than `base::win::GetUser32FunctionPointer()`, because `PinSystemLibrary()`
+  // asserts `ScopedBlockingCall(MAY_BLOCK)` and UI task runners (such as
+  // `CreateSplashScreen()`) disallow blocking.
+  return reinterpret_cast<T>(
+      ::GetProcAddress(::GetModuleHandleW(L"user32.dll"), proc_name));
+}
+
+UINT GetSystemDpi() {
+  // `LOGPIXELSX` depends on the process DPI awareness, so caching it in a
+  // function-local static assumes the first call happens after process DPI
+  // awareness has been initialized (e.g. `base::win::EnableHighDPISupport()`).
+  static const UINT system_dpi = [] {
+    if (const HDC screen_dc = ::GetDC(nullptr)) {
+      const int dpi_x = ::GetDeviceCaps(screen_dc, LOGPIXELSX);
+      ::ReleaseDC(nullptr, screen_dc);
+      if (dpi_x > 0) {
+        return static_cast<UINT>(dpi_x);
+      }
+    }
+    return static_cast<UINT>(USER_DEFAULT_SCREEN_DPI);
+  }();
+  return system_dpi;
+}
+
+}  // namespace
+
+UINT GetWindowDpi(HWND hwnd) {
+  static const auto get_dpi_for_window =
+      GetUser32Proc<decltype(&::GetDpiForWindow)>("GetDpiForWindow");
+  if (get_dpi_for_window && hwnd) {
+    if (const UINT dpi = get_dpi_for_window(hwnd)) {
+      return dpi;
+    }
+  }
+  // Prior to Windows 10 1607 (e.g. 10.0.10240, where `GetDpiForWindow` is
+  // unavailable) or when `hwnd` is invalid, fall back to the primary monitor's
+  // system DPI (`LOGPIXELSX`) rather than per-monitor DPI
+  // (`shcore.dll!GetDpiForMonitor`).
+  return GetSystemDpi();
+}
+
+int ScaleSystemMetricForDpi(int value, UINT dpi, UINT system_dpi) {
+  return ::MulDiv(
+      value, static_cast<int>(dpi),
+      system_dpi ? static_cast<int>(system_dpi) : USER_DEFAULT_SCREEN_DPI);
+}
+
+int GetSystemMetricsForDpiCompat(int index, UINT dpi) {
+  if (!dpi) {
+    return ::GetSystemMetrics(index);
+  }
+  static const auto get_system_metrics_for_dpi =
+      GetUser32Proc<decltype(&::GetSystemMetricsForDpi)>(
+          "GetSystemMetricsForDpi");
+  if (get_system_metrics_for_dpi) {
+    return get_system_metrics_for_dpi(index, dpi);
+  }
+  return ScaleSystemMetricForDpi(::GetSystemMetrics(index), dpi,
+                                 GetSystemDpi());
+}
+
 IconSizes GetIconSizesForDpi(UINT dpi) {
   return {
-      .cx_big = dpi ? ::GetSystemMetricsForDpi(SM_CXICON, dpi)
-                    : ::GetSystemMetrics(SM_CXICON),
-      .cy_big = dpi ? ::GetSystemMetricsForDpi(SM_CYICON, dpi)
-                    : ::GetSystemMetrics(SM_CYICON),
-      .cx_small = dpi ? ::GetSystemMetricsForDpi(SM_CXSMICON, dpi)
-                      : ::GetSystemMetrics(SM_CXSMICON),
-      .cy_small = dpi ? ::GetSystemMetricsForDpi(SM_CYSMICON, dpi)
-                      : ::GetSystemMetrics(SM_CYSMICON),
+      .cx_big = GetSystemMetricsForDpiCompat(SM_CXICON, dpi),
+      .cy_big = GetSystemMetricsForDpiCompat(SM_CYICON, dpi),
+      .cx_small = GetSystemMetricsForDpiCompat(SM_CXSMICON, dpi),
+      .cy_small = GetSystemMetricsForDpiCompat(SM_CYSMICON, dpi),
   };
 }
 

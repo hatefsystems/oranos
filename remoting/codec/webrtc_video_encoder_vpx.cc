@@ -13,6 +13,7 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/system/sys_info.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "remoting/base/cpu_utils.h"
 #include "remoting/base/util.h"
@@ -49,7 +50,7 @@ constexpr int kVp8MinimumTargetBitrateKbpsPerMegapixel = 2500;
 
 // Default values for the encoder speed of the supported codecs.
 constexpr int kVp9LosslessEncodeSpeed = 5;
-constexpr int kVp9DefaultEncoderSpeed = 6;
+constexpr int kVp9DefaultEncoderSpeed = 9;
 constexpr int kVp9MaxEncoderSpeed = 9;
 
 void SetCommonCodecParameters(vpx_codec_enc_cfg_t* config,
@@ -78,6 +79,10 @@ void SetCommonCodecParameters(vpx_codec_enc_cfg_t* config,
 
   // Do not drop any frames at encoder.
   config->rc_dropframe_thresh = 0;
+  // Set a reasonable default for the first key frame before WebRTC begins
+  // sending updated max/min qp values based on network conditions.
+  config->rc_min_quantizer = 10;
+  config->rc_max_quantizer = 50;
   // We do not want variations in bandwidth.
   config->rc_end_usage = VPX_CBR;
   config->rc_undershoot_pct = 100;
@@ -179,11 +184,6 @@ std::unique_ptr<WebrtcVideoEncoder> WebrtcVideoEncoderVpx::CreateForVP9() {
 
 WebrtcVideoEncoderVpx::~WebrtcVideoEncoderVpx() = default;
 
-void WebrtcVideoEncoderVpx::SetTickClockForTests(
-    const base::TickClock* tick_clock) {
-  clock_ = tick_clock;
-}
-
 void WebrtcVideoEncoderVpx::SetLosslessColor(bool want_lossless) {
   if (!use_vp9_) {
     return;
@@ -253,8 +253,13 @@ void WebrtcVideoEncoderVpx::Encode(std::unique_ptr<webrtc::DesktopFrame> frame,
       active_map_data_.Clear();
     }
 
-    // VPX codecs do not use an active map for keyframes so skip in that case.
-    if (!params.key_frame) {
+    // VPX codecs do not use an active map for keyframes, but we still populate
+    // |active_map_data_| with the full frame so subsequent top-off frames (with
+    // clear_active_map = false) can top off the keyframe.
+    if (params.key_frame) {
+      active_map_data_.Update(
+          webrtc::DesktopRegion(webrtc::DesktopRect::MakeSize(frame_size)));
+    } else {
       active_map_data_.Update(updated_region);
       if (vpx_codec_control(codec_.get(), VP8E_SET_ACTIVEMAP, &active_map_)) {
         LOG(ERROR) << "Unable to apply active map";
@@ -262,9 +267,13 @@ void WebrtcVideoEncoderVpx::Encode(std::unique_ptr<webrtc::DesktopFrame> frame,
     }
   }
 
+  auto duration_ms = params.duration.InMilliseconds();
+  DCHECK_GT(duration_ms, 0);
   vpx_codec_err_t ret = vpx_codec_encode(
-      codec_.get(), image_.get(), 0, params.duration.InMicroseconds(),
-      (params.key_frame) ? VPX_EFLAG_FORCE_KF : 0, VPX_DL_REALTIME);
+      codec_.get(), image_.get(), artificial_timestamp_.InMilliseconds(),
+      duration_ms, (params.key_frame) ? VPX_EFLAG_FORCE_KF : 0,
+      VPX_DL_REALTIME);
+  artificial_timestamp_ += params.duration;
   if (ret != VPX_CODEC_OK) {
     const char* error_detail = vpx_codec_error_detail(codec_.get());
     LOG(ERROR) << "Encoding error: " << vpx_codec_err_to_string(ret) << "\n  "
@@ -328,7 +337,6 @@ void WebrtcVideoEncoderVpx::Encode(std::unique_ptr<webrtc::DesktopFrame> frame,
 WebrtcVideoEncoderVpx::WebrtcVideoEncoderVpx(bool use_vp9)
     : use_vp9_(use_vp9),
       image_(nullptr, vpx_img_free),
-      clock_(base::DefaultTickClock::GetInstance()),
       bitrate_filter_(kVp8MinimumTargetBitrateKbpsPerMegapixel) {
   // Indicates config is still uninitialized.
   config_.g_timebase.den = 0;

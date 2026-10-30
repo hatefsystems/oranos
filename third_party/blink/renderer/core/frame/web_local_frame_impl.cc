@@ -805,8 +805,6 @@ const WebRemoteFrame* WebLocalFrameImpl::ToWebRemoteFrame() const {
 }
 
 void WebLocalFrameImpl::Close(DetachReason detach_reason) {
-  WebLocalFrame::Close(detach_reason);
-
   if (frame_widget_) {
     frame_widget_->Close(detach_reason);
     frame_widget_ = nullptr;
@@ -816,8 +814,6 @@ void WebLocalFrameImpl::Close(DetachReason detach_reason) {
 
   if (dev_tools_agent_)
     dev_tools_agent_.Clear();
-
-  self_keep_alive_.Clear();
 
   if (print_context_)
     PrintEnd();
@@ -2409,6 +2405,7 @@ WebLocalFrameImpl::WebLocalFrameImpl(
           mojom::BackForwardCacheNotRestoredReasonsPtr(nullptr)) {
   CHECK(client_);
   g_frame_count++;
+  client_->SetImplForOwnership(this);
   client_->BindToFrame(this);
 }
 
@@ -2637,10 +2634,6 @@ LocalFrame* WebLocalFrameImpl::CreateChildFrame(
 void WebLocalFrameImpl::DidChangeContentsSize(const gfx::Size& size) {
   if (GetTextFinder() && GetTextFinder()->TotalMatchCount() > 0)
     GetTextFinder()->IncreaseMarkerVersion();
-}
-
-bool WebLocalFrameImpl::HasDevToolsOverlays() const {
-  return dev_tools_agent_ && dev_tools_agent_->HasOverlays();
 }
 
 void WebLocalFrameImpl::UpdateDevToolsOverlaysPrePaint() {

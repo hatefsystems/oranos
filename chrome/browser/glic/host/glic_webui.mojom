@@ -87,6 +87,9 @@ enum GuestPageType {
   kLoadError = 3,
   kDisabledByAdmin = 4,
   kSecurityInterstitial = 5,
+  // The navigation was cancelled because its origin is not an allowed guest
+  // origin (GlicGuestNavigationThrottle, or the PWC navigation policy).
+  kOriginBlocked = 6,
 };
 
 // Functions provided by the WebUI page.
@@ -99,6 +102,11 @@ interface Page {
   // reconsider. A page that does not retry its current failure must report it
   // again, through `OnClientLoadFailed(true)`, in response to this call.
   IntentToShow();
+
+  // Waits for the page to finish loading, or returns immediately if loading
+  // has already succeeded or failed. `failed` is true if the page reached a
+  // failure state it will not leave without being reloaded.
+  WaitForLoad() => (bool failed);
 
   // TODO(crbug.com/454120908): Remove this method after WebContents warming is
   // rolled out.
@@ -214,6 +222,8 @@ enum ClientLoadErrorReason {
   kClientError = 10,
   kClientLoadTimeout = 11,
   kWarmedTimeout = 12,
+  [MinVersion=1] kGuestOriginBlocked = 13,
+  [MinVersion=1] kGuestApiNotAllowed = 14,
 };
 
 // The result of `PrepareForClient()`.

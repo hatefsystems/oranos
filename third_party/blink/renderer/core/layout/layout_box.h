@@ -926,7 +926,6 @@ class CORE_EXPORT LayoutBox : public LayoutBoxModelObject {
     void SavePreviousSize() {
       GetLayoutBox().previous_size_ = GetLayoutBox().StitchedSize();
     }
-    void ClearPreviousSize() { GetLayoutBox().previous_size_ = PhysicalSize(); }
     void SavePreviousOverflowData();
     void ClearPreviousOverflowData() {
       DCHECK(!RuntimeEnabledFeatures::
@@ -1158,7 +1157,7 @@ class CORE_EXPORT LayoutBox : public LayoutBoxModelObject {
   const GCedHeapVector<NonOverflowingScrollRange>* NonOverflowingScrollRanges()
       const;
 
-  const BoxStrut& OutOfFlowInsetsForGetComputedStyle() const;
+  const PhysicalBoxStrut& InsetsForGetComputedStyle() const;
 
   Element* AccessibilityAnchor() const;
   const GCedHeapHashSet<Member<Element>>* DisplayLocksAffectedByAnchors() const;

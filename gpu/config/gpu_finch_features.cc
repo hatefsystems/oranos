@@ -329,9 +329,6 @@ BASE_FEATURE(kWebGPUUseSpirv14, base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kWebGPUUseHLSL2021, base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kWebGPUUseSpirvReconvergenceMode,
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 // Enables the use of dedicated shared memory transfer buffers for mapped WebGPU
 // buffers. Only takes effect when explicitly enabled (e.g. via
 // --enable-features=WebGPUUseDedicatedTransferBuffer).
@@ -488,6 +485,9 @@ BASE_FEATURE(kGpuPersistentCacheMetadata, base::FEATURE_DISABLED_BY_DEFAULT);
 const base::FeatureParam<int> kGpuPersistentCacheMetadataPreloadCount{
     &kGpuPersistentCacheMetadata, "preload_count", 50};
 
+BASE_FEATURE(kGpuPersistentCacheAsyncInitialize,
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // Use a 100-command limit before forcing context switch per command buffer
 // instead of 20.
 BASE_FEATURE(kIncreasedCmdBufferParseSlice, base::FEATURE_DISABLED_BY_DEFAULT);
@@ -554,7 +554,7 @@ bool NeedThreadSafeAndroidMedia() {
 namespace {
 bool IsSkiaGraphiteSupportedByDevice() {
 #if BUILDFLAG(IS_APPLE)
-  return UsePassthroughCommandDecoder();
+  return true;
 #elif BUILDFLAG(IS_ANDROID)
   // Graphite on Android uses the Dawn Vulkan backend. Only enable Graphite if
   // device would already be using Ganesh/Vulkan.
@@ -881,5 +881,13 @@ const base::FeatureParam<bool> kSendGPUChannelEarlyTopChromeOnly{
 
 // Enables Ganesh/Vulkan MSAA support on Imagination (PowerVR) GPUs.
 BASE_FEATURE(kVulkanImaginationMSAA, base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Kill switch for enforcing exclusive write access.
+BASE_FEATURE(kWrappedSkiaBackingExclusiveAccess,
+#if BUILDFLAG(IS_CHROMEOS)
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#else
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#endif
 
 }  // namespace features

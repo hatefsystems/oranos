@@ -13,6 +13,9 @@
 
 namespace {
 
+// Action path for the X-Callback open command.
+NSString* const kXCallbackOpenCommandPath = @"/open";
+
 enum CallerApp {
   kGoogleSearch = 0,
   kGmail = 1,
@@ -32,7 +35,8 @@ CallerApp CallerAppFromAppID(NSString* caller_app_id) {
   if ([caller_app_id isEqualToString:@"com.google.GoogleMobile"]) {
     return kGoogleSearch;
   }
-  if ([caller_app_id isEqualToString:@"com.google.Gmail"]) {
+  if ([caller_app_id isEqualToString:@"com.google.Gmail"] ||
+      [caller_app_id hasPrefix:@"com.google.Gmail."]) {
     return kGmail;
   }
   if ([caller_app_id isEqualToString:@"com.google.GooglePlus"]) {
@@ -68,6 +72,11 @@ CallerApp CallerAppFromAppID(NSString* caller_app_id) {
 }
 
 }  // namespace
+
+const char kXCallbackOpenCommandURLParameter[] = "url";
+const char kPostOpeningActionParameter[] = "poa";
+const char kPostOpeningActionDefaultBrowserSettings[] =
+    "default-browser-settings";
 
 MobileSessionCallerApp GetCallerApp(NSString* source_app_id,
                                     NSString* secure_source_app_id,
@@ -214,4 +223,14 @@ void SaveFieldTrialValuesForGroupApp() {
 
   [shared_defaults setObject:capabilities
                       forKey:app_group::kChromeCapabilitiesPreference];
+}
+
+bool IsXCallbackAppGroupCommandPath(NSString* path) {
+  NSString* expected_path = [NSString
+      stringWithFormat:@"/%s", app_group::kChromeAppGroupXCallbackCommand];
+  return [path isEqualToString:expected_path];
+}
+
+bool IsXCallbackOpenCommandPath(NSString* path) {
+  return [path isEqualToString:kXCallbackOpenCommandPath];
 }

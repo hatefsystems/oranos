@@ -539,7 +539,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="HttpCache.IsNoStore{Type}" enum="Boolean"
-    expires_after="2026-11-29">
+    expires_after="2027-11-29">
   <owner>bashi@chromium.org</owner>
   <owner>blink-network-stack@google.com</owner>
   <summary>
@@ -1419,17 +1419,6 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram name="Net.BlobFetch.ResponseNetErrorCode" enum="NetErrorCodes"
-    expires_after="2026-06-28">
-  <owner>leimy@chromium.org</owner>
-  <owner>chrome-owp-storage@google.com</owner>
-  <summary>
-    Net error code from a blob fetch request. It's recorded as the abolute value
-    of the raw error code when a blob fetch request fails, or as 0 when the
-    request receives response.
-  </summary>
-</histogram>
-
 <histogram name="Net.CachingCertVerifier.CacheHit{HostType}" enum="Boolean"
     expires_after="2027-04-11">
   <owner>nidhijaju@chromium.org</owner>
@@ -1502,6 +1491,23 @@ chromium-metrics-reviews@google.com.
 
     This does not count internal changes like Chrome Root Store and CRLSet
     updates.
+  </summary>
+</histogram>
+
+<histogram name="Net.Certificate.PrintableStringRequiredParseMode"
+    enum="NetCertificatePrintableStringParseMode" expires_after="2027-05-01">
+  <owner>chlily@chromium.org</owner>
+  <owner>chrome-secure-web-and-net@chromium.org</owner>
+  <summary>
+    The strictest PrintableString parsing mode with which both the subject and
+    issuer names of an X.509 certificate can be parsed. Recorded each time a
+    net::X509Certificate is created with the printable_string_is_utf8 option.
+    That option is used for client certificates from platform certificate
+    stores, extension APIs, and ChromeOS platform keys, but also for every
+    certificate deserialized from IPC, including server certificates. Sample
+    counts are therefore dominated by server certificates and by repeated parses
+    of the same certificate; use the proportion of clients reporting each bucket
+    rather than sample counts. See crbug.com/563054783.
   </summary>
 </histogram>
 
@@ -1847,7 +1853,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram name="Net.DeviceBoundSessions.AttestationKeySaveOutcome"
     enum="DeviceBoundSessionAttestationKeySaveOutcome"
-    expires_after="2026-12-25">
+    expires_after="2027-04-25">
   <owner>jdoerrie@chromium.org</owner>
   <owner>chrome-counter-abuse-alerts@google.com</owner>
   <summary>
@@ -4152,13 +4158,14 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Net.HttpStreamPool.InitialAttemptState2"
-    enum="HttpStreamPoolInitialAttemptState" expires_after="2026-04-05">
+    enum="HttpStreamPoolInitialAttemptState" expires_after="2027-10-26">
   <owner>bashi@chromium.org</owner>
   <owner>blink-network-stack@google.com</owner>
   <summary>
     Record the initial attempt state (whether known to support QUIC/SPDY,
     attempt QUIC first, etc). Recorded the first time a
-    HttpStreamPool::AttemptManager attempts a TCP connection.
+    HttpStreamPool::AttemptManager attempts a TCP connection. Warning: this
+    histogram was expired from 2026-04-05 to 2026-10-26; data may be missing.
   </summary>
 </histogram>
 
@@ -4702,12 +4709,13 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Net.NetworkTransaction.InitializeStreamBlocked{HostType}.{Protocol}"
-    enum="Boolean" expires_after="2026-09-20">
+    enum="Boolean" expires_after="2027-10-26">
   <owner>bashi@chromium.org</owner>
   <owner>src/net/OWNERS</owner>
   <summary>
     Records whether HTTP stream initialization is blocked or not. Recorded every
-    time HttpStream::InitializeStream() is called.
+    time HttpStream::InitializeStream() is called. Warning: this histogram was
+    expired from 2026-09-20 to 2026-10-26; data may be missing.
   </summary>
   <token key="HostType" variants="NetworkTransactionBlockedHostType"/>
   <token key="Protocol" variants="NetworkTransactionBlockedProtocol"/>
@@ -4715,7 +4723,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Net.NetworkTransaction.InitializeStreamBlockTime{HostType}.{Protocol}"
-    units="ms" expires_after="2026-11-29">
+    units="ms" expires_after="2027-11-29">
   <owner>bashi@chromium.org</owner>
   <owner>src/net/OWNERS</owner>
   <summary>
@@ -5779,7 +5787,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Net.QuicSession.AcceptChFrameReceivedViaAlps"
-    enum="AcceptChEntries" expires_after="2027-02-21">
+    enum="AcceptChEntries" expires_after="2027-04-25">
   <owner>bnc@chromium.org</owner>
   <owner>src/net/OWNERS</owner>
   <summary>
@@ -7843,12 +7851,14 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Net.QuicSessionAttempt.CompleteTime.{SuccessOrFailure}"
-    units="ms" expires_after="2026-09-20">
+    units="ms" expires_after="2027-10-26">
   <owner>bashi@chromium.org</owner>
   <owner>blink-network-stack@google.com</owner>
   <summary>
     Record the time that a QuicSessionAttempt takes to invoke the completion
     callback. Recorded when a QuicSessionAttempt called the completion callback.
+    Warning: this histogram was expired from 2026-09-20 to 2026-10-26; data may
+    be missing.
   </summary>
   <token key="SuccessOrFailure" variants="SuccessOrFailure"/>
 </histogram>
@@ -8672,7 +8682,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Net.SharedDictionaryUsedResponseErrorCodes2.{DestinationType}.{CertState}"
-    enum="NetErrorCodes" expires_after="2027-01-01">
+    enum="NetErrorCodes" expires_after="2027-04-25">
   <owner>pmeenan@chromium.org</owner>
   <owner>src/net/extras/shared_dictionary/OWNERS</owner>
   <summary>
@@ -8885,11 +8895,13 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Net.SpdySession.GoAwayReceived" enum="Http2WireErrorCodes"
-    expires_after="2026-09-02">
+    expires_after="2027-10-26">
   <owner>bashi@chromium.org</owner>
   <owner>src/net/OWNERS</owner>
   <summary>
-    Records the error code value received in each HTTP/2 GOAWAY frame.
+    Records the error code value received in each HTTP/2 GOAWAY frame. Warning:
+    this histogram was expired from 2026-09-02 to 2026-10-26; data may be
+    missing.
   </summary>
 </histogram>
 
@@ -9438,18 +9450,6 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram name="Net.SSL.TrustAnchorIDsResult" enum="SSLTrustAnchorIDsResult"
-    expires_after="2027-04-11">
-  <owner>davidben@chromium.org</owner>
-  <owner>estark@chromium.org</owner>
-  <owner>trusty-transport@chromium.org</owner>
-  <summary>
-    For each TLS connection, recorded when the connection attempt completes,
-    whether the trust anchor IDs retry flow was triggered and, if so, whether it
-    fixed the connection.
-  </summary>
-</histogram>
-
 <histogram name="Net.SSL_CipherSuite" enum="SSLCipherSuite"
     expires_after="never">
 <!-- expires-never: Used to keep track of the TLS ecosystem. -->
@@ -9472,18 +9472,6 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram name="Net.SSL_Connection_Error_TrustAnchorIDs" enum="NetErrorCodes"
-    expires_after="2026-12-06">
-  <owner>davidben@chromium.org</owner>
-  <owner>estark@chromium.org</owner>
-  <owner>trusty-transport@chromium.org</owner>
-  <summary>
-    Counts of specific error codes returned when opening an SSL connection.
-    Recorded for connections to servers that advertise support for Trust Anchor
-    IDs in DNS.
-  </summary>
-</histogram>
-
 <histogram name="Net.SSL_Connection_Latency_2" units="ms" expires_after="never">
 <!-- expires-never: Used to keep track of the TLS ecosystem. -->
 
@@ -9499,18 +9487,6 @@ chromium-metrics-reviews@google.com.
   <summary>
     Time from when the Connect() starts until it completes. Recorded for
     successful connections to servers that used the Server Padding extension.
-  </summary>
-</histogram>
-
-<histogram name="Net.SSL_Connection_Latency_TrustAnchorIDs" units="ms"
-    expires_after="2026-12-06">
-  <owner>davidben@chromium.org</owner>
-  <owner>estark@chromium.org</owner>
-  <owner>trusty-transport@chromium.org</owner>
-  <summary>
-    Time from when the Connect() starts until it completes. Recorded for
-    successful connections to servers that advertise support for Trust Anchor
-    IDs in DNS.
   </summary>
 </histogram>
 
@@ -10556,7 +10532,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="SimpleCache.{CacheInstance}DiskWriteLatency" units="ms"
-    expires_after="2027-02-07">
+    expires_after="2027-04-25">
   <owner>morlovich@chromium.org</owner>
   <owner>wanderview@chromium.org</owner>
   <summary>

@@ -596,6 +596,9 @@ chromium-metrics-reviews@google.com.
   <variant name="PrivacyPolicyAnnotation"
       summary="Provides information about whether a URL is a privacy policy
                page."/>
+  <variant name="QuickAnswers"
+      summary="Provides information about whether the page is eligible for
+               Quick Answers."/>
   <variant name="ReaderModeEligible"
       summary="Provides information about the eligibility of a URL for
                Reading Mode."/>
@@ -1265,19 +1268,6 @@ chromium-metrics-reviews@google.com.
     is the time from when the request is sent from the manager to when the
     response is received. Recorded for every request. This metric supersedes
     OptimizationGuide.ModelExecutionFetcher.FetchLatency.{ModelExecutionFeature}.
-  </summary>
-  <token key="ModelExecutionFeature" variants="ModelExecutionFeature"/>
-</histogram>
-
-<histogram
-    name="OptimizationGuide.ModelExecution.OnDeviceAdaptationModelAvailability.{ModelExecutionFeature}"
-    enum="OnDeviceModelAdaptationAvailability" expires_after="2027-04-14">
-  <owner>holte@chromium.org</owner>
-  <owner>wittman@chromium.org</owner>
-  <summary>
-    Records the availability of adaptation model for {ModelExecutionFeature}.
-    Recorded each time an update to the base model or the foundation model is
-    triggered.
   </summary>
   <token key="ModelExecutionFeature" variants="ModelExecutionFeature"/>
 </histogram>
@@ -2093,18 +2083,6 @@ chromium-metrics-reviews@google.com.
     Records whether there was a cache hit when attempting to fetch the set of
     related searches cached by the ZPS prefetching on SRP logic. This will be
     recorded approximately once per successful Google SRP page load.
-  </summary>
-</histogram>
-
-<histogram
-    name="OptimizationGuide.PageContentAnnotationsService.RelatedSearchesExtracted"
-    enum="BooleanAnnotated" expires_after="M155">
-  <owner>mahmadi@chromium.org</owner>
-  <owner>sophiechang@chromium.org</owner>
-  <summary>
-    Records whether related searches were successfully extracted from Google
-    SRP, if requested. This will be recorded approximately once per page load
-    after the page has finished loading.
   </summary>
 </histogram>
 

@@ -59,6 +59,8 @@ BASE_DECLARE_FEATURE(kAccountRetrievalWaitsForRestoration);
 #if BUILDFLAG(IS_ANDROID)
 COMPONENT_EXPORT(SIGNIN_SWITCHES)
 BASE_DECLARE_FEATURE(kAddSessionFallbackToPrimaryAccount);
+COMPONENT_EXPORT(SIGNIN_SWITCHES)
+BASE_DECLARE_FEATURE(kAddSessionReauthPrimaryAccountFirst);
 #endif  // BUILDFLAG(IS_ANDROID)
 
 // Extends the AI subscription avatar decorations to more surfaces. Has no
@@ -276,6 +278,15 @@ BASE_DECLARE_FEATURE(kDiceHeaderVersion2);
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
+// Killswitch for sanitizing the URL when moving an intercepted tab to the
+// destination profile (new or existing). When enabled, navigates Gaia URLs to
+// an HTTPS google.<TLD> or youtube.<TLD> continue URL on a standard port if
+// present, or falls back to the New Tab Page (including for non-HTTP(S) URLs).
+COMPONENT_EXPORT(SIGNIN_SWITCHES)
+BASE_DECLARE_FEATURE(kDiceInterceptSanitizeGaiaUrl);
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
+
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
 // Feature flag for the Linked Accounts request header support.
 COMPONENT_EXPORT(SIGNIN_SWITCHES)
 BASE_DECLARE_FEATURE(kDiceLinkedAccounts);
@@ -382,7 +393,7 @@ BASE_DECLARE_FEATURE_PARAM(
 COMPONENT_EXPORT(SIGNIN_SWITCHES)
 BASE_DECLARE_FEATURE(kEnableAccountPreviewPreferredAccountFollowup);
 
-#if BUILDFLAG(IS_IOS)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 // Controls whether preferred account selection is enabled in the First Run
 // Experience (FRE).
 COMPONENT_EXPORT(SIGNIN_SWITCHES)
@@ -958,6 +969,12 @@ BASE_DECLARE_FEATURE(kSupportErrorsInProfilePicker);
 COMPONENT_EXPORT(SIGNIN_SWITCHES)
 BASE_DECLARE_FEATURE(kSupportForcedSigninPolicy);
 #endif  // BUILDFLAG(IS_ANDROID)
+
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+// Enables signin interception for web sign-in in popup windows.
+COMPONENT_EXPORT(SIGNIN_SWITCHES)
+BASE_DECLARE_FEATURE(kSupportSigninInterceptionInPopups);
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 #if BUILDFLAG(IS_ANDROID)
 COMPONENT_EXPORT(SIGNIN_SWITCHES)

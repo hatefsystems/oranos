@@ -85,6 +85,7 @@ class FindsTabHelper;
 
 namespace glic {
 class ContextualCueingHelper;
+class GlicGeminiWebWarmingObserver;
 class GlicInstanceHelper;
 class GlicMarketingPageTabHelper;
 class GlicSidePanelCoordinator;
@@ -202,7 +203,7 @@ class TabInterface;
 class PageContextEligibilityHelper;
 
 // This class holds state that is scoped to a tab in Android. It is constructed
-// after the WebContents/tab_helpers, and destroyed before.
+// after the WebContents, and destroyed before.
 class TabFeatures {
  public:
   TabFeatures(content::WebContents* web_contents, Profile* profile);
@@ -215,6 +216,12 @@ class TabFeatures {
   enterprise_data_protection::DataProtectionNavigationController*
   data_protection_controller() {
     return data_protection_tab_controller_.get();
+  }
+
+  tasks::TaskTabHelper* task_tab_helper() { return task_tab_helper_.get(); }
+
+  SupervisedUserNavigationObserver* supervised_user_navigation_observer() {
+    return supervised_user_navigation_observer_.get();
   }
 
 #if BUILDFLAG(ENABLE_WEBUI_NTP)
@@ -250,8 +257,6 @@ class TabFeatures {
   std::unique_ptr<actor::ActorTabData> actor_tab_data_;
   std::unique_ptr<actor::ActorSurfaceTabHelper> actor_surface_tab_helper_;
 
-  std::unique_ptr<sync_sessions::SyncSessionsRouterTabHelper>
-      sync_sessions_router_;
   std::unique_ptr<ConnectionHelpTabHelper> connection_help_tab_helper_;
   std::unique_ptr<HttpAuthCacheStatus> http_auth_cache_status_;
   std::unique_ptr<SecurityStateEventObserver> security_state_event_observer_;
@@ -280,6 +285,8 @@ class TabFeatures {
   std::unique_ptr<tabs::PageContextEligibilityHelper>
       page_context_eligibility_helper_;
   std::unique_ptr<glic::GlicInstanceHelper> glic_instance_helper_;
+  std::unique_ptr<glic::GlicGeminiWebWarmingObserver>
+      glic_gemini_web_warming_observer_;
   std::unique_ptr<glic::GlicMarketingPageTabHelper>
       glic_marketing_page_tab_helper_;
   std::unique_ptr<glic::GlicSidePanelCoordinator> glic_side_panel_coordinator_;
@@ -336,6 +343,8 @@ class TabFeatures {
   std::unique_ptr<chrome_browser_net::NetErrorTabHelper> net_error_tab_helper_;
   std::unique_ptr<SupervisedUserNavigationObserver>
       supervised_user_navigation_observer_;
+  std::unique_ptr<sync_sessions::SyncSessionsRouterTabHelper>
+      sync_sessions_router_;
   std::unique_ptr<offline_pages::OfflinePageTabHelper> offline_page_tab_helper_;
   std::unique_ptr<offline_pages::RecentTabHelper> recent_tab_helper_;
   std::unique_ptr<AutoPictureInPictureTabHelper>

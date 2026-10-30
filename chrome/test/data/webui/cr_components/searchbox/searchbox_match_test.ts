@@ -281,14 +281,14 @@ suite('CrComponentsRealboxMatchTest', () => {
     await microtasksFinished();
 
     const primaryTextEl = matchEl.$.primaryText;
-    // 'test ' is rendered unstyled. 'content' is rendered as a "match".
+    // 'test ' is rendered unstyled. 'content' is rendered bolded.
     assertEquals(
-        '<span>test </span><span class="match">content</span>',
+        '<span>test </span><span class="bolded">content</span>',
         primaryTextEl.innerHTML);
     const secondaryTextEl = matchEl.$.secondaryText;
-    // 'test ' is rendered unstyled. 'description' is rendered as a "match".
+    // 'test ' is rendered unstyled. 'description' is rendered bolded.
     assertEquals(
-        '<span>test </span><span class="match">description</span>',
+        '<span>test </span><span class="bolded">description</span>',
         secondaryTextEl.innerHTML);
   });
 
@@ -303,7 +303,7 @@ suite('CrComponentsRealboxMatchTest', () => {
     const primaryTextEl = matchEl.$.primaryText;
     // 'prefix' is rendered unstyled.
     assertEquals(
-        '<span>prefix </span><span class="match">content</span>',
+        '<span>prefix </span><span class="bolded">content</span>',
         primaryTextEl.innerHTML);
   });
 
@@ -333,10 +333,10 @@ suite('CrComponentsRealboxMatchTest', () => {
 
     const primaryTextEl = matchEl.$.primaryText;
     assertEquals(
-        '<span class="color-on-surface">a</span>' +
-            '<span class="color-on-surface-subtle">b</span>' +
-            '<span class="color-on-surface-subtle match">c</span>' +
-            '<span class="color-primary url match">d</span>' +
+        '<span class="suggest-query-text">a</span>' +
+            '<span class="suggest-hint-text">b</span>' +
+            '<span class="suggest-hint-text bolded">c</span>' +
+            '<span class="suggest-action-high bolded">d</span>' +
             '<span>e</span><span>f</span>',
         primaryTextEl.innerHTML);
   });
@@ -497,11 +497,11 @@ suite('CrComponentsRealboxMatchTest', () => {
     const spans = matchEl.$.secondaryText.querySelectorAll('span');
     assertEquals(2, spans.length);
     assertEquals('MIA ', spans[0]!.textContent);
-    assertTrue(spans[0]!.classList.contains('match'));
-    assertTrue(spans[0]!.classList.contains('color-on-surface-subtle'));
+    assertTrue(spans[0]!.classList.contains('bolded'));
+    assertTrue(spans[0]!.classList.contains('suggest-hint-text'));
     assertEquals('Basketball', spans[1]!.textContent);
-    assertFalse(spans[1]!.classList.contains('match'));
-    assertTrue(spans[1]!.classList.contains('color-on-surface-subtle'));
+    assertFalse(spans[1]!.classList.contains('bolded'));
+    assertTrue(spans[1]!.classList.contains('suggest-hint-text'));
   });
 
   test('DescriptionIcon', async () => {
@@ -545,5 +545,95 @@ suite('CrComponentsRealboxMatchTest', () => {
     await microtasksFinished();
 
     assertEquals('', matchEl.$.secondaryText.textContent);
+  });
+
+  test('SecondaryTextIsUrlSetsUrlLayout', async () => {
+    matchEl.style.setProperty(
+        '--cr-searchbox-url-primary-text-max-width', '65%');
+    matchEl.match = createAutocompleteMatch({secondaryTextIsUrl: true});
+    await microtasksFinished();
+    assertTrue(matchEl.hasAttribute('secondary-text-is-url_'));
+    assertEquals('65%', getComputedStyle(matchEl.$.primaryText).maxWidth);
+
+    // ACTION_HIGH text without the bit doesn't get the URL layout.
+    matchEl.match = createAutocompleteMatch({
+      suggestTemplate: createSuggestTemplateInfo({
+        secondaryText: createFormattedString(
+            'description',
+            [createFormattedStringFragment(
+                {startIndex: 0, color: ColorType.kSuggestActionHigh})]),
+      }),
+    });
+    await microtasksFinished();
+    assertFalse(matchEl.hasAttribute('secondary-text-is-url_'));
+    assertEquals('none', getComputedStyle(matchEl.$.primaryText).maxWidth);
+  });
+
+  test('SecondaryTextTakesColorOfLastSpanForEllipsis', async () => {
+    matchEl.style.setProperty(
+        '--color-searchbox-results-foreground-dimmed', 'rgb(0, 128, 0)');
+    matchEl.style.setProperty(
+        '--color-searchbox-results-url', 'rgb(0, 0, 255)');
+    const createMatch = (firstColor: ColorType, lastColor: ColorType) =>
+        createAutocompleteMatch({
+          suggestTemplate: createSuggestTemplateInfo({
+            secondaryText: createFormattedString(
+                'first last',
+                [
+                  createFormattedStringFragment(
+                      {startIndex: 0, color: firstColor}),
+                  createFormattedStringFragment(
+                      {startIndex: 6, color: lastColor}),
+                ]),
+          }),
+        });
+
+    matchEl.match =
+        createMatch(ColorType.kSuggestHintText, ColorType.kSuggestActionHigh);
+    await microtasksFinished();
+    assertEquals(
+        'rgb(0, 0, 255)', getComputedStyle(matchEl.$.secondaryText).color);
+
+    matchEl.match =
+        createMatch(ColorType.kSuggestActionHigh, ColorType.kSuggestHintText);
+    await microtasksFinished();
+    assertEquals(
+        'rgb(0, 128, 0)', getComputedStyle(matchEl.$.secondaryText).color);
+  });
+
+  test('TypedPrefixColorOnlyReplacesDefaultTextColor', async () => {
+    matchEl.style.setProperty(
+        '--color-searchbox-results-foreground', 'rgb(1, 2, 3)');
+    matchEl.style.setProperty(
+        '--color-searchbox-results-url', 'rgb(0, 0, 255)');
+    // Plain text followed by non-bold text with a color, like the path of a
+    // URL row without a title.
+    const match = createAutocompleteMatch();
+    match.suggestTemplate.primaryText = createFormattedString('plain colored', [
+      createFormattedStringFragment(
+          {startIndex: 0, color: ColorType.kSuggestQueryText}),
+      createFormattedStringFragment(
+          {startIndex: 6, color: ColorType.kSuggestActionHigh}),
+    ]);
+    matchEl.match = match;
+    await microtasksFinished();
+
+    const spans = matchEl.$.primaryText.querySelectorAll('span');
+    assertEquals(2, spans.length);
+    // Without a typed prefix color, each fragment keeps its own color.
+    assertEquals('rgb(1, 2, 3)', getComputedStyle(spans[0]!).color);
+    assertEquals('rgb(0, 0, 255)', getComputedStyle(spans[1]!).color);
+
+    // A typed prefix color only replaces the default text color.
+    matchEl.style.setProperty(
+        '--color-searchbox-results-typed-prefix', 'rgb(0, 128, 0)');
+    assertEquals('rgb(0, 128, 0)', getComputedStyle(spans[0]!).color);
+    assertEquals('rgb(0, 0, 255)', getComputedStyle(spans[1]!).color);
+
+    // Zero prefix matches keep the colors too.
+    matchEl.style.removeProperty('--color-searchbox-results-typed-prefix');
+    matchEl.setAttribute('has-empty-input', '');
+    assertEquals('rgb(1, 2, 3)', getComputedStyle(spans[0]!).color);
+    assertEquals('rgb(0, 0, 255)', getComputedStyle(spans[1]!).color);
   });
 });

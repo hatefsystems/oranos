@@ -6,10 +6,9 @@ import 'chrome://contextual-tasks/app.js';
 
 import type {ContextualTasksAppElement} from 'chrome://contextual-tasks/app.js';
 import {BrowserProxyImpl} from 'chrome://contextual-tasks/contextual_tasks_browser_proxy.js';
-import {ComposeboxFile, GlifAnimationState} from 'chrome://resources/cr_components/composebox/common.js';
+import {ComposeboxFile, GlifAnimationState, SubmitButtonIconType} from 'chrome://resources/cr_components/composebox/common.js';
 import {PageHandlerRemote as ComposeboxPageHandlerRemote} from 'chrome://resources/cr_components/composebox/composebox.mojom-webui.js';
 import type {ComposeboxDropdownElement} from 'chrome://resources/cr_components/composebox/composebox_dropdown.js';
-import {SubmitButtonIconType} from 'chrome://resources/cr_components/composebox/composebox_mixin.js';
 import {ComposeboxProxyImpl} from 'chrome://resources/cr_components/composebox/composebox_proxy.js';
 import {InputType, ToolMode} from 'chrome://resources/cr_components/composebox/composebox_query.mojom-webui.js';
 import type {ComposeboxToolChipElement} from 'chrome://resources/cr_components/composebox/composebox_tool_chip.js';
@@ -3686,7 +3685,9 @@ function createVoiceResults(transcripts: string[]): SpeechRecognitionEvent {
                   assertTrue(animatedGlow.hasAttribute(
                       'showing-only-carousel-on-top-of-input'));
                 });
+          });
 
+          suite('CoherenceCarouselAndToolChips', () => {
             test(
                 'toolchip and image added, then removed in voice search',
                 async () => {

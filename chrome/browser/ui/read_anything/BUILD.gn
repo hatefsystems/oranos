@@ -160,20 +160,6 @@ source_set("impl") {
   }
 }
 
-source_set("test_support") {
-  testonly = true
-  sources = [
-    "read_anything_test_utils.cc",
-    "read_anything_test_utils.h",
-  ]
-  deps = [
-    ":prefs",
-    "//chrome/browser/profiles:profile",
-    "//chrome/common/read_anything:mojo_bindings",
-    "//components/prefs",
-  ]
-}
-
 source_set("browser_tests") {
   testonly = true
   defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
@@ -188,7 +174,6 @@ source_set("browser_tests") {
   deps = [
     ":impl",
     ":read_anything",
-    ":test_support",
     ":views",
     "//base",
     "//base/test:test_support",
@@ -244,7 +229,6 @@ source_set("interactive_ui_tests") {
   defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
 
   sources = [
-    "read_anything_controller_interactive_uitest.cc",
     "read_anything_omnibox_controller_interactive_uitest.cc",
     "read_anything_service_interactive_uitest.cc",
     "read_anything_side_panel_controller_interactive_uitest.cc",
@@ -252,7 +236,6 @@ source_set("interactive_ui_tests") {
 
   deps = [
     ":read_anything",
-    ":test_support",
     "//base",
     "//base/test:test_support",
     "//chrome/browser",
@@ -290,7 +273,6 @@ source_set("unit_tests") {
     "//chrome/browser/ui/side_panel:test_support",
     "//chrome/test:test_support",
     "//chrome/test/base:chrome_render_view_host_test_harness",
-    "//chrome/test/user_education:impl",
     "//components/tabs:test_support",
     "//content/test:test_support",
     "//testing/gmock",

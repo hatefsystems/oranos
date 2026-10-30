@@ -11,9 +11,12 @@ import static org.junit.Assert.assertTrue;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.os.Build;
 import android.os.SystemClock;
 import android.view.MotionEvent;
 import android.view.ViewConfiguration;
+import android.widget.FrameLayout;
+import android.widget.ScrollView;
 
 import androidx.test.filters.SmallTest;
 
@@ -25,6 +28,7 @@ import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.UseParametersRunnerFactory;
 
 import org.chromium.android_webview.AwContents;
+import org.chromium.android_webview.AwViewAndroidDelegate;
 import org.chromium.android_webview.AwWebContent;
 import org.chromium.android_webview.AwWebSurface;
 import org.chromium.android_webview.test.util.AwTestTouchUtils;
@@ -34,6 +38,7 @@ import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.MinAndroidSdkLevel;
 import org.chromium.net.test.util.TestWebServer;
 
 /** Tests for {@link AwWebSurface}. */
@@ -155,8 +160,8 @@ public class AwWebSurfaceTest extends AwParameterizedTest {
         TestEventListener listener =
                 new TestEventListener() {
                     @Override
-                    public void onInvalidate() {
-                        super.onInvalidate();
+                    public void onInvalidate(boolean insideVSync) {
+                        super.onInvalidate(insideVSync);
                         mContainerView.invalidate();
                     }
                 };
@@ -196,8 +201,8 @@ public class AwWebSurfaceTest extends AwParameterizedTest {
                 new AwWebSurface(
                         new TestEventListener() {
                             @Override
-                            public void onInvalidate() {
-                                super.onInvalidate();
+                            public void onInvalidate(boolean insideVSync) {
+                                super.onInvalidate(insideVSync);
                                 mContainerView.invalidate();
                             }
 
@@ -234,6 +239,58 @@ public class AwWebSurfaceTest extends AwParameterizedTest {
     @Test
     @SmallTest
     @Feature({"AndroidWebView"})
+    public void testOverscrollRespectsOverscrollBehavior() throws Throwable {
+        CallbackHelper overScrollHelper = new CallbackHelper();
+        float[] firstOverScrollDelta = new float[2];
+        AwWebSurface surface =
+                new AwWebSurface(
+                        new TestEventListener() {
+                            @Override
+                            public void onInvalidate(boolean insideVSync) {
+                                super.onInvalidate(insideVSync);
+                                mContainerView.invalidate();
+                            }
+
+                            @Override
+                            public void onOverScroll(float dx, float dy, float vx, float vy) {
+                                if (overScrollHelper.getCallCount() > 0) return;
+                                firstOverScrollDelta[0] = dx;
+                                firstOverScrollDelta[1] = dy;
+                                overScrollHelper.notifyCalled();
+                            }
+                        });
+
+        // The page stops vertical overscroll from chaining, but not horizontal.
+        mActivityTestRule.loadHtmlSync(
+                mAwContents,
+                mContentsClient.getOnPageFinishedHelper(),
+                "<html style='overscroll-behavior-y: contain;'>"
+                        + "<body style='margin:0; height: 100px;'></body></html>");
+        mActivityTestRule.waitForVisualStateCallback(mAwContents);
+
+        ThreadUtils.runOnUiThreadBlocking(() -> surface.setAwContents(mAwContents));
+
+        // A purely vertical drag should not report overscroll at all.
+        long verticalDownTime = SystemClock.uptimeMillis();
+        sendTouchEvent(surface, verticalDownTime, MotionEvent.ACTION_DOWN, 50, 50);
+        sendTouchEvent(surface, verticalDownTime, MotionEvent.ACTION_MOVE, 50, 250);
+        sendTouchEvent(surface, verticalDownTime, MotionEvent.ACTION_UP, 50, 250);
+
+        // Drag diagonally in a single move, so both axes overscroll at once.
+        long downTime = SystemClock.uptimeMillis();
+        sendTouchEvent(surface, downTime, MotionEvent.ACTION_DOWN, 50, 50);
+        sendTouchEvent(surface, downTime, MotionEvent.ACTION_MOVE, 250, 250);
+        overScrollHelper.waitForCallback(0);
+        sendTouchEvent(surface, downTime, MotionEvent.ACTION_UP, 250, 250);
+
+        // Only the horizontal overscroll from the diagonal drag is reported.
+        assertTrue(firstOverScrollDelta[0] > 0);
+        assertEquals(0f, firstOverScrollDelta[1], 0f);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
     public void testOverscrollFromFlingReportsVelocity() throws Throwable {
         CallbackHelper flingOverScrollHelper = new CallbackHelper();
         float[] lastVelocity = new float[2];
@@ -241,8 +298,8 @@ public class AwWebSurfaceTest extends AwParameterizedTest {
                 new AwWebSurface(
                         new TestEventListener() {
                             @Override
-                            public void onInvalidate() {
-                                super.onInvalidate();
+                            public void onInvalidate(boolean insideVSync) {
+                                super.onInvalidate(insideVSync);
                                 mContainerView.invalidate();
                             }
 
@@ -317,6 +374,45 @@ public class AwWebSurfaceTest extends AwParameterizedTest {
                 "true",
                 mActivityTestRule.executeJavaScriptAndWaitForResult(
                         mAwContents, mContentsClient, "document.fullscreenEnabled"));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    @MinAndroidSdkLevel(Build.VERSION_CODES.R)
+    public void testNoViewportInsetBelowWindowWhileBound() {
+        AwViewAndroidDelegate viewAndroidDelegate = mAwContents.getViewAndroidDelegateForTesting();
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    // Make the container view extend below the window, as it does for a tall
+                    // WebSurface in a scroll container. ScrollView measures its child with an
+                    // unspecified height, so fix the container view's height inside a FrameLayout.
+                    mActivityTestRule.getActivity().removeAllViews();
+                    int width = mActivityTestRule.getActivity().getRootLayoutWidth();
+                    FrameLayout content = new FrameLayout(mActivityTestRule.getActivity());
+                    content.addView(mContainerView, new FrameLayout.LayoutParams(width, 6000));
+                    ScrollView scrollView = new ScrollView(mActivityTestRule.getActivity());
+                    scrollView.addView(content, new FrameLayout.LayoutParams(width, 6000));
+                    mActivityTestRule.getActivity().addView(scrollView);
+                });
+        // Without a WebSurface, the part below the window is inset like the IME. Recalculate on
+        // each poll, since the view only gets its new size on a later layout pass.
+        CriteriaHelper.pollUiThread(
+                () -> {
+                    mAwContents.getDisplayCutoutController().recalculateBottomImeInset();
+                    return viewAndroidDelegate.getViewportInsetBottom() > 0;
+                });
+
+        AwWebSurface surface = new AwWebSurface(new TestEventListener());
+        ThreadUtils.runOnUiThreadBlocking(() -> surface.setAwContents(mAwContents));
+        CriteriaHelper.pollUiThread(
+                () -> viewAndroidDelegate.getViewportInsetBottom() == 0,
+                "The part of the WebSurface below the window was inset.");
+
+        ThreadUtils.runOnUiThreadBlocking(() -> surface.setAwContents(null));
+        CriteriaHelper.pollUiThread(
+                () -> viewAndroidDelegate.getViewportInsetBottom() > 0,
+                "The inset wasn't restored after unbinding the WebSurface.");
     }
 
     @Test
@@ -401,7 +497,7 @@ public class AwWebSurfaceTest extends AwParameterizedTest {
                     new AwWebSurface(
                             new TestEventListener() {
                                 @Override
-                                public void onInvalidate() {
+                                public void onInvalidate(boolean insideVSync) {
                                     popupInfo.popupContainerView.invalidate();
                                 }
 
@@ -427,7 +523,7 @@ public class AwWebSurfaceTest extends AwParameterizedTest {
         final CallbackHelper mInvalidateHelper = new CallbackHelper();
 
         @Override
-        public void onInvalidate() {
+        public void onInvalidate(boolean insideVSync) {
             mInvalidateHelper.notifyCalled();
         }
 

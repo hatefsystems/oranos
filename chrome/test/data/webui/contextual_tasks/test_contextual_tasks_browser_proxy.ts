@@ -523,6 +523,8 @@ export class TestToolbarPageHandler extends TestBrowserProxy implements
       'unpinSidePanel',
       'openMyActivityUi',
       'openOverflowMenuHelpUi',
+      'openManageAccountUi',
+      'openLogOutFlow',
       'openFeedbackUi',
       'moveTaskUiToNewTab',
       'showThreadHistory',
@@ -551,6 +553,14 @@ export class TestToolbarPageHandler extends TestBrowserProxy implements
 
   openOverflowMenuHelpUi() {
     this.methodCalled('openOverflowMenuHelpUi');
+  }
+
+  openManageAccountUi() {
+    this.methodCalled('openManageAccountUi');
+  }
+
+  openLogOutFlow() {
+    this.methodCalled('openLogOutFlow');
   }
 
   openFeedbackUi() {
@@ -638,8 +648,11 @@ export class TestContextualTasksToolbarUiService extends TestBrowserProxy
     this.methodCalled('onChipMousePressed', identifier);
   }
 
-  onChipClicked(identifier: LhsChipIdentifier, isMouseInteraction: boolean) {
-    this.methodCalled('onChipClicked', [identifier, isMouseInteraction]);
+  onChipClicked(
+      identifier: LhsChipIdentifier, isMouseInteraction: boolean,
+      stateToken: number) {
+    this.methodCalled(
+        'onChipClicked', [identifier, isMouseInteraction, stateToken]);
   }
 
   onChipPointerEntered(identifier: LhsChipIdentifier) {

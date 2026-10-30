@@ -4,9 +4,12 @@
 
 #import "ios/chrome/browser/ai_prototyping/ttc/model/tools/ttc_actuation_handler.h"
 
-#import <map>
+#import <stdint.h>
+
+#import <memory>
 #import <optional>
 #import <string>
+#import <string_view>
 #import <utility>
 #import <vector>
 
@@ -16,6 +19,9 @@
 #import "base/memory/raw_ptr.h"
 #import "base/memory/weak_ptr.h"
 #import "base/sequence_checker.h"
+#import "base/strings/strcat.h"
+#import "base/strings/string_util.h"
+#import "base/strings/to_string.h"
 #import "components/actor/core/task_source_info.h"
 #import "components/actor/public/mojom/actor_types.mojom.h"
 #import "components/optimization_guide/proto/features/actions_data.pb.h"
@@ -24,16 +30,45 @@
 #import "ios/chrome/browser/ai_prototyping/ttc/model/tools/ttc_actuation_data_types.h"
 #import "ios/chrome/browser/ai_prototyping/ttc/model/tools/ttc_tool_validator.h"
 #import "ios/chrome/browser/ai_prototyping/ttc/model/ttc_journal.h"
+#import "ios/chrome/browser/intelligence/actor/model/actor_browser_agent.h"
 #import "ios/chrome/browser/intelligence/actor/model/actor_service.h"
 #import "ios/chrome/browser/intelligence/actor/public/actor_task_intervention_delegate.h"
 #import "ios/chrome/browser/intelligence/actor/public/actor_types.h"
 #import "ios/chrome/browser/intelligence/actor/tools/public/actor_tool_types.h"
-#import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
+#import "ios/chrome/browser/intelligence/actor/tools/utils/actor_browser_utils.h"
+#import "ios/chrome/browser/intelligence/actor/tools/utils/actor_tool_utils.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
+#import "ios/chrome/browser/shared/model/web_state_list/browser_util.h"
 #import "ios/web/public/browser_state.h"
 #import "ios/web/public/web_state.h"
 #import "ios/web/public/web_state_id.h"
 
 namespace {
+
+// Internal title used when creating the session's Actor task; not surfaced in
+// user-facing UI.
+constexpr char kTtcTaskTitle[] = "TTC Session";
+
+// Returns the `SessionID` of the regular `Browser` owning `web_state`, or an
+// invalid `SessionID` if `web_state` is not attached to a regular browser.
+SessionID GetBrowserIdForWebState(web::WebState* web_state) {
+  if (!web_state) {
+    return SessionID::InvalidValue();
+  }
+  ProfileIOS* profile =
+      ProfileIOS::FromBrowserState(web_state->GetBrowserState());
+  if (!profile) {
+    return SessionID::InvalidValue();
+  }
+  BrowserAndIndex browser_and_index = actor::FindBrowserAndIndexFromProfile(
+      profile, web_state->GetUniqueIdentifier(), /*include_incognito=*/false);
+  if (!browser_and_index.browser) {
+    return SessionID::InvalidValue();
+  }
+  ActorBrowserAgent* agent =
+      ActorBrowserAgent::FromBrowser(browser_and_index.browser);
+  return agent ? agent->browser_id() : SessionID::InvalidValue();
+}
 
 // Sets `tab_id` on `sub_action` if not already explicitly populated.
 template <typename SubAction>
@@ -107,6 +142,39 @@ void InjectDataIntoAction(optimization_guide::proto::Action& action,
   }
 }
 
+// Completes `async_entry` with `result_code` and `error_message`.
+void EndActuationAsyncEntry(
+    std::unique_ptr<TTCJournal::PendingAsyncEntry> async_entry,
+    actor::mojom::ActionResultCode result_code,
+    std::string_view error_message) {
+  if (!async_entry) {
+    return;
+  }
+  TTCJournalDetailsBuilder details;
+  details.Add("result_code", static_cast<int64_t>(result_code));
+  if (result_code == actor::mojom::ActionResultCode::kOk) {
+    details.SetSummary("Tool finished: ok");
+  } else {
+    std::string error = error_message.empty() ? base::ToString(result_code)
+                                              : std::string(error_message);
+    details.SetSummary(base::StrCat({"Tool finished: ", error}))
+        .AddError(error);
+  }
+  async_entry->EndEntry(std::move(details).Build());
+}
+
+// Completes `async_entry` as cancelled.
+void CancelActuationAsyncEntry(
+    std::unique_ptr<TTCJournal::PendingAsyncEntry> async_entry) {
+  if (!async_entry) {
+    return;
+  }
+  async_entry->EndEntry(TTCJournalDetailsBuilder()
+                            .SetSummary("Tool finished: cancelled")
+                            .Add("result", "cancelled")
+                            .Build());
+}
+
 }  // namespace
 
 // Default intervention delegate for TTC tasks.
@@ -115,16 +183,9 @@ void InjectDataIntoAction(optimization_guide::proto::Action& action,
 
 #pragma mark - Initializers
 
-TtcActuationHandler::TtcActuationHandler(actor::ActorService* actor_service,
-                                         WebStateList* web_state_list,
-                                         SessionID browser_id)
-    : intervention_delegate_([[TtcTaskInterventionHandler alloc] init]) {
-  if (actor_service && web_state_list && browser_id.is_valid()) {
-    actor_service_ = actor_service;
-    web_state_list_ = web_state_list;
-    browser_id_ = browser_id;
-  }
-}
+TtcActuationHandler::TtcActuationHandler(actor::ActorService* actor_service)
+    : actor_service_(actor_service),
+      intervention_delegate_([[TtcTaskInterventionHandler alloc] init]) {}
 
 TtcActuationHandler::~TtcActuationHandler() {
   Disconnect();
@@ -148,64 +209,28 @@ void TtcActuationHandler::Disconnect() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   weak_ptr_factory_.InvalidateWeakPtrs();
-  web_state_list_ = nullptr;
-  browser_id_.reset();
   intervention_delegate_ = nil;
 
-  if (actor_service_) {
-    for (const auto& [task_id, _] : task_to_web_state_id_map_) {
-      actor_service_->StopTask(task_id,
-                               actor::ActorTaskStoppedReason::kShutdown);
-    }
-    actor_service_ = nullptr;
-  }
-
-  task_to_web_state_id_map_.clear();
-
-  std::map<actor::ActorTaskId, ActuationCallback> callbacks =
-      std::exchange(active_callbacks_, {});
-  for (auto& [task_id, callback] : callbacks) {
-    if (callback) {
-      std::move(callback).Run(ttc::ToolResponse::Error(
-          actor::mojom::ActionResultCode::kExecutorDestroyed));
-    }
-  }
+  actor::ActorTaskId task_id = std::exchange(task_id_, actor::ActorTaskId());
+  actor::ActorService* actor_service = std::exchange(actor_service_, nullptr);
+  ActuationCallback callback = std::move(active_callback_);
+  CancelActuationAsyncEntry(std::move(active_async_entry_));
   journal_.reset();
+
+  if (!task_id.is_null() && actor_service) {
+    actor_service->StopTask(task_id, actor::ActorTaskStoppedReason::kShutdown);
+  }
+
+  if (callback) {
+    std::move(callback).Run(ttc::ToolResponse::Error(
+        actor::mojom::ActionResultCode::kExecutorDestroyed));
+  }
 }
 
 #pragma mark - Public Actuation
 
-actor::ActorTaskId TtcActuationHandler::CreateTask(const std::string& title) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  actor::ActorTaskId task_id = actor::ActorTaskId();
-  if (!web_state_list_ || !browser_id_.has_value() || !actor_service_) {
-    return task_id;
-  }
-
-  web::WebState* active_web_state = web_state_list_->GetActiveWebState();
-  if (!active_web_state) {
-    return task_id;
-  }
-
-  if (active_web_state->GetBrowserState() &&
-      active_web_state->GetBrowserState()->IsOffTheRecord()) {
-    return task_id;
-  }
-
-  task_id = actor_service_->CreateTask(
-      title,
-      actor::TaskSourceInfo(actor::TaskSourceInfo::Client::kTtc,
-                            /*id=*/std::nullopt),
-      /*allow_incognito_web_states=*/false);
-  actor_service_->AddControlledWebState(task_id, active_web_state);
-  actor_service_->SetTaskInterventionDelegate(task_id, intervention_delegate_);
-  task_to_web_state_id_map_[task_id] = active_web_state->GetUniqueIdentifier();
-  return task_id;
-}
-
 void TtcActuationHandler::ProcessToolCall(const ttc::ToolRequest& tool_request,
-                                          actor::ActorTaskId task_id,
+                                          web::WebState* active_web_state,
                                           ActuationCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK(callback);
@@ -216,117 +241,204 @@ void TtcActuationHandler::ProcessToolCall(const ttc::ToolRequest& tool_request,
         request.error() == ttc::kErrorMessageUnknownTool
             ? actor::mojom::ActionResultCode::kToolUnknown
             : actor::mojom::ActionResultCode::kArgumentsInvalid;
-    std::move(callback).Run(ttc::ToolResponse::Error(code));
+    FailWithError(std::move(callback), code, request.error());
     return;
   }
 
-  DispatchActuationRequest(*request, task_id, std::move(callback));
+  DispatchActuationRequest(*request, active_web_state, std::move(callback));
 }
 
 void TtcActuationHandler::DispatchActuationRequest(
     const TtcActuationRequest& request,
-    actor::ActorTaskId task_id,
+    web::WebState* active_web_state,
     ActuationCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK(callback);
 
-  auto task_it = task_to_web_state_id_map_.find(task_id);
-  if (!actor_service_ || task_it == task_to_web_state_id_map_.end()) {
-    std::move(callback).Run(ttc::ToolResponse::Error(
-        actor::mojom::ActionResultCode::kTaskWentAway));
+  if (!actor_service_) {
+    FailWithError(std::move(callback),
+                  actor::mojom::ActionResultCode::kTaskWentAway);
+    return;
+  }
+
+  // The task can be stopped externally (e.g., if the user closes a controlled
+  // tab or stops the task from the UI), in which case it is replaced by a new
+  // one and any in-flight callback is failed with `kTaskWentAway`.
+  if (!task_id_.is_null() &&
+      !actor_service_->GetActiveTaskState().has_value()) {
+    weak_ptr_factory_.InvalidateWeakPtrs();
+    task_id_ = actor::ActorTaskId();
+    ActuationCallback active_callback = std::move(active_callback_);
+    CancelActuationAsyncEntry(std::move(active_async_entry_));
+    if (active_callback) {
+      std::move(active_callback)
+          .Run(ttc::ToolResponse::Error(
+              actor::mojom::ActionResultCode::kTaskWentAway));
+    }
+  }
+
+  web::BrowserState* browser_state =
+      active_web_state ? active_web_state->GetBrowserState() : nullptr;
+  if (!browser_state || browser_state->IsOffTheRecord()) {
+    FailWithError(std::move(callback),
+                  actor::mojom::ActionResultCode::kTabWentAway);
     return;
   }
 
   if (request.action_protos.empty()) {
-    std::move(callback).Run(ttc::ToolResponse::Error(
-        actor::mojom::ActionResultCode::kEmptyActionSequence));
+    FailWithError(std::move(callback),
+                  actor::mojom::ActionResultCode::kEmptyActionSequence);
     return;
   }
 
-  if (active_callbacks_.find(task_id) != active_callbacks_.end()) {
-    std::move(callback).Run(ttc::ToolResponse::Error(
-        actor::mojom::ActionResultCode::kExecutionEngineExistingAction));
+  if (active_callback_) {
+    FailWithError(
+        std::move(callback),
+        actor::mojom::ActionResultCode::kExecutionEngineExistingAction);
     return;
   }
 
-  web::WebStateID web_state_id = task_it->second;
+  web::WebStateID web_state_id = active_web_state->GetUniqueIdentifier();
+  SessionID window_id = GetBrowserIdForWebState(active_web_state);
   std::vector<optimization_guide::proto::Action> actions;
   actions.reserve(request.action_protos.size());
 
   for (const std::string& proto_bytes : request.action_protos) {
     optimization_guide::proto::Action action;
     if (!action.ParseFromString(proto_bytes)) {
-      std::move(callback).Run(ttc::ToolResponse::Error(
-          actor::mojom::ActionResultCode::kArgumentsInvalid));
+      FailWithError(std::move(callback),
+                    actor::mojom::ActionResultCode::kArgumentsInvalid);
       return;
     }
-    InjectDataIntoAction(action, web_state_id,
-                         browser_id_.value_or(SessionID::InvalidValue()));
+    InjectDataIntoAction(action, web_state_id, window_id);
     actions.push_back(std::move(action));
   }
 
-  active_callbacks_[task_id] = std::move(callback);
+  if (task_id_.is_null()) {
+    task_id_ = actor_service_->CreateTask(
+        kTtcTaskTitle,
+        actor::TaskSourceInfo(actor::TaskSourceInfo::Client::kTtc,
+                              /*id=*/std::nullopt),
+        /*allow_incognito_web_states=*/false);
+    if (task_id_.is_null()) {
+      FailWithError(std::move(callback),
+                    actor::mojom::ActionResultCode::kTaskWentAway);
+      return;
+    }
+    actor_service_->SetTaskInterventionDelegate(task_id_,
+                                                intervention_delegate_);
+  }
+  actor_service_->AddControlledWebState(task_id_, active_web_state);
+
+  active_callback_ = std::move(callback);
+  active_async_entry_ = BeginActuationAsyncEntry(actions);
 
   actor_service_->PerformActions(
-      task_id, actions, request.task_update,
+      task_id_, std::move(actions), request.task_update,
       base::BindOnce(&TtcActuationHandler::OnPerformActionsFinished,
-                     weak_ptr_factory_.GetWeakPtr(), task_id));
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
-void TtcActuationHandler::StopTask(actor::ActorTaskId task_id,
-                                   actor::ActorTaskStoppedReason reason) {
+void TtcActuationHandler::StopTask(actor::ActorTaskStoppedReason reason) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  auto task_it = task_to_web_state_id_map_.find(task_id);
-  if (task_it == task_to_web_state_id_map_.end()) {
-    return;
-  }
-  task_to_web_state_id_map_.erase(task_it);
+  weak_ptr_factory_.InvalidateWeakPtrs();
 
-  auto callback_it = active_callbacks_.find(task_id);
-  if (callback_it != active_callbacks_.end()) {
-    ActuationCallback callback = std::move(callback_it->second);
-    active_callbacks_.erase(callback_it);
-    if (callback) {
-      std::move(callback).Run(ttc::ToolResponse::Error(
-          actor::mojom::ActionResultCode::kTaskWentAway));
-    }
-  }
+  actor::ActorTaskId task_id = std::exchange(task_id_, actor::ActorTaskId());
+  ActuationCallback callback = std::move(active_callback_);
+  CancelActuationAsyncEntry(std::move(active_async_entry_));
 
-  if (actor_service_) {
+  if (!task_id.is_null() && actor_service_) {
     actor_service_->StopTask(task_id, reason);
+  }
+
+  if (callback) {
+    std::move(callback).Run(ttc::ToolResponse::Error(
+        actor::mojom::ActionResultCode::kTaskWentAway));
   }
 }
 
 #pragma mark - Private
 
 void TtcActuationHandler::OnPerformActionsFinished(
-    actor::ActorTaskId task_id,
     actor::PerformActionsResult result) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  auto it = active_callbacks_.find(task_id);
-  if (it == active_callbacks_.end()) {
+  if (!active_callback_) {
     return;
   }
-  ActuationCallback callback = std::move(it->second);
-  active_callbacks_.erase(it);
+  ActuationCallback callback = std::move(active_callback_);
+  std::unique_ptr<TTCJournal::PendingAsyncEntry> async_entry =
+      std::move(active_async_entry_);
 
   actor::mojom::ActionResultCode result_code =
       actor::mojom::ActionResultCode::kOk;
+  std::string error_message;
 
   for (const auto& action_result : result.action_results) {
     if (!action_result.tool_result.IsOk()) {
       result_code = action_result.tool_result.code();
+      error_message =
+          actor::GetToolExecutionResultMessage(action_result.tool_result);
       break;
     }
   }
 
-  if (callback) {
-    std::move(callback).Run(result_code == actor::mojom::ActionResultCode::kOk
-                                ? ttc::ToolResponse::Success()
-                                : ttc::ToolResponse::Error(result_code));
+  // Resets `task_id_` if the task was torn down mid-execution so the next
+  // actuation request lazily creates a replacement task.
+  if (result_code == actor::mojom::ActionResultCode::kTaskWentAway) {
+    task_id_ = actor::ActorTaskId();
   }
+
+  EndActuationAsyncEntry(std::move(async_entry), result_code, error_message);
+
+  std::move(callback).Run(result_code == actor::mojom::ActionResultCode::kOk
+                              ? ttc::ToolResponse::Success()
+                              : ttc::ToolResponse::Error(result_code));
+}
+
+#pragma mark - Journal Logging
+
+void TtcActuationHandler::FailWithError(ActuationCallback callback,
+                                        actor::mojom::ActionResultCode code,
+                                        std::string_view reason) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (journal_) {
+    std::string error =
+        reason.empty() ? base::ToString(code) : std::string(reason);
+    journal_->LogError(TTCJournalComponent::kActuation,
+                       "ActuationDispatchRejected",
+                       TTCJournalDetailsBuilder()
+                           .SetSummary(base::StrCat({"Tool rejected: ", error}))
+                           .Add("result_code", static_cast<int64_t>(code))
+                           .AddError(error)
+                           .Build());
+  }
+  std::move(callback).Run(ttc::ToolResponse::Error(code));
+}
+
+std::unique_ptr<TTCJournal::PendingAsyncEntry>
+TtcActuationHandler::BeginActuationAsyncEntry(
+    const std::vector<optimization_guide::proto::Action>& actions) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (!journal_) {
+    return nullptr;
+  }
+  std::vector<std::string> action_names;
+  action_names.reserve(actions.size());
+  for (const optimization_guide::proto::Action& action : actions) {
+    action_names.push_back(
+        actor::ActorActionCaseToToolName(action.action_case())
+            .value_or("unknown"));
+  }
+  std::string joined_names = base::JoinString(action_names, ", ");
+  return journal_->BeginAsyncEvent(
+      TTCJournalComponent::kActuation, "ActuationExecute",
+      TTCJournalDetailsBuilder()
+          .SetSummary(base::StrCat({"Tool started: ", joined_names}))
+          .Add("task_id", task_id_.value())
+          .Add("actions", actions.size())
+          .Build());
 }
 
 @implementation TtcTaskInterventionHandler

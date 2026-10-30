@@ -26,7 +26,7 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/base/window_open_disposition.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "url/gurl.h"
 
 namespace extensions {
@@ -123,14 +123,14 @@ IN_PROC_BROWSER_TEST_F(TerminalPrivateBrowserTest, OpenCroshProcessChecks) {
 IN_PROC_BROWSER_TEST_F(TerminalPrivateBrowserTest,
                        OnProcessOutputSendToCorrectRenderer) {
   // Open 2 tabs in crosh.  Crosh will echo input for tests.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(),
-                                           GURL("chrome-untrusted://crosh/")));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), GURL("chrome-untrusted://crosh/html/crosh.html")));
   content::WebContents* tab1 =
       browser()->GetTabStripModel()->GetActiveWebContents();
 
   ASSERT_TRUE(ui_test_utils::NavigateToURLWithDisposition(
-      browser(), GURL("chrome-untrusted://crosh/"),
-      WindowOpenDisposition::kNewForegroundTab,
+      browser(), GURL("chrome-untrusted://crosh/html/crosh.html"),
+      ui::mojom::WindowOpenDisposition::kNewForegroundTab,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP));
   content::WebContents* tab2 =
       browser()->GetTabStripModel()->GetActiveWebContents();

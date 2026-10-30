@@ -154,6 +154,7 @@ android_library("chrome_test_java_helper") {
     "//chrome/browser/preferences:pref_service_java",
     "//chrome/browser/prefetch/android:java",
     "//chrome/browser/preloading/android:java",
+    "//chrome/browser/printing/android:java",
     "//chrome/browser/privacy_guide/android:java",
     "//chrome/browser/privacy_sandbox/android:java",
     "//chrome/browser/privacy_sandbox/android:test_support_java",
@@ -209,7 +210,6 @@ android_library("chrome_test_java_helper") {
     "//chrome/browser/ui/android/hats:java",
     "//chrome/browser/ui/android/hats/test:test_support_java",
     "//chrome/browser/ui/android/layouts:java",
-    "//chrome/browser/ui/android/layouts/test:java",
     "//chrome/browser/ui/android/logo:java",
     "//chrome/browser/ui/android/multiwindow:java",
     "//chrome/browser/ui/android/native_page:java",
@@ -313,7 +313,6 @@ android_library("chrome_test_java_helper") {
     "//components/language/android:java",
     "//components/location/android:location_java",
     "//components/media_router/browser/android:java",
-    "//components/media_router/browser/android:test_support_java",
     "//components/messages/android:java",
     "//components/messages/android/internal:java",
     "//components/messages/android/internal:java_resources",
@@ -701,7 +700,11 @@ android_library("chrome_test_java_org.chromium.chrome.browser.compositor") {
     "src/org/chromium/chrome/browser/compositor/PerformancePTTest.java",
     "src/org/chromium/chrome/browser/compositor/layouts/LayoutManagerTest.java",
     "src/org/chromium/chrome/browser/compositor/layouts/content/TabContentManagerTest.java",
+    "src/org/chromium/chrome/browser/compositor/overlays/strip/MultiTabDragDropTest.java",
+    "src/org/chromium/chrome/browser/compositor/overlays/strip/TabDragDropTest.java",
+    "src/org/chromium/chrome/browser/compositor/overlays/strip/TabGroupDragDropTest.java",
     "src/org/chromium/chrome/browser/compositor/overlays/strip/TabStripContextMenuTest.java",
+    "src/org/chromium/chrome/browser/compositor/overlays/strip/TabStripDragDropTestBase.java",
     "src/org/chromium/chrome/browser/compositor/overlays/strip/TabStripGroupContextMenuTest.java",
     "src/org/chromium/chrome/browser/compositor/overlays/strip/TabStripNavigationFailureTest.java",
     "src/org/chromium/chrome/browser/compositor/overlays/strip/TabStripPinUnpinTabsTest.java",
@@ -1790,7 +1793,6 @@ android_library("chrome_test_java_various") {
     "src/org/chromium/chrome/browser/contextmenu/ContextMenuTest.java",
     "src/org/chromium/chrome/browser/contextmenu/CustomTabContextMenuTest.java",
     "src/org/chromium/chrome/browser/desktop_windowing/AppHeaderCoordinatorBrowserTest.java",
-    "src/org/chromium/chrome/browser/device_lock/DeviceLockActivityLauncherImplTest.java",
     "src/org/chromium/chrome/browser/device_lock/DeviceLockActivityTest.java",
     "src/org/chromium/chrome/browser/document/LauncherActivityTest.java",
     "src/org/chromium/chrome/browser/dragdrop/DragAndDropLauncherActivityTest.java",
@@ -1835,7 +1837,6 @@ android_library("chrome_test_java_various") {
     "src/org/chromium/chrome/browser/popups/PopupMultiwindowPTTest.java",
     "src/org/chromium/chrome/browser/popups/testhtmls/PopupLauncherPageStation.java",
     "src/org/chromium/chrome/browser/previewtab/PreviewTabTest.java",
-    "src/org/chromium/chrome/browser/printing/PrintingControllerTest.java",
     "src/org/chromium/chrome/browser/push_messaging/PushMessagingTest.java",
     "src/org/chromium/chrome/browser/read_later/ReadLaterContextMenuTest.java",
     "src/org/chromium/chrome/browser/reengagement/ReengagementNotificationControllerIntegrationTest.java",
@@ -1879,6 +1880,12 @@ android_library("chrome_test_java_various") {
     "src/org/chromium/chrome/test/memory_leaks/LeakCanaryCheckerLeakDetectionTest.java",
     "src/org/chromium/chrome/test/memory_leaks/PublicTransitLeakTest.java",
   ]
+
+  if (enable_printing) {
+    sources += [
+      "src/org/chromium/chrome/browser/printing/PrintingControllerTest.java",
+    ]
+  }
 
   data = [ "//chrome/test/data/click.html" ]
 

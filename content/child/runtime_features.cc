@@ -518,7 +518,7 @@ void ResolveInvalidConfigurations() {
   // InstallElement cannot be enabled without the support of the browser
   // process.
   if (!base::FeatureList::IsEnabled(blink::features::kInstallElement)) {
-    LOG_IF(WARNING, WebRuntimeFeatures::IsInstallElementEnabledByRuntimeFlag())
+    LOG_IF(WARNING, WebRuntimeFeatures::IsInstallElementEnabled())
         << "InstallElement cannot be enabled in this configuration. Use --"
         << switches::kEnableFeatures << "="
         << blink::features::kInstallElement.name << " instead.";
@@ -528,8 +528,7 @@ void ResolveInvalidConfigurations() {
   // WebAppInstallation cannot be enabled without the support of the browser
   // process.
   if (!base::FeatureList::IsEnabled(blink::features::kWebAppInstallation)) {
-    LOG_IF(WARNING,
-           WebRuntimeFeatures::IsWebAppInstallationEnabledByRuntimeFlag())
+    LOG_IF(WARNING, WebRuntimeFeatures::IsWebAppInstallationEnabled())
         << "WebAppInstallation cannot be enabled in this configuration. Use "
            "--"
         << switches::kEnableFeatures << "="
@@ -542,6 +541,18 @@ void ResolveInvalidConfigurations() {
   if (!base::FeatureList::IsEnabled(
           network::features::kCSPScriptSrcHashesInV1)) {
     WebRuntimeFeatures::EnableCSPHashesV1(false);
+  }
+
+  if (!base::FeatureList::IsEnabled(
+          blink::features::kPermissionsPolicyForSharedWorkers)) {
+    LOG_IF(WARNING,
+           WebRuntimeFeatures::IsPermissionsPolicyForSharedWorkersEnabled())
+        << "PermissionsPolicyForSharedWorkers cannot be enabled in this "
+           "configuration. Use --"
+        << switches::kEnableFeatures << "="
+        << blink::features::kPermissionsPolicyForSharedWorkers.name
+        << " instead.";
+    WebRuntimeFeatures::EnablePermissionsPolicyForSharedWorkers(false);
   }
 
   // LegacyAbstractRange (containers on AbstractRange.prototype) is the

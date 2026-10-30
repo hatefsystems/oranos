@@ -136,6 +136,7 @@ _CONFIG = [
             'base::Milliseconds',
             'base::Minutes',
             'base::Nanoseconds',
+            'base::NoDestructor',
             'base::NotFatalUntil',
             'base::NotNullTag',
             'base::optional_ref',
@@ -1107,6 +1108,7 @@ _CONFIG = [
         'paths': ['third_party/blink/renderer/core/animation'],
         'allowed': [
             '[a-z_]+_functions::.+',
+            'cc::AnimationCurveProxy',
             'cc::ScrollTimeline',
         ],
     },
@@ -2357,7 +2359,7 @@ _CONFIG = [
         ],
         # base::RefCounted and base::RefCountedThreadSafe are prohibited in
         # platform/ as defined above, but wtf/ needs them to define their WTF
-        # subclasses and CrossThreadCopier.
+        # subclasses.
         'allowed': ['base::RefCounted', 'base::RefCountedThreadSafe'],
     },
     {
@@ -2467,7 +2469,12 @@ _CONFIG = [
             'third_party/blink/renderer/core/paint/theme_painter.cc',
             'third_party/blink/renderer/core/paint/theme_painter_default.cc',
         ],
-        'allowed': ['ui::NativeTheme.*', 'ui::color_utils.*', 'ui::kColor.*'],
+        'allowed': [
+            'ui::NativeTheme.*',
+            'ui::color_utils.*',
+            'ui::kColor.*',
+            'color_utils::IsDark',
+        ],
     },
     {
         'paths': [
@@ -3218,6 +3225,15 @@ _CONFIG = [
             'third_party/blink/public/platform/web_surface_layer_bridge.h',
         ],
         'allowed': ['viz::FrameSinkId'],
+    },
+    {
+        'paths': [
+            'third_party/blink/public/web/web_frame_widget.h',
+        ],
+        'allowed': [
+            'display::ScreenInfo',
+            'display::ScreenInfos',
+        ],
     },
     {
         'paths': [

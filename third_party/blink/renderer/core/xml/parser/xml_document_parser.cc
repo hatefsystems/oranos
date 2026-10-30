@@ -529,10 +529,6 @@ void XMLDocumentParser::end() {
 }
 
 void XMLDocumentParser::Finish() {
-  // FIXME: We should DCHECK(!m_parserStopped) here, since it does not
-  // makes sense to call any methods on DocumentParser once it's been stopped.
-  // However, FrameLoader::stop calls DocumentParser::finish unconditionally.
-
   Flush();
   if (IsDetached())
     return;
@@ -900,6 +896,7 @@ XMLDocumentParser::XMLDocumentParser(Document& document,
       script_start_position_(TextPosition::BelowRangePosition()),
       parsing_fragment_(false) {
   CHECK(!RuntimeEnabledFeatures::XMLParsingRustEnabled());
+  UseCounter::Count(document_, WebFeature::kXMLDocumentParserLibxml2);
   // This is XML being used as a document resource.
   if (frame_view && IsA<XMLDocument>(document))
     UseCounter::Count(document, WebFeature::kXMLDocument);
@@ -929,6 +926,7 @@ XMLDocumentParser::XMLDocumentParser(DocumentFragment* fragment,
   // CHECK(!RuntimeEnabledFeatures::XMLParsingRustEnabled()) here when there is
   // a Rust implementation for ParseDocumentFagment() and this is no longer
   // reached.
+  UseCounter::Count(document_, WebFeature::kXMLDocumentParserLibxml2);
 
   // Step 2 of
   // https://html.spec.whatwg.org/C/#xml-fragment-parsing-algorithm

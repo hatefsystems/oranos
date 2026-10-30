@@ -210,6 +210,7 @@ public class VerticalTabListCoordinator {
     private final VerticalTabPinnedDropIndicatorDecoration mPinnedDropIndicatorDecoration;
     private final TabModelSelectorTabModelObserver mTabModelSelectorTabModelObserver;
     private final NonNullObservableSupplier<Boolean> mVerticalTabsActiveSupplier;
+    private final SettableNonNullObservableSupplier<Integer> mVerticalTabsWidthSupplier;
     private final VerticalTabRailCollapseController mCollapseController;
     private final VerticalTabRailHoverController mRailHoverController;
     private final Callback<Boolean> mActiveObserver = this::setActive;
@@ -415,6 +416,7 @@ public class VerticalTabListCoordinator {
             BackPressManager backPressManager) {
         mCanActivateTabLayoutToggleMenuSupplier = canActivateTabLayoutToggleMenuSupplier;
         mVerticalTabsActiveSupplier = verticalTabsActiveSupplier;
+        mVerticalTabsWidthSupplier = verticalTabsWidthSupplier;
         mTabModelSelector = tabModelSelector;
         mProfile = profile;
         mWindowAndroid = windowAndroid;
@@ -555,12 +557,18 @@ public class VerticalTabListCoordinator {
         // Handle right-clicks on the root background space and fully consume the window event.
         mContainerView.setOnContextClickListener(
                 createEmptySpaceContextClickListener(activity, mContainerView));
+        mContainerView.setOnTouchDownListener(this::dismissActiveContextMenus);
 
         mContainerLayoutChangeListener =
                 (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
                     int width = right - left;
                     boolean isVisible = mContainerView.getVisibility() == View.VISIBLE;
-                    verticalTabsWidthSupplier.set(isVisible ? width : 0);
+                    if (mCollapseController.getEffectiveRailCollapseState()
+                                    != RailCollapseState.EXPANDED_FOR_HOVERING
+                            && mCollapseController.getRailCollapseStateSupplier().get()
+                                    != RailCollapseState.EXPANDED_FOR_HOVERING) {
+                        mVerticalTabsWidthSupplier.set(isVisible ? width : 0);
+                    }
                     if (isVisible && width > 0 && width != (oldRight - oldLeft)) {
                         updatePinnedLayoutSpanCount();
                     }
@@ -933,6 +941,7 @@ public class VerticalTabListCoordinator {
 
     public void destroy() {
         mContainerView.setKeyEventListener(null);
+        mContainerView.setOnTouchDownListener(/* listener= */ null);
         mPinnedTabsModelList.removeObserver(mPinnedTabsListObserver);
         mPinnedTabsMediator.destroy();
         mPinnedTabsRecyclerView.setAdapter(null);
@@ -1073,6 +1082,13 @@ public class VerticalTabListCoordinator {
         mContainerModel.set(VerticalTabListProperties.COLLAPSE_STATE, railCollapseState);
         updatePinnedLayoutSpanCount();
         updatePinnedTabsSeparatorVisibility();
+    }
+
+    /**
+     * Updates the reserved width of the vertical tab rail in {@code mVerticalTabsWidthSupplier}.
+     */
+    void setVerticalTabsReservedWidth(int widthPx) {
+        mVerticalTabsWidthSupplier.set(widthPx);
     }
 
     /**
@@ -1462,7 +1478,6 @@ public class VerticalTabListCoordinator {
                 mBrowserControlsStateProvider,
                 mMultiThumbnailCardProvider,
                 tabContentManager,
-                /* layerTitleCacheSupplier= */ null,
                 mTabModelSelector,
                 () -> {
                     if (mTabSwitcherDragHandler.hasActiveDragShadow()) {
@@ -2248,6 +2263,7 @@ public class VerticalTabListCoordinator {
                             this::onContextMenuDismissed);
         }
         mTabItemHoverController.hideHoverCard();
+        dismissActiveContextMenus();
         mTabGroupContextMenuCoordinator.showMenu(rectProvider, tabGroupId);
         return true;
     }
@@ -2307,6 +2323,7 @@ public class VerticalTabListCoordinator {
                             this::onContextMenuDismissed);
         }
         mTabItemHoverController.hideHoverCard();
+        dismissActiveContextMenus();
         mTabContextMenuCoordinator.showMenu(rectProvider, anchorInfo);
         return true;
     }
@@ -2327,6 +2344,7 @@ public class VerticalTabListCoordinator {
 
         boolean isIncognito = mTabModelSelector.getCurrentModel().isIncognitoBranded();
         mTabItemHoverController.hideHoverCard();
+        dismissActiveContextMenus();
         mTabStripContextMenuCoordinator.showMenu(rectProvider, isIncognito, activity);
     }
 
@@ -2339,6 +2357,7 @@ public class VerticalTabListCoordinator {
 
         boolean isIncognito = mTabModelSelector.getCurrentModel().isIncognitoBranded();
         mTabItemHoverController.hideHoverCard();
+        dismissActiveContextMenus();
         mCollapseButtonContextMenuCoordinator.showMenu(rectProvider, isIncognito);
     }
 

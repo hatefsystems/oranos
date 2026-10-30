@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/drive_picker_host/drive_picker_host_view.h"
 
 #include "chrome/browser/ui/browser_window/test/mock_browser_window_interface.h"
+#include "chrome/browser/ui/prefs/prefs_tab_helper.h"
 #include "chrome/browser/ui/webui/drive_picker_host/drive_picker_host_ui.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/testing_profile.h"
@@ -17,12 +18,14 @@
 #include "content/public/test/scoped_web_ui_controller_factory_registration.h"
 #include "content/public/test/test_renderer_host.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "third_party/blink/public/common/renderer_preferences/renderer_preferences.h"
 #include "third_party/blink/public/mojom/window_features/window_features.mojom.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/compositor/layer.h"
 #include "ui/gfx/geometry/rounded_corners_f.h"
+#include "ui/gfx/geometry/size.h"
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/view_utils.h"
 #include "ui/views/widget/widget.h"
@@ -97,6 +100,22 @@ TEST_F(DrivePickerHostViewTest, Initialization) {
 
   EXPECT_EQ(view->children().size(), 1u);
   EXPECT_FALSE(view->GetBackground());
+}
+
+// Regression test for crbug.com/535616749: the hosted WebContents must get
+// Chrome's renderer preferences. Otherwise Blink uses its built-in default
+// focus ring color, which draws an orange line around the picker while it
+// loads.
+TEST_F(DrivePickerHostViewTest, AppliesChromeRendererPreferences) {
+  auto view = std::make_unique<DrivePickerHostView>(
+      profile(), browser_window_interface(),
+      drive_picker_host::DrivePickerHostRequest::RequestType::kPickerUi);
+
+  content::WebContents* contents = view->GetWebContents();
+  ASSERT_TRUE(contents);
+  EXPECT_TRUE(PrefsTabHelper::FromWebContents(contents));
+  EXPECT_NE(contents->GetMutableRendererPrefs()->focus_ring_color,
+            blink::RendererPreferences().focus_ring_color);
 }
 
 TEST_F(DrivePickerHostViewTest, TriggerDrivePickerHostUi) {
@@ -180,6 +199,46 @@ TEST_F(DrivePickerHostViewTest, EscapeAcceleratorClosesWidget) {
   view_ptr->AcceleratorPressed(escape_accelerator);
 
   EXPECT_TRUE(widget->IsClosed());
+}
+
+TEST_F(DrivePickerHostViewTest, OnTransitionToConsentRestoresConsentSize) {
+  auto view = std::make_unique<DrivePickerHostView>(
+      profile(), browser_window_interface(),
+      drive_picker_host::DrivePickerHostRequest::RequestType::kConsentDialog);
+  const gfx::Size consent_preferred_size = view->GetPreferredSize();
+
+  auto widget = std::make_unique<views::Widget>();
+  views::Widget::InitParams params(
+      views::Widget::InitParams::CLIENT_OWNS_WIDGET,
+      views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
+  params.context = GetContext();
+  widget->Init(std::move(params));
+  DrivePickerHostView* view_ptr = widget->SetContentsView(std::move(view));
+  widget->CenterWindow(consent_preferred_size);
+  const gfx::Size consent_widget_size =
+      widget->GetClientAreaBoundsInScreen().size();
+
+  view_ptr->OnTransitionToError();
+  const gfx::Size error_widget_size =
+      widget->GetClientAreaBoundsInScreen().size();
+  EXPECT_EQ(view_ptr->GetPreferredSize(), error_widget_size);
+  EXPECT_NE(consent_preferred_size, view_ptr->GetPreferredSize());
+  EXPECT_NE(consent_widget_size, error_widget_size);
+
+  // Retrying ConsentKit from the error screen resizes the dialog back to the
+  // consent size.
+  view_ptr->OnTransitionToConsent();
+  EXPECT_EQ(consent_preferred_size, view_ptr->GetPreferredSize());
+  EXPECT_EQ(consent_widget_size, widget->GetClientAreaBoundsInScreen().size());
+
+  // Once the picker is showing, a stray OnTransitionToConsent() must not
+  // shrink the dialog back to the consent size.
+  view_ptr->OnTransitionToPicker();
+  const gfx::Size picker_widget_size =
+      widget->GetClientAreaBoundsInScreen().size();
+  EXPECT_NE(consent_widget_size, picker_widget_size);
+  view_ptr->OnTransitionToConsent();
+  EXPECT_EQ(picker_widget_size, widget->GetClientAreaBoundsInScreen().size());
 }
 
 TEST_F(DrivePickerHostViewTest, OpenURLFromTab_ForwardsToBrowserWindow) {

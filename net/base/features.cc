@@ -34,6 +34,9 @@ BASE_FEATURE(kAlpsForHttp2, base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kAsyncRetryOnTooManyConnectionErrors,
              base::FEATURE_ENABLED_BY_DEFAULT);
 
+BASE_FEATURE(kClearAuthControllersOnProxyChange,
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
 BASE_FEATURE(kDeriveConnectionTypeFromCapabilities,
              base::FEATURE_ENABLED_BY_DEFAULT);
 
@@ -337,7 +340,7 @@ BASE_FEATURE_PARAM(int,
                    "reuse_delay_sec",
                    120);
 BASE_FEATURE_PARAM(bool,
-                   kTcpPortRandomizationMacForLoopback,
+                   kTcpPortRandomizationMacForPrivateRoutes,
                    &kTcpPortRandomizationMac,
                    false);
 #endif
@@ -875,6 +878,8 @@ BASE_FEATURE(kQuicLongerIdleConnectionTimeout,
 BASE_FEATURE(kQuicAlwaysCancelPreExistingProbingOnMigration,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+BASE_FEATURE(kQuicEnablePortMigration, base::FEATURE_ENABLED_BY_DEFAULT);
+
 BASE_FEATURE(kQuicWaitForNewNetworkTimeout, base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE_PARAM(base::TimeDelta,
                    kQuicWaitForNewNetworkTimeoutParam,
@@ -1123,6 +1128,13 @@ BASE_FEATURE_ENUM_PARAM(DiskCacheBackend,
                         &kShaderDiskCacheBackendTypeOptions);
 
 BASE_FEATURE(kCookieMonsterPerKeyDelete, base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kCookieProcessBoundEncryptOnlyImportant,
+             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE_PARAM(bool,
+                   kCookieProcessBoundEncryptHttpOnly,
+                   &kCookieProcessBoundEncryptOnlyImportant,
+                   false);
 
 BASE_FEATURE(kHttpChunkedDecoderInRust, base::FEATURE_DISABLED_BY_DEFAULT);
 

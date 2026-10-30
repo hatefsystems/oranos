@@ -76,8 +76,8 @@ public class QuickDeleteDialogDelegateTest {
     public ChromeRenderTestRule mRenderTestRule =
             ChromeRenderTestRule.Builder.withPublicCorpus()
                     .setBugComponent(ChromeRenderTestRule.Component.PRIVACY)
-                    .setRevision(1)
-                    .setDescription("Add Time range label to spinner")
+                    .setRevision(2)
+                    .setDescription("Vectorize expand_more and expand_less icons")
                     .build();
 
     @Mock private SyncService mMockSyncService;
@@ -191,12 +191,7 @@ public class QuickDeleteDialogDelegateTest {
     @Feature({"RenderTest"})
     public void testQuickDeleteDialogView_WithoutTabsOrHistory() throws IOException {
         // Close all tabs, which goes to the tab switcher.
-        RegularTabSwitcherStation tabSwitcher =
-                ChromeTriggers.closeAllTabsProgrammaticallyTo(mPage)
-                        .arriveAt(
-                                new RegularTabSwitcherStation(
-                                        /* regularTabsExist= */ false,
-                                        /* incognitoTabsExist= */ false));
+        RegularTabSwitcherStation tabSwitcher = ChromeTriggers.closeAllTabsProgrammatically(mPage);
         assertEquals(0, getNumberOfTabsInCurrentTabModel());
 
         QuickDeleteDialogFacility dialog = tabSwitcher.openAppMenu().clearBrowsingData();

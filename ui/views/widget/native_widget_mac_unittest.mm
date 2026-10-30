@@ -47,6 +47,7 @@
 #include "ui/base/ui_base_features.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/recyclable_compositor_mac.h"
+#include "ui/display/screen.h"
 #import "ui/events/test/cocoa_test_event_utils.h"
 #include "ui/events/test/event_generator.h"
 #import "ui/gfx/mac/coordinate_conversion.h"
@@ -98,6 +99,7 @@ class WidgetModalVisibilityObserver : public views::WidgetObserver {
 // Test NSWindow that provides hooks via method overrides to verify behavior.
 @interface NativeWidgetMacTestWindow : NativeWidgetMacNSWindow
 @property(readonly, nonatomic) int invalidateShadowCount;
+@property(readonly, nonatomic) int setStyleMaskCount;
 @property(assign, nonatomic) BOOL fakeOnInactiveSpace;
 @property(assign, nonatomic) BOOL fakeOcclusionStateVisible;
 @property(assign, nonatomic) bool* deallocFlag;
@@ -286,6 +288,36 @@ class NativeWidgetMacTest : public WidgetTest {
     return native_widget->focus_manager_;
   }
 };
+
+// TODO(crbug.com/567908586): Remove this test with the guard in
+// ApplyNSWindowSizeConstraints().
+TEST_F(NativeWidgetMacTest, SizeConstraintsAvoidRedundantStyleMaskChanges) {
+  NativeWidgetMacTestWindow* window;
+  Widget* widget = CreateWidgetWithTestWindow(
+      CreateParams(Widget::InitParams::TYPE_WINDOW), &window);
+  auto* bridge = BridgedNativeWidgetTestApi(widget).bridge();
+
+  bridge->SetSizeConstraints(gfx::Size(100, 100), gfx::Size(500, 500), true,
+                             true);
+  const NSWindowStyleMask resizable_style_mask = window.styleMask;
+  EXPECT_TRUE(resizable_style_mask & NSWindowStyleMaskResizable);
+  const int style_mask_count = window.setStyleMaskCount;
+
+  bridge->SetSizeConstraints(gfx::Size(120, 130), gfx::Size(600, 700), true,
+                             true);
+  EXPECT_EQ(style_mask_count, window.setStyleMaskCount);
+  EXPECT_EQ(resizable_style_mask, window.styleMask);
+  EXPECT_TRUE(NSEqualSizes(NSMakeSize(120, 130), window.contentMinSize));
+  EXPECT_TRUE(NSEqualSizes(NSMakeSize(600, 700), window.contentMaxSize));
+
+  bridge->SetSizeConstraints(gfx::Size(120, 130), gfx::Size(600, 700), false,
+                             true);
+  EXPECT_GT(window.setStyleMaskCount, style_mask_count);
+  EXPECT_EQ(resizable_style_mask & ~NSWindowStyleMaskResizable,
+            window.styleMask);
+
+  widget->CloseNow();
+}
 
 TEST_F(NativeWidgetMacTest, ScreenshotProtectionTracksWindowSize) {
   struct CaptureExclusionCall {
@@ -1244,7 +1276,7 @@ TEST_F(NativeWidgetMacTest, CompositorVisibilityOnSpaceChange) {
 
 // Tests for compositor visibility driven by window occlusion
 // (`features::kNotifyCompositorOfWindowOcclusionOnMacOs`). Occlusion is
-// injected through the bridge, as WebContentsOcclusionCheckerMac would.
+// injected through the bridge, as WindowOcclusionCheckerMac would.
 class NativeWidgetMacOcclusionTest : public NativeWidgetMacTest {
  public:
   NativeWidgetMacOcclusionTest()
@@ -2413,15 +2445,7 @@ TEST_F(NativeWidgetMacTest, ShowAnimationControl) {
 }
 
 // Tests behavior of window-modal dialogs, displayed as sheets.
-#if defined(ARCH_CPU_ARM64) || BUILDFLAG(IS_MAC)
-// Bulk-disabled as part of arm64 bot stabilization: https://crbug.com/1154345
-// Disabled on Mac 10.15 and 10.11 failing ([parent_close_button isEnabled])
-// crbug.com/1473423
-#define MAYBE_WindowModalSheet DISABLED_WindowModalSheet
-#else
-#define MAYBE_WindowModalSheet WindowModalSheet
-#endif
-TEST_F(NativeWidgetMacTest, MAYBE_WindowModalSheet) {
+TEST_F(NativeWidgetMacTest, WindowModalSheet) {
   NSWindow* native_parent = MakeClosableTitledNativeParent();
 
   Widget* sheet_widget = views::DialogDelegate::CreateDialogWidget(
@@ -2451,6 +2475,8 @@ TEST_F(NativeWidgetMacTest, MAYBE_WindowModalSheet) {
   EXPECT_TRUE(parent_close_button);
   EXPECT_TRUE([parent_close_button isEnabled]);
 
+  base::RunLoop run_loop;
+  base::RepeatingClosure quit_closure = run_loop.QuitClosure();
   bool did_observe = false;
   bool* did_observe_ptr = &did_observe;
   id observer = [[NSNotificationCenter defaultCenter]
@@ -2463,6 +2489,7 @@ TEST_F(NativeWidgetMacTest, MAYBE_WindowModalSheet) {
                 EXPECT_TRUE(sheet_widget->IsVisible());
                 EXPECT_TRUE(sheet_widget->GetLayer()->IsVisible());
                 *did_observe_ptr = true;
+                quit_closure.Run();
               }];
 
   Widget::Widgets children =
@@ -2470,6 +2497,7 @@ TEST_F(NativeWidgetMacTest, MAYBE_WindowModalSheet) {
   ASSERT_EQ(2u, children.size());
 
   sheet_widget->Show();  // Should run the above block, then animate the sheet.
+  run_loop.Run();
   EXPECT_TRUE(did_observe);
   [[NSNotificationCenter defaultCenter] removeObserver:observer];
 
@@ -3664,6 +3692,25 @@ TEST_F(NativeWidgetMacTest, CenterWindowClampsToScreen) {
   parent->CloseNow();
 }
 
+// Tests that CenterWindow centers a window without a parent in the work area of
+// its display, and sizes its content area to the requested size.
+TEST_F(NativeWidgetMacTest, CenterWindowWithoutParent) {
+  Widget* widget = CreateTopLevelPlatformWidget();
+  const gfx::Size content_size(300, 200);
+  widget->CenterWindow(content_size);
+  EXPECT_EQ(content_size, widget->GetClientAreaBoundsInScreen().size());
+
+  const gfx::Rect bounds = widget->GetWindowBoundsInScreen();
+  EXPECT_EQ(gfx::ScreenRectFromNSRect(
+                widget->GetNativeWindow().GetNativeNSWindow().frame),
+            bounds);
+  const gfx::Rect work_area =
+      display::Screen::Get()->GetDisplayMatching(bounds).work_area();
+  EXPECT_EQ(work_area.CenterPoint(), bounds.CenterPoint());
+
+  widget->CloseNow();
+}
+
 namespace {
 
 class NoopEventMonitorClient : public NativeWidgetMacEventMonitor::Client {
@@ -3876,6 +3923,7 @@ TEST_F(NativeWidgetMacTest, SizeChangeNotifiedBeforeMoveChange) {
 @implementation NativeWidgetMacTestWindow
 
 @synthesize invalidateShadowCount = _invalidateShadowCount;
+@synthesize setStyleMaskCount = _setStyleMaskCount;
 @synthesize fakeOnInactiveSpace = _fakeOnInactiveSpace;
 @synthesize fakeOcclusionStateVisible = _fakeOcclusionStateVisible;
 @synthesize deallocFlag = _deallocFlag;
@@ -3890,6 +3938,11 @@ TEST_F(NativeWidgetMacTest, SizeChangeNotifiedBeforeMoveChange) {
 - (void)invalidateShadow {
   ++_invalidateShadowCount;
   [super invalidateShadow];
+}
+
+- (void)setStyleMask:(NSWindowStyleMask)styleMask {
+  ++_setStyleMaskCount;
+  [super setStyleMask:styleMask];
 }
 
 - (BOOL)isOnActiveSpace {

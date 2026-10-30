@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_TTC_ANDROID_TTC_KEYED_SERVICE_ANDROID_H_
 #define CHROME_BROWSER_TTC_ANDROID_TTC_KEYED_SERVICE_ANDROID_H_
 
+#include <string>
+
 #include "base/android/jni_android.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/callback_list.h"
@@ -44,10 +46,16 @@ class TtcKeyedServiceAndroid : public base::SupportsUserData::Data {
   int32_t GetSessionLifecycle(JNIEnv* env);
   void StartSession(JNIEnv* env);
   void EndSession(JNIEnv* env);
+  // Returns whether the mute state changed: false if there's no live session,
+  // or the microphone already was in that state.
+  bool SetMicMuted(JNIEnv* env, bool muted);
+  bool IsMicMuted(JNIEnv* env);
 
   // Called by SessionViewAndroid to surface session events in the Java UI.
   void OnAudioLevelChanged(float audio_level);
   void OnError(ErrorCode error);
+  void OnTranscriptionsUpdated(const std::string& user_transcript,
+                               const std::string& model_transcript);
 
  private:
   // Forwards the active session's lifecycle changes to the bridge. A separate

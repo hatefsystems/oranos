@@ -68,8 +68,8 @@
 #include "net/base/url_util.h"
 #include "third_party/lens_server_proto/aim_communication.pb.h"
 #include "third_party/lens_server_proto/aim_query.pb.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/page_transition_types.h"
-#include "ui/base/window_open_disposition.h"
 #include "ui/gfx/skia_util.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 
@@ -141,7 +141,7 @@ class ContextualTasksOmniboxClient : public ContextualOmniboxClient {
   void OnAutocompleteAccept(
       const GURL& destination_url,
       TemplateURLRef::PostContent* post_content,
-      WindowOpenDisposition disposition,
+      ui::mojom::WindowOpenDisposition disposition,
       ui::PageTransition transition,
       omnibox::AutocompleteMatchType match_type,
       base::TimeTicks match_selection_timestamp,
@@ -168,7 +168,7 @@ ContextualTasksOmniboxClient::GetLensOverlaySuggestInputs() const {
 void ContextualTasksOmniboxClient::OnAutocompleteAccept(
     const GURL& destination_url,
     TemplateURLRef::PostContent* post_content,
-    WindowOpenDisposition disposition,
+    ui::mojom::WindowOpenDisposition disposition,
     ui::PageTransition transition,
     omnibox::AutocompleteMatchType match_type,
     base::TimeTicks match_selection_timestamp,
@@ -732,7 +732,7 @@ void ContextualTasksComposeboxHandler::InitializeInputStateModel() {
   }
 
   if (base::FeatureList::IsEnabled(omnibox::kContextManagementInComposebox)) {
-    std::vector<int32_t> restored_tab_ids =
+    const std::vector<int32_t>& restored_tab_ids =
         web_ui_interface_->GetRestoredTabIds();
     SearchboxHandler::page_->SetRestoredTabIds(restored_tab_ids);
     // Set cached submitted tabs so they show up before thread loading is
@@ -1445,7 +1445,8 @@ void ContextualTasksComposeboxHandler::UpdateSuggestedTabContext(
   // in the contextual task, do not suggest it again as an uncommitted chip.
   if (base::FeatureList::IsEnabled(omnibox::kContextManagementInComposebox) &&
       suggested_tab) {
-    std::vector<int32_t> restored_ids = web_ui_interface_->GetRestoredTabIds();
+    const std::vector<int32_t>& restored_ids =
+        web_ui_interface_->GetRestoredTabIds();
     if (std::find(restored_ids.begin(), restored_ids.end(),
                   suggested_tab->tab_id) != restored_ids.end()) {
       SearchboxHandler::page_->UpdateAutoSuggestedTabContext(nullptr,

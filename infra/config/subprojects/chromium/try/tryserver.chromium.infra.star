@@ -86,6 +86,7 @@ try_.builder(
     executable = "recipe:chromium_3pp",
     builderless = True,
     os = os.WINDOWS_DEFAULT,
+    ssd = None,
     contact_team_email = "chrome-browser-infra-team@google.com",
     properties = {
         "$build/chromium_3pp": {
@@ -206,6 +207,7 @@ try_.builder(
     builderless = True,
     cores = 8,
     os = os.WINDOWS_DEFAULT,
+    ssd = None,
     contact_team_email = "chrome-dev-infra-team@google.com",
     cq_settings = try_.cq_settings(
         location_filters = [
@@ -331,6 +333,7 @@ try_.builder(
     #         "tools/autotest.py",
     #     ],
     # ),
+    service_account = try_constants.DEFAULT_SERVICE_ACCOUNT,
 )
 
 try_.builder(
@@ -348,6 +351,7 @@ try_.builder(
     ),
     builderless = True,
     os = os.WINDOWS_DEFAULT,
+    ssd = None,
     contact_team_email = "pdeio-chrome-test-infra-mx@google.com",
     execution_timeout = 2 * time.hour,
     properties = {
@@ -373,6 +377,7 @@ try_.builder(
     #         "tools/autotest.py",
     #     ],
     # ),
+    service_account = try_constants.DEFAULT_SERVICE_ACCOUNT,
 )
 
 try_.builder(
@@ -416,6 +421,7 @@ try_.builder(
     #         "tools/autotest.py",
     #     ],
     # ),
+    service_account = try_constants.DEFAULT_SERVICE_ACCOUNT,
 )
 
 try_.builder(

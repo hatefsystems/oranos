@@ -236,6 +236,17 @@ BASE_FEATURE(kBypassRedirectChecksPerRequest, base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kCacheControlNoStoreEnterBackForwardCache,
              base::FEATURE_ENABLED_BY_DEFAULT);
 
+// When enabled, download_utils::MustDownload() matches the MHTML MIME types
+// "multipart/related" and "message/rfc822" case-insensitively, so MHTML served
+// with a mixed-case MIME type (e.g. "Multipart/Related") over schemes other
+// than file: and content: is downloaded rather than rendered. When disabled,
+// such responses are rendered, but NavigationRequest still treats them as
+// MHTML and applies the MHTML sandbox. Kill switch for
+// https://crbug.com/574381704.
+// TODO(crbug.com/574381704): Remove once the change has shipped to stable.
+BASE_FEATURE(kCaseInsensitiveMhtmlMustDownload,
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
 // Enables the experimental Rust implementation of ChildProcessSecurityPolicy.
 // This includes managing global state but not per-process ProcessState (which
 // is handled by the ChildProcessSecurityPolicyRustProcessState feature). See
@@ -510,8 +521,6 @@ BASE_FEATURE(kFileChooserMinWindowSize, base::FEATURE_ENABLED_BY_DEFAULT);
 // however this might not be true on WebView, see crbug.com/378779896 for more
 // details.
 #if BUILDFLAG(IS_ANDROID)
-// Enable AL device fluid resize.
-BASE_FEATURE(kFluidResize, base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kFocusRenderWidgetHostViewAndroidOnActionDown,
              base::FEATURE_ENABLED_BY_DEFAULT);
 #endif
@@ -844,6 +853,14 @@ const base::FeatureParam<bool>
         &kPrefetchAheadOfImminentNavigation, "use_block_until_head_timeout",
         false};
 
+// If true, `PrefetchStreamingURLLoader` uses the prefetch timeout (see
+// `PrefetchTimeoutDuration()`) also for a prefetch ahead of an imminent
+// navigation.
+const base::FeatureParam<bool>
+    kPrefetchAheadOfImminentNavigationUsePrefetchLoaderTimeout{
+        &kPrefetchAheadOfImminentNavigation, "use_prefetch_loader_timeout",
+        false};
+
 // Allow starting prefetch request from off the main thread. Please see
 // crbug.com/452389538 for more details.
 BASE_FEATURE(kPrefetchOffTheMainThread, base::FEATURE_DISABLED_BY_DEFAULT);
@@ -906,7 +923,7 @@ BASE_FEATURE(kPrerenderActivationBeacon, base::FEATURE_DISABLED_BY_DEFAULT);
 
 // If enabled, the feature allows user to see a preview of their handwriting
 // gestures (Select and Delete gestures).
-BASE_FEATURE(kPreviewHandwritingGesture, base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kPreviewHandwritingGesture, base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enables exposure of ads APIs in the renderer: Attribution Reporting,
 // FLEDGE, Topics, along with a number of other features actively in development
@@ -1295,6 +1312,16 @@ BASE_FEATURE(kTrackEmptyRendererProcessesForReuse,
 #endif
 );
 
+// Enables migration of the network context data from `unsandboxed_data_path` to
+// `data_path`. See the explanation in network_context.mojom.
+BASE_FEATURE(kTriggerNetworkDataMigration,
+#if BUILDFLAG(IS_WIN)
+             base::FEATURE_ENABLED_BY_DEFAULT
+#else
+             base::FEATURE_DISABLED_BY_DEFAULT
+#endif
+);
+
 // This feature is for a reverse Origin Trial, enabling SharedArrayBuffer for
 // sites as they migrate towards requiring cross-origin isolation for these
 // features.
@@ -1672,9 +1699,8 @@ bool IsFluidResizeEnabled() {
   // path is more efficient and results in fewer artifacts.
   // By contrast, the continuous resize logic is optimized for the "live" window
   // dragging seen on tablets and desktops.
-  return base::FeatureList::IsEnabled(features::kFluidResize) &&
-         (base::android::device_info::is_tablet() ||
-          base::android::device_info::is_desktop());
+  return base::android::device_info::is_tablet() ||
+         base::android::device_info::is_desktop();
 }
 #endif
 

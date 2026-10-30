@@ -41,7 +41,7 @@ function postProcessElement(element) {
   // Wrap tables to make them scrollable.
   tryStep(wrapTables);
 
-  // Readability will leave iframes around, but they need the proper structure
+  // The distiller leaves iframes in place, and they need the proper structure
   // and classes to be styled correctly.
   tryStep(addClassesToYoutubeIFrames);
   // DomDistiller will leave placeholders, which need to be replaced with
@@ -60,8 +60,8 @@ function addToPage(html) {
   postProcessElement(div);
 }
 
-function showLoadingIndicator(isLastPage) {
-  $('loading-indicator').className = isLastPage ? 'hidden' : 'visible';
+function hideLoadingIndicator() {
+  $('loading-indicator').className = 'hidden';
 }
 
 // Sets the title.

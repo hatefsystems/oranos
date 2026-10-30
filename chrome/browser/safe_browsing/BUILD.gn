@@ -79,11 +79,11 @@ static_library("safe_browsing") {
     "//components/safe_browsing/content/browser/triggers:suspicious_site_trigger",
     "//components/safe_browsing/content/browser/web_ui",
     "//components/safe_browsing/core/browser",
-    "//components/safe_browsing/core/browser:download_check_result",
     "//components/safe_browsing/core/browser:referrer_chain_provider",
     "//components/safe_browsing/core/browser:safe_browsing_metrics_collector",
     "//components/safe_browsing/core/browser/db:database_manager",
     "//components/safe_browsing/core/browser/db:sb_local_database_manager",
+    "//components/safe_browsing/core/browser/download:download_check_result",
     "//components/safe_browsing/core/browser/password_protection:password_protection_metrics_util",
     "//components/safe_browsing/core/browser/sync",
     "//components/safe_browsing/core/browser/web_ui:local_state_delegate",
@@ -141,12 +141,12 @@ static_library("safe_browsing") {
       "//chrome/browser/ui/views/frame:browser_view_header",
     ]
     public += [
-      "generated_safe_browsing_pref.h",
       "generated_security_settings_bundle_pref.h",
+      "settings/generated_safe_browsing_pref.h",
     ]
     sources += [
-      "generated_safe_browsing_pref.cc",
       "generated_security_settings_bundle_pref.cc",
+      "settings/generated_safe_browsing_pref.cc",
     ]
   }
 
@@ -241,10 +241,10 @@ static_library("safe_browsing") {
       "notification_telemetry/notification_telemetry_service_factory.h",
       "phishy_interaction_tracker.h",
       "safe_browsing_navigation_observer_manager_factory.h",
-      "safe_browsing_pref_change_handler.h",
       "safe_browsing_service.h",
       "security_settings_bundle_pref_change_handler.h",
       "services_delegate.h",
+      "settings/safe_browsing_pref_change_handler.h",
       "tailored_security/chrome_tailored_security_service.h",
       "tailored_security/message_retry_handler.h",
       "tailored_security/tailored_security_service_factory.h",
@@ -300,10 +300,10 @@ static_library("safe_browsing") {
       "notification_telemetry/notification_telemetry_service_factory.cc",
       "phishy_interaction_tracker.cc",
       "safe_browsing_navigation_observer_manager_factory.cc",
-      "safe_browsing_pref_change_handler.cc",
       "safe_browsing_service.cc",
       "security_settings_bundle_pref_change_handler.cc",
       "services_delegate.cc",
+      "settings/safe_browsing_pref_change_handler.cc",
       "tailored_security/chrome_tailored_security_service.cc",
       "tailored_security/message_retry_handler.cc",
       "tailored_security/tailored_security_service_factory.cc",
@@ -377,7 +377,7 @@ static_library("safe_browsing") {
       "//components/safe_browsing/content/browser/triggers:ad_sampler_trigger",
       "//components/safe_browsing/content/browser/triggers:suspicious_site_trigger",
       "//components/safe_browsing/content/browser/triggers:trigger_throttler",
-      "//components/safe_browsing/content/common:file_type_policies",
+      "//components/safe_browsing/content/common/file_type_policies",
       "//components/safe_browsing/core/browser",
       "//components/safe_browsing/core/browser:intelligent_scan_delegate",
       "//components/safe_browsing/core/browser:referring_app_info",
@@ -701,12 +701,12 @@ source_set("verdict_cache_manager_factory") {
 
 static_library("advanced_protection") {
   sources = [
-    "advanced_protection_status_manager.cc",
-    "advanced_protection_status_manager.h",
-    "advanced_protection_status_manager_factory.cc",
-    "advanced_protection_status_manager_factory.h",
-    "application_advanced_protection_status_detector.cc",
-    "application_advanced_protection_status_detector.h",
+    "advanced_protection/advanced_protection_status_manager.cc",
+    "advanced_protection/advanced_protection_status_manager.h",
+    "advanced_protection/advanced_protection_status_manager_factory.cc",
+    "advanced_protection/advanced_protection_status_manager_factory.h",
+    "advanced_protection/application_advanced_protection_status_detector.cc",
+    "advanced_protection/application_advanced_protection_status_detector.h",
   ]
 
   deps = [
@@ -725,14 +725,14 @@ static_library("advanced_protection") {
 
   if (is_android) {
     sources += [
-      "advanced_protection_status_manager_android.cc",
-      "advanced_protection_status_manager_android.h",
+      "advanced_protection/advanced_protection_status_manager_android.cc",
+      "advanced_protection/advanced_protection_status_manager_android.h",
     ]
     deps += [ "android:jni_headers" ]
   } else {
     sources += [
-      "advanced_protection_status_manager_desktop.cc",
-      "advanced_protection_status_manager_desktop.h",
+      "advanced_protection/advanced_protection_status_manager_desktop.cc",
+      "advanced_protection/advanced_protection_status_manager_desktop.h",
     ]
   }
 }
@@ -765,9 +765,9 @@ source_set("unit_tests") {
   configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 
   sources = [
-    "advanced_protection_status_manager_factory_unittest.cc",
-    "advanced_protection_status_manager_unittest.cc",
-    "application_advanced_protection_status_detector_unittest.cc",
+    "advanced_protection/advanced_protection_status_manager_factory_unittest.cc",
+    "advanced_protection/advanced_protection_status_manager_unittest.cc",
+    "advanced_protection/application_advanced_protection_status_detector_unittest.cc",
     "gemini_antiscam_protection/gemini_antiscam_protection_service_factory_unittest.cc",
     "metrics/bundled_settings_metrics_provider_unittest.cc",
     "notification_content_detection/notification_content_detection_service_factory_unittest.cc",
@@ -843,9 +843,9 @@ source_set("unit_tests") {
       "//components/safe_browsing/content/browser/notification_content_detection:test_utils",
       "//components/safe_browsing/content/browser/password_protection",
       "//components/safe_browsing/content/browser/web_ui",
-      "//components/safe_browsing/content/common:file_type_policies",
-      "//components/safe_browsing/content/common:file_type_policies_test_support",
       "//components/safe_browsing/content/common:interfaces",
+      "//components/safe_browsing/content/common/file_type_policies",
+      "//components/safe_browsing/content/common/file_type_policies:file_type_policies_test_support",
       "//components/safe_browsing/core/browser",
       "//components/safe_browsing/core/browser:client_side_detection_service_base",
       "//components/safe_browsing/core/browser:intelligent_scan_delegate",
@@ -904,7 +904,7 @@ source_set("unit_tests") {
 
   if (safe_browsing_mode == 1) {
     sources += [
-      "advanced_protection_status_manager_desktop_unittest.cc",
+      "advanced_protection/advanced_protection_status_manager_desktop_unittest.cc",
       "chrome_password_reuse_detection_manager_client_unittest.cc",
       "chrome_ping_manager_factory_unittest.cc",
       "chrome_safe_browsing_hats_delegate_desktop_unittest.cc",
@@ -975,10 +975,13 @@ source_set("unit_tests") {
       "//chrome/browser/safe_browsing/suspicious_site_warnings",
       "//chrome/browser/search_engines",
       "//chrome/browser/ui/browser_window",
+      "//chrome/browser/ui/hats:test_support",
       "//components/enterprise/common/proto:connectors_proto",
       "//components/enterprise/connectors/core",
       "//components/enterprise/obfuscation/core:enterprise_obfuscation",
       "//components/history/content/browser",
+      "//components/history/core/browser",
+      "//components/history/core/test",
       "//components/optimization_guide/core:test_support",
       "//components/safe_browsing/content/browser/password_protection",
       "//components/safe_browsing/content/browser/password_protection:mock_password_protection",
@@ -1032,7 +1035,7 @@ source_set("unit_tests") {
       "android/password_reuse_controller_android_unittest.cc",
       "android/suspicious_site_controller_android_unittest.cc",
       "download_protection/rate_limiting_key_manager_unittest.cc",
-      "safe_browsing_pref_change_handler_android_unittest.cc",
+      "settings/safe_browsing_pref_change_handler_android_unittest.cc",
       "tailored_security/chrome_tailored_security_service_android_unittest.cc",
       "tailored_security/consented_message_android_unittest.cc",
       "telemetry/android/android_telemetry_service_unittest.cc",
@@ -1070,15 +1073,15 @@ source_set("unit_tests") {
   }
   if (is_win || is_mac || is_linux || is_chromeos) {
     sources += [
-      "generated_safe_browsing_pref_unittest.cc",
       "generated_security_settings_bundle_pref_unittest.cc",
       "security_settings_bundle_toast_helper_unittest.cc",
+      "settings/generated_safe_browsing_pref_unittest.cc",
     ]
 
     if (safe_browsing_mode != 0) {
       sources += [
-        "safe_browsing_pref_change_handler_unittest.cc",
         "security_settings_bundle_pref_change_handler_unittest.cc",
+        "settings/safe_browsing_pref_change_handler_unittest.cc",
       ]
     }
 
@@ -1150,6 +1153,7 @@ source_set("test_support") {
       "//components/safe_browsing/core/browser/db:sb_protocol_manager_util",
       "//components/safe_browsing/core/browser/db:test_database_manager",
       "//components/safe_browsing/core/common/proto:crx_info_proto",
+      "//content/test:test_support",
       "//services/network:test_support",
       "//testing/gtest",
     ]
@@ -1335,9 +1339,10 @@ source_set("browser_tests") {
         "//components/optimization_guide/core:model_execution_test_support",
         "//components/safe_browsing/content/browser:client_side_detection",
         "//components/safe_browsing/content/browser:client_side_detection_service",
-        "//components/safe_browsing/content/common:file_type_policies_test_support",
-        "//components/safe_browsing/content/common/proto:download_file_types_proto",
+        "//components/safe_browsing/content/common/file_type_policies:file_type_policies_test_support",
+        "//components/safe_browsing/content/common/file_type_policies/proto:download_file_types_proto",
         "//components/safe_browsing/content/renderer/phishing_classifier",
+        "//components/safe_browsing/core/common:features",
         "//components/safe_browsing/core/common/phishing_classifier",
       ]
     }
@@ -1436,8 +1441,8 @@ source_set("browser_tests") {
       "//components/safe_browsing/content/browser/notification_content_detection:notifications_global_cache_list",
       "//components/safe_browsing/content/browser/password_protection",
       "//components/safe_browsing/content/browser/password_protection:test_support",
-      "//components/safe_browsing/content/common:file_type_policies_test_support",
       "//components/safe_browsing/content/common:interfaces",
+      "//components/safe_browsing/content/common/file_type_policies:file_type_policies_test_support",
       "//components/safe_browsing/core/browser",
       "//components/safe_browsing/core/browser:safe_browsing_metrics_collector",
       "//components/safe_browsing/core/browser:suspicious_site_warning_allowlist",

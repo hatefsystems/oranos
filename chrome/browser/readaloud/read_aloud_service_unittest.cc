@@ -26,6 +26,7 @@
 #include "chrome/browser/readaloud/audio_generation/speech_synthesis_broker.h"
 #include "chrome/browser/readaloud/fake_audio_stream_factory.h"
 #include "chrome/browser/readaloud/read_aloud_service_factory.h"
+#include "chrome/browser/readaloud/read_aloud_voice_catalog.h"
 #include "chrome/common/readaloud/read_aloud_constants.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/dom_distiller/core/distiller_page.h"
@@ -88,8 +89,7 @@ class MockDelegate : public ReadAloudService::Delegate {
               (override));
   MOCK_METHOD(void,
               OnVoicesAvailable,
-              (const std::vector<ReadAloudService::Voice>& voices,
-               std::string_view selected_voice_id),
+              (base::span<const VoiceInfo> voices),
               (override));
   MOCK_METHOD(void,
               OnWordHighlightUpdated,
@@ -1173,13 +1173,6 @@ TEST_F(ReadAloudServiceTest, DistillPageAndArticleFailure) {
       dom_distiller::DistillationParseResult::kContentTooShort, 1);
 }
 
-TEST_F(ReadAloudServiceTest, OnArticleUpdated) {
-  dom_distiller::ArticleDistillationUpdate update({}, false, false);
-  // Should be a completely safe no-op.
-  auto* delegate = static_cast<dom_distiller::ViewRequestDelegate*>(service());
-  delegate->OnArticleUpdated(update);
-}
-
 TEST_F(ReadAloudServiceTest, ShutdownClearsHandle) {
   NavigateAndCommit(GURL("https://www.example.com/article"));
 
@@ -1465,11 +1458,9 @@ TEST_F(ReadAloudServiceTest, PreviewVoicePausesActivePlayback) {
   service()->SetDelegate(std::move(delegate));
 
   testing::InSequence s;
-  // PreviewVoice should pause active article playback and start the requested
-  // voice preview without disconnecting the paused article controller pipe.
-  EXPECT_CALL(*delegate_ptr,
-              OnPlaybackStateChanged(read_aloud::mojom::PlaybackState::kPaused))
-      .Times(1);
+  // PreviewVoice should pause active article playback (delegating the article
+  // kPaused notification to the utility process) and start the requested voice
+  // preview without disconnecting the paused article controller pipe.
   EXPECT_CALL(*delegate_ptr,
               OnVoicePreviewPlaybackStateChanged(
                   kTestVoiceId, read_aloud::mojom::PlaybackState::kBuffering))
@@ -1594,7 +1585,7 @@ class ReadAloudServiceMediaSessionTest : public ReadAloudServiceTest {
   }
 
   // Starts Read Aloud playback, which adds Read Aloud to the tab's
-  // MediaSession as a playing player.
+  // MediaSession as a playing player once the utility reports `kPlaying`.
   void StartReadAloud() {
     NavigateAndCommit(GURL("https://www.example.com/article"));
     SetFakeController(std::make_unique<FakePlaybackController>());
@@ -1604,6 +1595,9 @@ class ReadAloudServiceMediaSessionTest : public ReadAloudServiceTest {
     fake_controller()->set_play_callback(run_loop.QuitClosure());
     service()->Play(web_contents());
     run_loop.Run();
+    fake_controller()->client()->OnPlaybackStateChanged(
+        read_aloud::mojom::PlaybackState::kPlaying);
+    fake_controller()->FlushForTesting();
   }
 
   void SuspendAndWaitForUtilityPause(SuspendType suspend_type) {
@@ -1643,6 +1637,9 @@ TEST_P(ReadAloudServiceMediaSessionSuspendTest,
               OnPlaybackStateChanged(read_aloud::mojom::PlaybackState::kPaused))
       .Times(1);
   SuspendAndWaitForUtilityPause(GetParam());
+  fake_controller()->client()->OnPlaybackStateChanged(
+      read_aloud::mojom::PlaybackState::kPaused);
+  fake_controller()->FlushForTesting();
 
   EXPECT_EQ(fake_controller()->pause_count(), 1);
   EXPECT_EQ(page_player.suspend_count(), 1);
@@ -1665,12 +1662,133 @@ TEST_F(ReadAloudServiceMediaSessionTest,
   FakePagePlayer page_player(web_contents());
   ASSERT_TRUE(page_player.StartPlaying());
   SuspendAndWaitForUtilityPause(SuspendType::kUI);
+  fake_controller()->client()->OnPlaybackStateChanged(
+      read_aloud::mojom::PlaybackState::kPaused);
+  fake_controller()->FlushForTesting();
 
   ResumeAndWaitForUtilityPlay(SuspendType::kUI);
 
   // One Play() from StartReadAloud() and one from the resume.
   EXPECT_EQ(fake_controller()->play_count(), 2);
   EXPECT_EQ(page_player.resume_count(), 1);
+}
+
+// A pause reported by the utility that was not initiated by MediaSession must
+// notify MediaSession::OnPlayerPaused(). With page audio also playing, that
+// removes Read Aloud from the session so a later suspend no longer reaches it.
+TEST_F(ReadAloudServiceMediaSessionTest,
+       UtilityPausedNotifiesMediaSessionAndRemovesFromMultiPlayerSession) {
+  MockDelegate* delegate = SetUpMockDelegate();
+  StartReadAloud();
+  FakePagePlayer page_player(web_contents());
+  ASSERT_TRUE(page_player.StartPlaying());
+
+  EXPECT_CALL(*delegate,
+              OnPlaybackStateChanged(read_aloud::mojom::PlaybackState::kPaused))
+      .Times(1);
+  fake_controller()->client()->OnPlaybackStateChanged(
+      read_aloud::mojom::PlaybackState::kPaused);
+  fake_controller()->FlushForTesting();
+
+  media_session()->Suspend(SuspendType::kUI);
+  fake_controller()->FlushForTesting();
+  EXPECT_EQ(page_player.suspend_count(), 1);
+  EXPECT_EQ(fake_controller()->pause_count(), 0);
+}
+
+// If a session-initiated suspend never receives a `kPaused` report from the
+// utility, resuming and then pausing must still reach `MediaSession`.
+TEST_F(ReadAloudServiceMediaSessionTest,
+       UserPauseAfterSessionSuspendAndResumeReachesMediaSession) {
+  MockDelegate* delegate = SetUpMockDelegate();
+  StartReadAloud();
+  FakePagePlayer page_player(web_contents());
+  ASSERT_TRUE(page_player.StartPlaying());
+
+  // Session suspends and resumes without the utility reporting `kPaused` in
+  // between.
+  SuspendAndWaitForUtilityPause(SuspendType::kUI);
+  ResumeAndWaitForUtilityPlay(SuspendType::kUI);
+  EXPECT_EQ(fake_controller()->pause_count(), 1);
+  EXPECT_EQ(fake_controller()->play_count(), 2);
+
+  // User pauses Read Aloud; the utility answers with `kPaused`.
+  EXPECT_CALL(*delegate,
+              OnPlaybackStateChanged(read_aloud::mojom::PlaybackState::kPaused))
+      .Times(1);
+  service()->Pause();
+  fake_controller()->client()->OnPlaybackStateChanged(
+      read_aloud::mojom::PlaybackState::kPaused);
+  fake_controller()->FlushForTesting();
+  EXPECT_EQ(fake_controller()->pause_count(), 2);
+
+  // Read Aloud was removed from the multi-player MediaSession on pause, so
+  // suspending the session now only suspends `page_player`.
+  media_session()->Suspend(SuspendType::kUI);
+  fake_controller()->FlushForTesting();
+  EXPECT_EQ(page_player.suspend_count(), 2);
+  EXPECT_EQ(fake_controller()->pause_count(), 2);
+}
+
+// Same as above when the user resumes via `ReadAloudService::Play()` rather
+// than `MediaSession::Resume()` after an unanswered session suspend.
+TEST_F(ReadAloudServiceMediaSessionTest,
+       UserPlayAndPauseAfterUnansweredSessionSuspendReachesMediaSession) {
+  StartReadAloud();
+  FakePagePlayer page_player(web_contents());
+  ASSERT_TRUE(page_player.StartPlaying());
+
+  // Session suspends, setting `pending_session_command_ = kSuspend`, and the
+  // utility never reports `kPaused`.
+  SuspendAndWaitForUtilityPause(SuspendType::kUI);
+  EXPECT_EQ(fake_controller()->pause_count(), 1);
+
+  // User plays and then pauses from the Read Aloud UI.
+  // `NotifyPlaybackStarted()` on `kPlaying` clears the stale `kSuspend` command
+  // so `kPaused` reaches MediaSession.
+  service()->Play(web_contents());
+  fake_controller()->client()->OnPlaybackStateChanged(
+      read_aloud::mojom::PlaybackState::kPlaying);
+  fake_controller()->FlushForTesting();
+  ASSERT_TRUE(page_player.StartPlaying());
+  service()->Pause();
+  fake_controller()->client()->OnPlaybackStateChanged(
+      read_aloud::mojom::PlaybackState::kPaused);
+  fake_controller()->FlushForTesting();
+  EXPECT_EQ(fake_controller()->pause_count(), 2);
+
+  media_session()->Suspend(SuspendType::kUI);
+  fake_controller()->FlushForTesting();
+  EXPECT_EQ(page_player.suspend_count(), 2);
+  EXPECT_EQ(fake_controller()->pause_count(), 2);
+}
+
+// `kEndOfStream` keeps Read Aloud in the MediaSession as a paused player (not
+// `RemovePlayer`), so resuming the session routes `Play()` back to Read Aloud.
+TEST_F(ReadAloudServiceMediaSessionTest,
+       EndOfStreamKeepsPlayerInMediaSessionAndPlayRestarts) {
+  MockDelegate* delegate = SetUpMockDelegate();
+  StartReadAloud();
+
+  EXPECT_CALL(*delegate, OnPlaybackStateChanged(
+                             read_aloud::mojom::PlaybackState::kEndOfStream))
+      .Times(1);
+  fake_controller()->client()->OnPlaybackStateChanged(
+      read_aloud::mojom::PlaybackState::kEndOfStream);
+  fake_controller()->FlushForTesting();
+
+  // Because Read Aloud stays in MediaSession as a paused player at
+  // kEndOfStream, resuming the MediaSession reaches Read Aloud and calls
+  // Play().
+  ResumeAndWaitForUtilityPlay(SuspendType::kUI);
+  EXPECT_EQ(fake_controller()->play_count(), 2);
+
+  EXPECT_CALL(*delegate, OnPlaybackStateChanged(
+                             read_aloud::mojom::PlaybackState::kPlaying))
+      .Times(1);
+  fake_controller()->client()->OnPlaybackStateChanged(
+      read_aloud::mojom::PlaybackState::kPlaying);
+  fake_controller()->FlushForTesting();
 }
 
 TEST_F(ReadAloudServiceTest, SetPlaybackRateForwardedToUtility) {
@@ -2163,6 +2281,22 @@ TEST_F(ReadAloudServiceTest, CheckReadability) {
   EXPECT_CALL(*delegate_ptr, OnNativeDestroyed()).Times(1);
 }
 
+TEST_F(ReadAloudServiceTest, InitVoices) {
+  MockDelegate* delegate_ptr = SetUpMockDelegate();
+
+  EXPECT_CALL(*delegate_ptr, OnVoicesAvailable(testing::_))
+      .WillOnce([](base::span<const VoiceInfo> voices) {
+        ASSERT_EQ(voices.size(), std::size(kAvailableVoices));
+        EXPECT_EQ(voices[0].id, kAvailableVoices[0].id);
+        EXPECT_EQ(voices[0].display_name, kAvailableVoices[0].display_name);
+        EXPECT_EQ(voices[0].lang, kAvailableVoices[0].lang);
+        EXPECT_EQ(voices[0].region, kAvailableVoices[0].region);
+        EXPECT_EQ(voices[0].pitch, kAvailableVoices[0].pitch);
+        EXPECT_EQ(voices[0].tone, kAvailableVoices[0].tone);
+      });
+  service()->InitVoices();
+}
+
 TEST_F(ReadAloudServiceTest,
        RequestSpeechSynthesisDelegatesToBrokerAndHandlesError) {
   bool callback_called = false;
@@ -2407,6 +2541,32 @@ TEST_F(ReadAloudServiceTest, PlayDoesNotEmitPlayingDirectly) {
 
   service()->Play(web_contents());
   fake_controller()->FlushForTesting();
+
+  EXPECT_CALL(*delegate_ptr, OnNativeDestroyed()).Times(1);
+}
+
+TEST_F(ReadAloudServiceTest, PauseDoesNotEmitPausedDirectly) {
+  NavigateAndCommit(GURL("https://www.example.com/article"));
+  SetFakeController(std::make_unique<FakePlaybackController>());
+
+  auto delegate = std::make_unique<testing::NiceMock<MockDelegate>>();
+  MockDelegate* delegate_ptr = delegate.get();
+  service()->SetDelegate(std::move(delegate));
+
+  ExpectInitializeCallbacks(delegate_ptr);
+  service()->Initialize(web_contents());
+  service()->Play(web_contents());
+
+  // The utility process is authoritative for kPaused when bound and active.
+  // With no utility response wired up, Pause() must not fabricate the state on
+  // its own.
+  EXPECT_CALL(*delegate_ptr,
+              OnPlaybackStateChanged(read_aloud::mojom::PlaybackState::kPaused))
+      .Times(0);
+
+  service()->Pause();
+  fake_controller()->FlushForTesting();
+  EXPECT_EQ(fake_controller()->pause_count(), 1);
 
   EXPECT_CALL(*delegate_ptr, OnNativeDestroyed()).Times(1);
 }

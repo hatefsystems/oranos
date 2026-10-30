@@ -8,6 +8,7 @@
 #include <string_view>
 #include <utility>
 
+#include "base/allocator/partition_alloc_features.h"
 #include "base/auto_reset.h"
 #include "base/command_line.h"
 #include "base/dcheck_is_on.h"
@@ -36,6 +37,7 @@
 #include "chrome/browser/chrome_browser_main_extra_parts.h"
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/devtools/devtools_window.h"
+#include "chrome/browser/ui/omnibox/omnibox_popup_webui_creation.h"
 #if !BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/actor/ui/actor_task_unload_handler.h"
 #endif
@@ -81,6 +83,7 @@
 #include "chrome/test/base/chrome_test_path_utils.h"
 #include "chrome/test/base/chrome_test_suite.h"
 #include "chrome/test/base/test_launcher_utils.h"
+#include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/captive_portal/core/buildflags.h"
 #include "components/feature_engagement/public/feature_list.h"
@@ -98,8 +101,10 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_launcher.h"
 #include "content/public/test/test_navigation_observer.h"
+#include "content/public/test/test_utils.h"
 #include "extensions/buildflags/buildflags.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "partition_alloc/buildflags.h"
 #include "services/device/public/cpp/device_features.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/test/test_network_connection_tracker.h"
@@ -423,6 +428,17 @@ void InProcessBrowserTest::Initialize() {
   // Force all buttons not overflow to prevent test flakiness.
   ToolbarControllerUtil::SetPreventOverflowForTesting(true);
 
+  // The classic and AI Mode omnibox popups, which are built with each browser
+  // window, would otherwise add hidden WebContents and a renderer to every
+  // test, though most tests never show them. Create their content only when it
+  // is needed. Tests that depend on when it is created, or that need it to
+  // exist before the popup is shown, turn this off.
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableOmniboxPopupOnDemandCreation)) {
+    create_popup_webui_on_demand_.emplace(
+        omnibox::SetCreatePopupWebUIOnDemandForTesting(true));
+  }
+
   std::vector<base::test::FeatureRef> enabled_features;
   std::vector<base::test::FeatureRef> disabled_features;
 
@@ -459,6 +475,14 @@ void InProcessBrowserTest::Initialize() {
   // CameraPresenceNotifier or MediaDevicesManager). Excluded on macOS where
   // the service requires a CFRunLoop (https://crbug.com/40572495).
   enabled_features.push_back(features::kRunVideoCaptureServiceInBrowserProcess);
+#endif
+#if !EXPENSIVE_TEST_LOGIC_IS_ON() && PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+  // Override kPartitionAllocSchedulerLoopQuarantine to its default-enabled
+  // state so fieldtrial_testing_config.json skips the 2 GB all-processes
+  // PartitionAllocMiracleObject study and tests run with the compiled-in
+  // production defaults.
+  enabled_features.push_back(
+      base::features::kPartitionAllocSchedulerLoopQuarantine);
 #endif
   // In-product help can conflict with tests' expected window activation and
   // focus. Individual tests can re-enable IPH.
@@ -647,6 +671,14 @@ void InProcessBrowserTest::SetUp() {
 #endif
 
   EnsureBrowserContextKeyedServiceFactoriesForTestingBuilt();
+
+#if !EXPENSIVE_TEST_LOGIC_IS_ON() && !BUILDFLAG(IS_ANDROID)
+  // Run the StorageService in-process on the IO thread instead of spawning a
+  // separate utility process per test in fast test builds.
+  if (force_in_process_storage_service_) {
+    content::ForceInProcessStorageServiceForTesting();
+  }
+#endif
 
   BrowserTestBase::SetUp();
 }

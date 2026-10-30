@@ -14,6 +14,7 @@
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/functional/callback_helpers.h"
+#include "base/i18n/language_tag.h"
 #include "base/memory/safe_ref.h"
 #include "base/no_destructor.h"
 #include "base/notimplemented.h"
@@ -90,6 +91,7 @@
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/features_generated.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
+#include "third_party/blink/public/common/manifest/manifest.h"
 #include "third_party/blink/public/common/renderer_preferences/renderer_preferences.h"
 #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
 #include "third_party/blink/public/mojom/file_system_access/file_system_access_cloud_identifier.mojom.h"
@@ -478,8 +480,8 @@ ContentBrowserClient::GetQuarantineConnectionCallback() {
   return base::NullCallback();
 }
 
-std::string ContentBrowserClient::GetApplicationLocale() {
-  return "en-US";
+base::i18n::LanguageTag ContentBrowserClient::GetApplicationLocale() {
+  return base::i18n::GetKnownLanguageTag("en-US");
 }
 
 std::string ContentBrowserClient::GetAcceptLangs(BrowserContext* context) {
@@ -873,6 +875,12 @@ TtsControllerDelegate* ContentBrowserClient::GetTtsControllerDelegate() {
 }
 #endif
 
+std::optional<blink::Manifest> ContentBrowserClient::MaybeOverrideManifest(
+    RenderFrameHost* render_frame_host,
+    const blink::Manifest& manifest) {
+  return std::nullopt;
+}
+
 TtsPlatform* ContentBrowserClient::GetTtsPlatform() {
   return nullptr;
 }
@@ -1226,6 +1234,16 @@ ContentBrowserClient::GetNetworkContextsParentDirectory() {
   return {};
 }
 
+std::optional<base::FilePath>
+ContentBrowserClient::GetNetworkContextsDataDirectory() {
+  return std::nullopt;
+}
+
+std::optional<base::FilePath>
+ContentBrowserClient::GetNetworkContextsCacheDirectory() {
+  return std::nullopt;
+}
+
 base::DictValue ContentBrowserClient::GetNetLogConstants() {
   return base::DictValue();
 }
@@ -1306,7 +1324,7 @@ FontAccessDelegate* ContentBrowserClient::GetFontAccessDelegate() {
   return nullptr;
 }
 
-#if BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(ENABLE_SMART_CARD)
 SmartCardDelegate* ContentBrowserClient::GetSmartCardDelegate() {
   return nullptr;
 }
@@ -1565,6 +1583,11 @@ ContentBrowserClient::MaybeOverrideSourceURLForClipboardAccess(
     const GURL& original_url) {
   DCHECK(render_frame_host);
   return std::nullopt;
+}
+
+BrowserContext* ContentBrowserClient::GetUserBrowserContext(
+    RenderFrameHost& render_frame_host) {
+  return render_frame_host.GetBrowserContext();
 }
 
 bool ContentBrowserClient::IsClipboardPasteAllowed(

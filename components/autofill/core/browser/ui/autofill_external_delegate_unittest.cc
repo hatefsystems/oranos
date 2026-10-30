@@ -21,6 +21,7 @@
 #include "base/test/gmock_move_support.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/metrics/user_action_tester.h"
+#include "base/test/run_until.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/test/with_feature_override.h"
@@ -33,7 +34,9 @@
 #endif
 #include "components/autofill/core/browser/autofill_trigger_source.h"
 #include "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
-#include "components/autofill/core/browser/data_manager/autofill_ai/in_memory_entity_suppression_manager.h"
+#include "components/autofill/core/browser/data_manager/autofill_ai/entity_suppression_manager.h"
+#include "components/autofill/core/browser/data_manager/autofill_ai/entity_suppression_sync_bridge.h"
+#include "components/autofill/core/browser/data_manager/autofill_ai/entity_suppression_sync_bridge_test_util.h"
 #include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
 #include "components/autofill/core/browser/data_manager/personal_data_manager_observer.h"
 #include "components/autofill/core/browser/data_manager/test_personal_data_manager.h"
@@ -255,6 +258,11 @@ class MockPaymentsAutofillClient : public payments::TestPaymentsAutofillClient {
 class MockAutofillClient : public TestAutofillClient {
  public:
   MockAutofillClient() {
+    std::unique_ptr<EntitySuppressionSyncBridge> bridge =
+        CreateTestEntitySuppressionSyncBridge();
+    CHECK(base::test::RunUntil([&]() { return bridge->IsLoaded(); }));
+    suppression_manager_ =
+        std::make_unique<EntitySuppressionManager>(std::move(bridge));
     set_payments_autofill_client(
         std::make_unique<MockPaymentsAutofillClient>(this));
     ON_CALL(*this, GetDeviceAuthAvailabilityChecker).WillByDefault([] {
@@ -293,6 +301,10 @@ class MockAutofillClient : public TestAutofillClient {
               GetAutofillSuggestions,
               (),
               (const, override));
+  MOCK_METHOD(std::optional<AutofillClient::SuggestionUiSessionId>,
+              GetSessionIdForCurrentAutofillSuggestions,
+              (),
+              (const, override));
   MOCK_METHOD(void,
               UpdateAutofillDataListValues,
               (const LocalFrameToken&, base::span<const SelectOption> options),
@@ -309,6 +321,9 @@ class MockAutofillClient : public TestAutofillClient {
               (const HatsSurveyStringData&),
               (override));
   MOCK_METHOD(AutofillComposeDelegate*, GetComposeDelegate, (), (override));
+  EntitySuppressionManager* GetEntitySuppressionManager() override {
+    return suppression_manager_.get();
+  }
   MOCK_METHOD(IdentityCredentialDelegate*,
               GetIdentityCredentialDelegate,
               (),
@@ -359,10 +374,13 @@ class MockAutofillClient : public TestAutofillClient {
   void set_last_queried_field(FieldGlobalId field_id) {
     last_queried_field_id_ = field_id;
   }
+#endif
 
  private:
+#if BUILDFLAG(IS_IOS)
   FieldGlobalId last_queried_field_id_;
 #endif
+  std::unique_ptr<EntitySuppressionManager> suppression_manager_;
 };
 
 class TestCreditCardAccessManager : public CreditCardAccessManager {
@@ -494,7 +512,6 @@ class AutofillExternalDelegateTest : public testing::Test,
             personal_context::PersonalContextEligibilityState::kEligible));
     autofill_client().set_personal_context_eligibility_service(
         mock_personal_context_service_.get());
-    autofill_client().set_entity_suppression_manager(&suppression_manager_);
     autofill_client().GetPrefs()->registry()->RegisterIntegerPref(
         optimization_guide::prefs::kGeminiSettings,
         std::to_underlying(
@@ -639,8 +656,8 @@ class AutofillExternalDelegateTest : public testing::Test,
     // Initialize the delegate's query form and field state.
     IssueOnQuery(trigger_source);
     // Assign a valid session ID to enable suggestion update callbacks.
-    autofill_client().set_suggestion_ui_session_id(
-        AutofillClient::SuggestionUiSessionId(1));
+    ON_CALL(autofill_client(), GetSessionIdForCurrentAutofillSuggestions)
+        .WillByDefault(Return(AutofillClient::SuggestionUiSessionId(1)));
     // Simulate that the popup is displayed to set up the session and its
     // callbacks.
     external_delegate().OnSuggestionsShown({}, /*metadata=*/{});
@@ -714,7 +731,6 @@ class AutofillExternalDelegateTest : public testing::Test,
       personal_context::MockPersonalContextEligibilityService>>
       mock_personal_context_service_;
 
-  InMemoryEntitySuppressionManager suppression_manager_;
   // Form containing the triggering field that initialized the external delegate
   // `OnQuery`.
   FormData queried_form_;
@@ -2556,11 +2572,15 @@ TEST_F(AutofillExternalDelegateTest, AcceptManageLoyaltyCards) {
                                           {.multi_index = {0}});
 }
 
+// Tests that accepting "Manage offers" opens the settings page and notifies the
+// promo code manager to log metrics.
 TEST_F(AutofillExternalDelegateTest, AcceptManageOffers) {
   Suggestion manage_suggestion =
       Suggestion(u"Manage offers", SuggestionType::kManageOffers);
   EXPECT_CALL(autofill_client(),
               ShowAutofillSettings(SuggestionType::kManageOffers));
+  EXPECT_CALL(*payments_autofill_client().GetMerchantPromoCodeManager(),
+              LogManageOffersSelectedMetrics);
   external_delegate().DidAcceptSuggestion(manage_suggestion,
                                           {.multi_index = {0}});
 }
@@ -5308,8 +5328,8 @@ TEST_F(AutofillExternalDelegateTest, RemoveSuggestion_ServerCard) {
 TEST_F(AutofillExternalDelegateTest,
        OnSuggestionsShown_PersonalContextNotice_AmbientAutofill) {
   IssueOnQuery();
-  autofill_client().set_suggestion_ui_session_id(
-      AutofillClient::SuggestionUiSessionId(1));
+  ON_CALL(autofill_client(), GetSessionIdForCurrentAutofillSuggestions)
+      .WillByDefault(Return(AutofillClient::SuggestionUiSessionId(1)));
   EXPECT_EQ(autofill_client()
                 .GetPersonalContextFirstRunService()
                 ->ambient_autofill_notice_impressions(),
@@ -5338,8 +5358,8 @@ TEST_F(AutofillExternalDelegateTest,
 
   // Hiding and showing again should increment if we generate a new session ID.
   external_delegate().OnSuggestionsHidden(SuggestionHidingReason::kTabGone);
-  autofill_client().set_suggestion_ui_session_id(
-      AutofillClient::SuggestionUiSessionId(2));
+  ON_CALL(autofill_client(), GetSessionIdForCurrentAutofillSuggestions)
+      .WillByDefault(Return(AutofillClient::SuggestionUiSessionId(2)));
   external_delegate().OnSuggestionsShown(
       std::vector<Suggestion>{
           Suggestion(SuggestionType::kPersonalContextNotice)},
@@ -5356,8 +5376,8 @@ TEST_F(AutofillExternalDelegateTest,
 TEST_F(AutofillExternalDelegateTest,
        OnSuggestionsShown_PersonalContextNotice_AtMemory) {
   IssueOnQuery(AutofillSuggestionTriggerSource::kAtMemoryDoubleCtrl);
-  autofill_client().set_suggestion_ui_session_id(
-      AutofillClient::SuggestionUiSessionId(1));
+  ON_CALL(autofill_client(), GetSessionIdForCurrentAutofillSuggestions)
+      .WillByDefault(Return(AutofillClient::SuggestionUiSessionId(1)));
   EXPECT_EQ(autofill_client()
                 .GetPersonalContextFirstRunService()
                 ->at_memory_notice_impressions(),
@@ -5386,8 +5406,8 @@ TEST_F(AutofillExternalDelegateTest,
 
   // Hiding and showing again should increment if we generate a new session ID.
   external_delegate().OnSuggestionsHidden(SuggestionHidingReason::kTabGone);
-  autofill_client().set_suggestion_ui_session_id(
-      AutofillClient::SuggestionUiSessionId(2));
+  ON_CALL(autofill_client(), GetSessionIdForCurrentAutofillSuggestions)
+      .WillByDefault(Return(AutofillClient::SuggestionUiSessionId(2)));
   external_delegate().OnSuggestionsShown(
       std::vector<Suggestion>{
           Suggestion(SuggestionType::kPersonalContextNotice)},

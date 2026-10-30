@@ -166,6 +166,7 @@
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "net/base/schemeful_site.h"
 #include "net/base/url_util.h"
 #include "net/cookies/cookie_access_result.h"
 #include "net/cookies/cookie_setting_override.h"
@@ -306,41 +307,43 @@ enum class UserAgentStringType {
   kMaxValue = kOverriden
 };
 
+// Load flags that may be present in BeginNavigationParams. These are all
+// cache-related flags, which Blink derives from the request's FetchCacheMode.
+// For renderer-initiated navigations, BeginNavigationParams come from the
+// renderer, so can't be trusted, and other load flags may have security
+// implications (e.g., net::LOAD_BYPASS_PROXY), so are cleared.
+constexpr int kAllowedBeginParamsLoadFlags =
+    net::LOAD_VALIDATE_CACHE | net::LOAD_BYPASS_CACHE |
+    net::LOAD_SKIP_CACHE_VALIDATION | net::LOAD_ONLY_FROM_CACHE |
+    net::LOAD_DISABLE_CACHE;
+
 // Returns the net load flags to use based on the navigation type.
-// TODO(clamy): Remove the blink code that sets the caching flags.
-void UpdateLoadFlagsWithCacheFlags(int* load_flags,
-                                   blink::mojom::NavigationType navigation_type,
-                                   bool is_post) {
+// TODO(crbug.com/578128190): Remove the blink code that sets the caching flags.
+int CalculateCacheLoadFlags(blink::mojom::NavigationType navigation_type,
+                            bool is_post) {
   switch (navigation_type) {
     case blink::mojom::NavigationType::RELOAD:
-      *load_flags |= net::LOAD_VALIDATE_CACHE;
-      break;
+      return net::LOAD_VALIDATE_CACHE;
     case blink::mojom::NavigationType::RELOAD_BYPASSING_CACHE:
-      *load_flags |= net::LOAD_BYPASS_CACHE;
-      break;
+      return net::LOAD_BYPASS_CACHE;
     case blink::mojom::NavigationType::RESTORE:
-      *load_flags |= net::LOAD_SKIP_CACHE_VALIDATION;
-      break;
+      return net::LOAD_SKIP_CACHE_VALIDATION;
     case blink::mojom::NavigationType::RESTORE_WITH_POST:
-      *load_flags |=
-          net::LOAD_ONLY_FROM_CACHE | net::LOAD_SKIP_CACHE_VALIDATION;
-      break;
+      return net::LOAD_ONLY_FROM_CACHE | net::LOAD_SKIP_CACHE_VALIDATION;
     case blink::mojom::NavigationType::SAME_DOCUMENT:
     case blink::mojom::NavigationType::DIFFERENT_DOCUMENT:
       if (is_post) {
-        *load_flags |= net::LOAD_VALIDATE_CACHE;
+        return net::LOAD_VALIDATE_CACHE;
       }
-      break;
+      return net::LOAD_NORMAL;
     case blink::mojom::NavigationType::HISTORY_SAME_DOCUMENT:
     case blink::mojom::NavigationType::HISTORY_DIFFERENT_DOCUMENT:
       if (is_post) {
-        *load_flags |=
-            net::LOAD_ONLY_FROM_CACHE | net::LOAD_SKIP_CACHE_VALIDATION;
-      } else {
-        *load_flags |= net::LOAD_SKIP_CACHE_VALIDATION;
+        return net::LOAD_ONLY_FROM_CACHE | net::LOAD_SKIP_CACHE_VALIDATION;
       }
-      break;
+      return net::LOAD_SKIP_CACHE_VALIDATION;
   }
+  NOTREACHED();
 }
 
 // This should match blink::ResourceRequest::needsHTTPOrigin.
@@ -1290,10 +1293,11 @@ std::unique_ptr<NavigationRequest> NavigationRequest::Create(
       has_rel_opener, std::nullopt /* script_tool_invocation_id */,
       /*script_injector_host=*/"");
 
-  // Shift-Reload forces bypassing caches and service workers.
+  // Shift-Reload forces bypassing caches and service workers. Note that
+  // UpdateLoadFlagsWithCacheFlags() will set net::LOAD_BYPASS_CACHE in this
+  // case, when called from the constructor.
   if (common_params->navigation_type ==
       blink::mojom::NavigationType::RELOAD_BYPASSING_CACHE) {
-    navigation_params->load_flags |= net::LOAD_BYPASS_CACHE;
     navigation_params->skip_service_worker = true;
   }
 
@@ -1437,7 +1441,6 @@ std::unique_ptr<NavigationRequest> NavigationRequest::CreateRendererInitiated(
           /*should_load_data_url=*/false,
           /*ancestor_or_self_has_cspee=*/
           frame_tree_node->AncestorOrSelfHasCSPEE(),
-          /*reduced_accept_language=*/std::string(),
           /*navigation_delivery_type=*/
           network::mojom::NavigationDeliveryType::kDefault,
           /*view_transition_state=*/std::nullopt,
@@ -1612,7 +1615,6 @@ NavigationRequest::CreateForSynchronousRendererCommit(
           /*should_load_data_url=*/false,
           /*ancestor_or_self_has_cspee=*/
           frame_tree_node->AncestorOrSelfHasCSPEE(),
-          /*reduced_accept_language=*/std::string(),
           /*navigation_delivery_type=*/
           network::mojom::NavigationDeliveryType::kDefault,
           /*view_transition_state=*/std::nullopt,
@@ -2082,10 +2084,29 @@ NavigationRequest::NavigationRequest(
   }
   commit_params_->is_browser_initiated = browser_initiated;
 
-  // Update the load flags with cache information.
-  UpdateLoadFlagsWithCacheFlags(&begin_params_->load_flags,
-                                common_params_->navigation_type,
-                                common_params_->method == "POST");
+  // Calculate load flags based on the navigation type. For renderer-initiated
+  // navigations, `begin_params_->load_flags` come from the renderer, so can't
+  // be trusted.
+  int load_flags = CalculateCacheLoadFlags(common_params_->navigation_type,
+                                           common_params_->method == "POST");
+  // The flags in `begin_params_` are expected to be a subset of those
+  // calculated above. Report any cases where that's not true, to make sure it's
+  // safe to stop relying on them.
+  // TODO(crbug.com/578128190): Remove load flags from BeginNavigationParams,
+  // and only use the flags calculated here.
+  if (begin_params_->load_flags & ~load_flags) {
+    SCOPED_CRASH_KEY_NUMBER("NavReq", "begin_params_load_flags",
+                            begin_params_->load_flags);
+    SCOPED_CRASH_KEY_NUMBER("NavReq", "calculated_load_flags", load_flags);
+    SCOPED_CRASH_KEY_NUMBER("NavReq", "navigation_type",
+                            static_cast<int>(common_params_->navigation_type));
+    SCOPED_CRASH_KEY_STRING32("NavReq", "method", common_params_->method);
+    SCOPED_CRASH_KEY_BOOL("NavReq", "from_begin_navigation",
+                          from_begin_navigation_);
+    base::debug::DumpWithoutCrashing();
+  }
+  begin_params_->load_flags =
+      load_flags | (begin_params_->load_flags & kAllowedBeginParamsLoadFlags);
 
   // Add necessary headers that may not be present in the
   // blink::mojom::BeginNavigationParams.
@@ -2138,13 +2159,10 @@ NavigationRequest::NavigationRequest(
       // Chromium network stack won't overwrite the value if Accept-Language
       // header was already added in the request header.
       net::HttpRequestHeaders accept_language_headers;
-      std::optional<std::string> reduced_accept_language =
-          reduce_accept_lang_utils.value()
-              .AddNavigationRequestAcceptLanguageHeaders(
-                  url::Origin::Create(common_params_->url), frame_tree_node_,
-                  &accept_language_headers);
-      commit_params_->reduced_accept_language =
-          reduced_accept_language.value_or("");
+      reduce_accept_lang_utils.value()
+          .AddNavigationRequestAcceptLanguageHeaders(
+              url::Origin::Create(common_params_->url), frame_tree_node_,
+              &accept_language_headers);
       headers.MergeFrom(accept_language_headers);
     }
 
@@ -2278,21 +2296,37 @@ NavigationRequest::NavigationRequest(
     CHECK(commit_params_->not_restored_reasons.is_null());
   }
 
-  // Record `SameDocumentCrossOriginInitiator` metric. It happens in the
-  // NavigationRequest constructor, to catch every kind of same-document
-  // navigation: the one initiated from the navigating frame's process, and the
-  // others.
+  // Record `SameDocumentCrossOriginInitiator` metrics. It happens in the
+  // NavigationRequest constructor, to catch same-document navigations that go
+  // through the browser process before committing (same-process cross-origin
+  // fragment navigations that commit synchronously in the renderer are recorded
+  // in `blink::DocumentLoader::CommitSameDocumentNavigation`).
+  //
+  // Compare `GetInitiatorOrigin()` against `frame_tree_node_->current_origin()`
+  // rather than `GetTentativeOriginAtRequestTime()`, because a same-document
+  // navigation keeps the current document and its origin, whereas
+  // `GetTentativeOriginAtRequestTime()` computes a new origin (which derives a
+  // fresh opaque origin for sandboxed or `data:` frames, falsely appearing
+  // cross-origin to `last_committed_origin_` on self-initiated `history` API or
+  // fragment navigations).
+  const std::optional<url::Origin>& initiator_origin = GetInitiatorOrigin();
   if (common_params_->navigation_type ==
           blink::mojom::NavigationType::SAME_DOCUMENT &&
-      GetInitiatorOrigin() &&
-      !GetInitiatorOrigin()->IsSameOriginWith(
-          GetTentativeOriginAtRequestTime())) {
+      initiator_origin &&
+      !initiator_origin->IsSameOriginWith(frame_tree_node_->current_origin())) {
     // This is reported to navigating frame's current document, because this is
     // the document that behave differently if this navigation was turned into a
     // cross-document one.
     GetContentClient()->browser()->LogWebFeatureForCurrentPage(
         frame_tree_node_->current_frame_host(),
         blink::mojom::WebFeature::kSameDocumentCrossOriginInitiator);
+    GetContentClient()->browser()->LogWebFeatureForCurrentPage(
+        frame_tree_node_->current_frame_host(),
+        net::SchemefulSite::IsSameSite(*initiator_origin,
+                                       frame_tree_node_->current_origin())
+            ? blink::mojom::WebFeature::
+                  kSameDocumentSameSiteCrossOriginInitiator
+            : blink::mojom::WebFeature::kSameDocumentCrossSiteInitiator);
   }
 
   if (!GetContentClient()->browser()->IsBrowserStartupComplete()) {
@@ -4327,7 +4361,7 @@ void NavigationRequest::MaybeRegisterExistingOriginAsHavingDefaultIsolation(
   // origin. Since this is different than the default origin-keyed state, it
   // also needs the global walk. Without it, one BrowsingInstance can have two
   // keys for one origin, and a commit to the origin-keyed process fails the
-  // CanAccessOrigin() check.
+  // CanCommitNewOrigin() check.
   if (!IsOriginAgentClusterOptInRequested() &&
       !IsOriginAgentClusterOptOutRequested() &&
       exclude_ad_from_origin_keyed_process_.value() == false) {
@@ -6760,9 +6794,9 @@ void NavigationRequest::OnRedirectChecksComplete(
 
   // Removes all Client Hints from the request, that were passed on from the
   // previous one.
-  for (const auto& elem : network::GetClientHintToNameMap()) {
+  for (const auto& elem : network::kClientHintToNameMap) {
     const auto& header = elem.second;
-    headers_update_params.removed_headers.push_back(header);
+    headers_update_params.removed_headers.emplace_back(header);
   }
 
   // Add any required Client Hints to the current request.
@@ -6804,13 +6838,9 @@ void NavigationRequest::OnRedirectChecksComplete(
           ReduceAcceptLanguageUtils::Create(browser_context);
       reduce_accept_lang_utils && !devtools_accept_language_override_) {
     net::HttpRequestHeaders accept_language_headers;
-    std::optional<std::string> reduced_accept_language =
-        reduce_accept_lang_utils.value()
-            .AddNavigationRequestAcceptLanguageHeaders(
-                url::Origin::Create(common_params_->url), frame_tree_node_,
-                &accept_language_headers);
-    commit_params_->reduced_accept_language =
-        reduced_accept_language.value_or("");
+    reduce_accept_lang_utils.value().AddNavigationRequestAcceptLanguageHeaders(
+        url::Origin::Create(common_params_->url), frame_tree_node_,
+        &accept_language_headers);
     headers_update_params.modified_headers.MergeFrom(accept_language_headers);
   }
 
@@ -10190,6 +10220,12 @@ void NavigationRequest::ReadyToCommitNavigation(bool is_error) {
   commit_params_->is_load_data_with_base_url = IsLoadDataWithBaseURL();
   commit_params_->origin_to_commit = origin_to_commit.value();
 
+  if (frame_tree_node_->frame_tree()
+          .delegate()
+          ->DoesWebContentsDisallowSharedWorkers()) {
+    GetMutableRuntimeFeatureStateContext().SetSharedWorkerEnabled(false);
+  }
+
   if (!IsSameDocument()) {
     // TODO(crbug.com/504574017): Remove the WeakPtr check once Android
     // WebView can avoid the synchronous deletion case.
@@ -10437,11 +10473,9 @@ NavigationRequest::GetOriginForURLLoaderFactoryAfterResponse() {
   if (HasRenderFrameHost() &&
       !GetRenderFrameHost()->ShouldBypassSecurityChecksForErrorPage(this) &&
       !IsForMhtmlSubframe()) {
-    int process_id = GetRenderFrameHost()->GetProcess()->GetDeprecatedID();
     auto* policy = ChildProcessSecurityPolicyImpl::GetInstance();
-    CHECK(policy->CanAccessOrigin(
-        process_id, origin,
-        ChildProcessSecurityPolicyImpl::AccessType::kCanCommitNewOrigin));
+    CHECK(policy->CanCommitNewOrigin(
+        GetRenderFrameHost()->GetProcess()->GetID(), origin));
   }
 
   return origin;

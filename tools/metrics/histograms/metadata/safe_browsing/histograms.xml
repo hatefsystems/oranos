@@ -355,23 +355,6 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram
-    name="SafeBrowsing.ApplicationAdvancedProtectionStatusDetector.Changed.{ApplicationAPStatus}"
-    enum="ApplicationAdvancedProtectionEvent" expires_after="2026-10-20">
-  <owner>minap@chromium.org</owner>
-  <owner>chrome-counter-abuse-alerts@google.com</owner>
-  <summary>
-    This records events that change application-wide Advanced Protection status
-    to {ApplicationAPStatus}.
-  </summary>
-  <token key="ApplicationAPStatus">
-    <variant name="Disabled"
-        summary="Application Advanced Protection status changed to disabled"/>
-    <variant name="Enabled"
-        summary="Application Advanced Protection status changed to enabled"/>
-  </token>
-</histogram>
-
 <histogram name="SafeBrowsing.AsyncCheck.CommittedNavigationIdsSize"
     units="count" expires_after="2027-03-07">
   <owner>xinghuilu@chromium.org</owner>
@@ -1640,8 +1623,8 @@ useful for Chirp alerts (go/crca-alerts). -->
 </histogram>
 
 <histogram name="SafeBrowsing.GetReferringAppInfo.WithWebApk.Duration"
-    units="ms" expires_after="2026-12-06">
-  <owner>chlily@chromium.org</owner>
+    units="ms" expires_after="2027-06-06">
+  <owner>yawfrempong@google.com</owner>
   <owner>chrome-counter-abuse-alerts@google.com</owner>
   <summary>
     Records the elapsed time in GetReferringAppInfo() when requesting WebAPK
@@ -1651,8 +1634,8 @@ useful for Chirp alerts (go/crca-alerts). -->
 </histogram>
 
 <histogram name="SafeBrowsing.GetReferringAppInfo.WithWebApk.FoundWebApk"
-    enum="BooleanFound" expires_after="2026-12-06">
-  <owner>chlily@chromium.org</owner>
+    enum="BooleanFound" expires_after="2027-06-06">
+  <owner>yawfrempong@google.com</owner>
   <owner>chrome-counter-abuse-alerts@google.com</owner>
   <summary>
     Records whether GetReferringAppInfo(), when requesting WebAPK info to be
@@ -2635,7 +2618,7 @@ useful for Chirp alerts (go/crca-alerts). -->
 </histogram>
 
 <histogram name="SafeBrowsing.Pref.JsOptimizerSetting"
-    enum="SafeBrowsingJsOptimizerSetting" expires_after="2027-02-21">
+    enum="SafeBrowsingJsOptimizerSetting" expires_after="2027-04-25">
   <owner>tiffanysong@google.com</owner>
   <owner>jacastro@chromium.org</owner>
   <owner>chrome-counter-abuse-alerts@google.com</owner>
@@ -2985,7 +2968,7 @@ useful for Chirp alerts (go/crca-alerts). -->
 </histogram>
 
 <histogram name="SafeBrowsing.RT.HasTokenInRequest{UserCategory}"
-    enum="BooleanHasToken" expires_after="2027-02-07">
+    enum="BooleanHasToken" expires_after="2027-04-25">
   <owner>xinghuilu@chromium.org</owner>
   <owner>chrome-counter-abuse-alerts@google.com</owner>
   <summary>
@@ -3328,7 +3311,7 @@ useful for Chirp alerts (go/crca-alerts). -->
 </histogram>
 
 <histogram name="SafeBrowsing.SiteFamiliarity.Verdict{FrameType}"
-    enum="SiteFamiliarity" expires_after="2027-02-21">
+    enum="SiteFamiliarity" expires_after="2027-04-25">
   <owner>jacastro@chromium.org</owner>
   <owner>chrome-counter-abuse-alerts@google.com</owner>
   <summary>

@@ -48,6 +48,13 @@ std::unique_ptr<IOSBlockingPageMetricsHelper> CreateMetricsHelper(
   security_interstitials::MetricsHelper::ReportDetails reporting_info;
   reporting_info.metric_prefix = GetUnsafeResourceMetricPrefix(resource);
   reporting_info.extra_suffix = safe_browsing::GetExtraMetricsSuffix(resource);
+  // Match `BaseBlockingPage::GetReportingInfo()`: client side detection
+  // interstitials additionally log histograms suffixed by the threat subtype.
+  if (resource.threat_source ==
+      safe_browsing::ThreatSource::CLIENT_SIDE_DETECTION) {
+    reporting_info.extra_extra_suffix =
+        safe_browsing::GetExtraExtraMetricsSuffix(resource);
+  }
   return std::make_unique<IOSBlockingPageMetricsHelper>(
       resource.weak_web_state.get(), resource.url, reporting_info);
 }
@@ -98,7 +105,8 @@ void ReportOnSecurityInterstitialProceeded(
   // TODO(crbug.com/558721044): Plumb tab title on iOS.
   router->OnSecurityInterstitialProceeded(
       url, safe_browsing::GetThreatTypeStringForInterstitial(threat_type),
-      /*net_error_code=*/0, referrer_chain, /*tab_title=*/"");
+      /*net_error_code=*/0, referrer_chain, /*tab_title=*/"",
+      /*extension_initiator=*/std::nullopt);
 }
 
 }  // namespace

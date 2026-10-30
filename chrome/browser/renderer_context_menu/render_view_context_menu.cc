@@ -153,6 +153,7 @@
 #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/browser/ui/webauthn/context_menu_helper.h"
+#include "chrome/browser/ui/webui/context_hub/context_hub.mojom-features.h"
 #include "chrome/browser/ui/webui/history/foreign_session_handler.h"
 #include "chrome/browser/user_education/user_education_service.h"
 #include "chrome/browser/user_education/user_education_service_factory.h"
@@ -183,6 +184,7 @@
 #include "components/contextual_tasks/public/features.h"
 #include "components/custom_handlers/protocol_handler.h"
 #include "components/download/public/common/download_url_parameters.h"
+#include "components/feature_engagement/public/feature_constants.h"
 #include "components/google/core/common/google_util.h"
 #include "components/guest_view/browser/guest_view_base.h"
 #include "components/language/core/browser/language_model_manager.h"
@@ -287,9 +289,9 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/image_model.h"
 #include "ui/base/mojom/menu_source_type.mojom.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_features.h"
-#include "ui/base/window_open_disposition.h"
 #include "ui/base/window_open_disposition_utils.h"
 #include "ui/color/color_provider.h"
 #include "ui/display/types/display_constants.h"
@@ -394,6 +396,7 @@
 #include "chrome/browser/ui/toasts/api/toast_id.h"
 #include "chrome/browser/ui/toasts/toast_controller.h"
 #include "chrome/browser/ui/toasts/toast_features.h"
+#include "chrome/browser/ui/views/context_hub/memory_banks_palette_bubble_controller.h"
 #include "chrome/browser/ui/views/context_hub/save_to_memory_bank_bubble_controller.h"
 #include "chrome/browser/ui/webui/webui_embedding_context.h"
 #include "components/split_tabs/split_tab_id.h"
@@ -686,13 +689,14 @@ int UmaEnumForCommand(int key, UmaEnumIdLookupType type) {
        {IDC_CONTENT_CONTEXT_CONTEXTUAL_TASKS_SUBMENU, 171},
        {IDC_CONTENT_CONTEXT_GLIC_SMART_SUGGESTION, 172},
        {IDC_CONTENT_CONTEXT_INDIGO, 173},
+       {IDC_CONTENT_CONTEXT_BROWSE_MEMORY_BANKS, 174},
        // To add new items:
        //   - Add one more line above this comment block, using the UMA value
        //     from the line below this comment block.
        //   - Increment the UMA value in that latter line.
        //   - Add the new item to the RenderViewContextMenuItem enum in
        //     tools/metrics/histograms/metadata/ui/enums.xml.
-       {kUmaMaxValueKey, 174}});
+       {kUmaMaxValueKey, 175}});
   // LINT.ThenChange(//tools/metrics/histograms/metadata/ui/enums.xml:RenderViewContextMenuItem)
 
   // LINT.IfChange(ContextMenuOptionDesktop)
@@ -763,8 +767,10 @@ int GetUmaValueMax(UmaEnumIdLookupType type) {
 
 // Collapses large ranges of ids before looking for UMA enum.
 int CollapseCommandsForUMA(int id) {
-  DCHECK(!RenderViewContextMenu::IsContentCustomCommandId(id));
-  DCHECK(!ContextMenuMatcher::IsExtensionsCustomCommandId(id));
+  CHECK(!RenderViewContextMenu::IsContentCustomCommandId(id),
+        base::NotFatalUntil::M163);
+  CHECK(!ContextMenuMatcher::IsExtensionsCustomCommandId(id),
+        base::NotFatalUntil::M163);
 
   if (id >= IDC_CONTENT_CONTEXT_PROTOCOL_HANDLER_FIRST &&
       id <= IDC_CONTENT_CONTEXT_PROTOCOL_HANDLER_LAST) {
@@ -877,7 +883,7 @@ void OnBrowserCreated(const GURL& link_url,
          destination browser which is not correct. */
       ui::PAGE_TRANSITION_TYPED);
   nav_params.initiator_origin = initiator_origin;
-  nav_params.disposition = WindowOpenDisposition::kNewForegroundTab;
+  nav_params.disposition = ui::mojom::WindowOpenDisposition::kNewForegroundTab;
   // We are opening the link across profiles, so sending the referer
   // header is a privacy risk.
   nav_params.referrer = content::Referrer();
@@ -1216,7 +1222,7 @@ void RenderViewContextMenu::AppendCurrentExtensionItems() {
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 std::u16string RenderViewContextMenu::FormatURLForClipboard(const GURL& url) {
-  DCHECK(url.is_valid());
+  CHECK(url.is_valid(), base::NotFatalUntil::M163);
 
   GURL url_to_format = url;
   url_formatter::FormatUrlTypes format_types;
@@ -1354,12 +1360,21 @@ void RenderViewContextMenu::InitMenu() {
       AppendLensGeminiSection();
     }
   } else {
+    const bool glic_below_search =
+        base::FeatureList::IsEnabled(features::kGlicContextMenuBelowSearch);
+    if (!glic_below_search &&
+        content_type_->SupportsGroup(
+            ContextMenuContentType::ITEM_GROUP_GLICSHAREIMAGE)) {
+      AppendGlicShareImageItem();
+    }
+
     if (content_type_->SupportsGroup(
             ContextMenuContentType::ITEM_GROUP_SEARCHWEBFORIMAGE)) {
       AppendSearchWebForImageItems();
     }
 
-    if (content_type_->SupportsGroup(
+    if (glic_below_search &&
+        content_type_->SupportsGroup(
             ContextMenuContentType::ITEM_GROUP_GLICSHAREIMAGE)) {
       AppendGlicShareImageItem();
     }
@@ -1420,7 +1435,7 @@ void RenderViewContextMenu::InitMenu() {
     AppendRevisedTextSelectionSection();
   } else if (content_type_->SupportsGroup(
                  ContextMenuContentType::ITEM_GROUP_COPY)) {
-    DCHECK(!editable);
+    CHECK(!editable, base::NotFatalUntil::M163);
     AppendCopyItem();
     AppendLinkToTextItems();
   }
@@ -1548,16 +1563,18 @@ void RenderViewContextMenu::InitMenu() {
 
   if (content_type_->SupportsGroup(
           ContextMenuContentType::ITEM_GROUP_ALL_EXTENSION)) {
-    DCHECK(!content_type_->SupportsGroup(
-        ContextMenuContentType::ITEM_GROUP_CURRENT_EXTENSION));
+    CHECK(!content_type_->SupportsGroup(
+              ContextMenuContentType::ITEM_GROUP_CURRENT_EXTENSION),
+          base::NotFatalUntil::M163);
     extensions::context_menu_helpers::PopulateExtensionItems(
         browser_context_, params_, extension_items_);
   }
 
   if (content_type_->SupportsGroup(
           ContextMenuContentType::ITEM_GROUP_CURRENT_EXTENSION)) {
-    DCHECK(!content_type_->SupportsGroup(
-        ContextMenuContentType::ITEM_GROUP_ALL_EXTENSION));
+    CHECK(!content_type_->SupportsGroup(
+              ContextMenuContentType::ITEM_GROUP_ALL_EXTENSION),
+          base::NotFatalUntil::M163);
     AppendCurrentExtensionItems();
   }
 
@@ -2155,7 +2172,7 @@ void RenderViewContextMenu::AppendLinkItems() {
       }
 
       if (multiple_profiles_open_ || has_active_profiles) {
-        DCHECK(!target_profiles_entries.empty());
+        CHECK(!target_profiles_entries.empty(), base::NotFatalUntil::M163);
         profiles::PlaceholderAvatarIconParams icon_params =
             GetPlaceholderAvatarIconParamsVisibleAgainstColor(
                 GetWebContents()->GetColorProvider().GetColor(
@@ -2321,6 +2338,10 @@ void RenderViewContextMenu::AppendOpenInWebAppLinkItems() {
       GetBrowser() ? web_app::AppBrowserController::From(GetBrowser())
                    : nullptr;
   if (app_controller && app_controller->app_id() == *link_app_id) {
+    // Prevent-close apps cannot open another window or navigate this one.
+    if (app_controller->IsPreventCloseEnabled()) {
+      return;
+    }
     if (provider->registrar_unsafe().IsTabbedWindowModeEnabled(*link_app_id)) {
       if (app_controller->IsUrlInHomeTabScope(params_.link_url)) {
         // Clicking on a link captured in the home tab will always focus and/or
@@ -2428,7 +2449,7 @@ void RenderViewContextMenu::AppendGlicShareImageItem() {
   if (tab) {
     menu_model_.AddItemWithIcon(
         IDC_CONTENT_CONTEXT_GLICSHAREIMAGE,
-        l10n_util::GetStringUTF16(IDS_CONTENT_CONTEXT_GLICSHAREIMAGE),
+        l10n_util::GetStringUTF16(IDS_GLIC_BUTTON_ENTRYPOINT_ASK_GEMINI_LABEL),
         ui::ImageModel::FromVectorIcon(
             glic::GlicVectorIconManager::GetVectorIcon(
                 IDR_GLIC_BUTTON_VECTOR_ICON),
@@ -2658,6 +2679,7 @@ void RenderViewContextMenu::AppendPageItems() {
 
       // Save to Memory Banks
       AppendSaveToMemoryBanksItem();
+      AppendBrowseMemoryBanksItem();
 
       // Search with google lens
       if (IsRegionSearchEnabled()) {
@@ -2674,6 +2696,7 @@ void RenderViewContextMenu::AppendPageItems() {
 
       // Save to Memory Banks
       AppendSaveToMemoryBanksItem();
+      AppendBrowseMemoryBanksItem();
     }
 
     // Indigo (Try it on)
@@ -2762,6 +2785,7 @@ void RenderViewContextMenu::AppendPageItems() {
   }
 
   AppendSaveToMemoryBanksItem();
+  AppendBrowseMemoryBanksItem();
 
   // Note: `has_sharing_menu_items = true` also implies a separator was added
   // for sharing section.
@@ -2982,6 +3006,17 @@ void RenderViewContextMenu::AppendSaveToMemoryBanksItem() {
   }
 }
 
+void RenderViewContextMenu::AppendBrowseMemoryBanksItem() {
+  if (base::FeatureList::IsEnabled(context_hub::features::kMemoryBanks) &&
+      base::FeatureList::IsEnabled(
+          browser::context_hub::mojom::kMemoryBanksSearchPalette) &&
+      !menu_model_.GetIndexOfCommandId(IDC_CONTENT_CONTEXT_BROWSE_MEMORY_BANKS)
+           .has_value()) {
+    menu_model_.AddItemWithStringId(IDC_CONTENT_CONTEXT_BROWSE_MEMORY_BANKS,
+                                    IDS_CONTENT_CONTEXT_BROWSE_MEMORY_BANKS);
+  }
+}
+
 bool RenderViewContextMenu::CanSaveImageToMemoryBanks() const {
   return params_.media_type == ContextMenuDataMediaType::kImage &&
          params_.has_image_contents && params_.src_url.SchemeIsHTTPOrHTTPS();
@@ -3018,7 +3053,7 @@ void RenderViewContextMenu::AppendRotationItems() {
 }
 
 void RenderViewContextMenu::AppendSearchProvider() {
-  DCHECK(browser_context_);
+  CHECK(browser_context_, base::NotFatalUntil::M163);
 
   if (!IsSearchAllowedByPolicy()) {
     return;
@@ -3813,6 +3848,7 @@ bool RenderViewContextMenu::IsCommandIdEnabled(int id) const {
       return true;
 
     case IDC_CONTENT_CONTEXT_SAVE_TO_MEMORY_BANKS:
+    case IDC_CONTENT_CONTEXT_BROWSE_MEMORY_BANKS:
       return true;
 
     case IDC_CONTENT_PASTE_FROM_CLIPBOARD:
@@ -3902,7 +3938,7 @@ void RenderViewContextMenu::OpenURLWithExtraHeaders(
     const GURL& url,
     const GURL& referring_url,
     const url::Origin& initiator,
-    WindowOpenDisposition disposition,
+    ui::mojom::WindowOpenDisposition disposition,
     ui::PageTransition transition,
     const std::string& extra_headers,
     bool started_from_context_menu,
@@ -3945,13 +3981,14 @@ void RenderViewContextMenu::ExecuteCommand(int id, int event_flags) {
 
   switch (id) {
     case IDC_CONTENT_CONTEXT_OPENLINKNEWTAB: {
-      WindowOpenDisposition new_tab_disposition =
-          WindowOpenDisposition::kNewBackgroundTab;
+      ui::mojom::WindowOpenDisposition new_tab_disposition =
+          ui::mojom::WindowOpenDisposition::kNewBackgroundTab;
       BrowserWindowInterface* browser = nullptr;
       if (IsInProgressiveWebApp()) {
         browser = FindNormalBrowser(GetProfile());
-        new_tab_disposition = browser ? WindowOpenDisposition::kNewForegroundTab
-                                      : WindowOpenDisposition::kNewWindow;
+        new_tab_disposition =
+            browser ? ui::mojom::WindowOpenDisposition::kNewForegroundTab
+                    : ui::mojom::WindowOpenDisposition::kNewWindow;
       }
 
       OpenURLParams params = GetOpenURLParamsWithExtraHeaders(
@@ -3974,10 +4011,11 @@ void RenderViewContextMenu::ExecuteCommand(int id, int event_flags) {
     }
 
     case IDC_CONTENT_CONTEXT_OPENLINKNEWWINDOW:
-      DCHECK(!IsInProgressiveWebApp());
+      CHECK(!IsInProgressiveWebApp(), base::NotFatalUntil::M163);
       OpenURLWithExtraHeaders(
           params_.link_url, params_.frame_url, params_.frame_origin,
-          WindowOpenDisposition::kNewWindow, ui::PAGE_TRANSITION_LINK,
+          ui::mojom::WindowOpenDisposition::kNewWindow,
+          ui::PAGE_TRANSITION_LINK,
           /*extra_headers=*/std::string(),
           /*started_from_context_menu=*/true,
           page_load_metrics::NavigationInitiatorHolder::AttacherCallback(
@@ -3992,7 +4030,8 @@ void RenderViewContextMenu::ExecuteCommand(int id, int event_flags) {
       // incognito browser tab.
       OpenURLWithExtraHeaders(
           params_.link_url, params_.frame_url, params_.frame_origin,
-          WindowOpenDisposition::kOffTheRecord, ui::PAGE_TRANSITION_LINK,
+          ui::mojom::WindowOpenDisposition::kOffTheRecord,
+          ui::PAGE_TRANSITION_LINK,
           /*extra_headers=*/std::string(),
           /*started_from_context_menu=*/true,
           page_load_metrics::NavigationInitiatorHolder::AttacherCallback(
@@ -4116,6 +4155,10 @@ void RenderViewContextMenu::ExecuteCommand(int id, int event_flags) {
       ExecSaveToMemoryBanks();
       break;
 
+    case IDC_CONTENT_CONTEXT_BROWSE_MEMORY_BANKS:
+      ExecBrowseMemoryBanks();
+      break;
+
     case IDC_CONTENT_CONTEXT_RELOAD_GLIC:
       if (glic::GlicEnabling::IsEnabledByGlobalCriteria()) {
         auto* glic_service = glic::GlicKeyedService::Get(browser_context_);
@@ -4152,7 +4195,8 @@ void RenderViewContextMenu::ExecuteCommand(int id, int event_flags) {
     case IDC_CONTENT_CONTEXT_OPEN_ORIGINAL_IMAGE_NEW_TAB:
       OpenURLWithExtraHeaders(
           params_.src_url, params_.frame_url, params_.frame_origin,
-          WindowOpenDisposition::kNewBackgroundTab, ui::PAGE_TRANSITION_LINK,
+          ui::mojom::WindowOpenDisposition::kNewBackgroundTab,
+          ui::PAGE_TRANSITION_LINK,
           /*extra_headers=*/std::string(), /*started_from_context_menu=*/false,
           /*navigation_handle_callback=*/{});
       break;
@@ -4164,7 +4208,7 @@ void RenderViewContextMenu::ExecuteCommand(int id, int event_flags) {
     case IDC_CONTENT_CONTEXT_OPENIMAGENEWTAB:
     case IDC_CONTENT_CONTEXT_OPENAVNEWTAB:
       OpenURL(params_.src_url, params_.frame_url, params_.frame_origin,
-              WindowOpenDisposition::kNewBackgroundTab,
+              ui::mojom::WindowOpenDisposition::kNewBackgroundTab,
               ui::PAGE_TRANSITION_LINK);
       break;
 
@@ -4233,7 +4277,8 @@ void RenderViewContextMenu::ExecuteCommand(int id, int event_flags) {
     }
 
     case IDC_RELOAD:
-      chrome::Reload(GetBrowser(), WindowOpenDisposition::kCurrentTab);
+      chrome::Reload(GetBrowser(),
+                     ui::mojom::WindowOpenDisposition::kCurrentTab);
       break;
 
     case IDC_LIVE_CAPTION:
@@ -4347,7 +4392,7 @@ void RenderViewContextMenu::ExecuteCommand(int id, int event_flags) {
     }
     case IDC_CONTENT_CONTEXT_SEARCHWEBFORNEWTAB: {
       auto disposition = ui::DispositionFromEventFlags(
-          event_flags, WindowOpenDisposition::kNewForegroundTab);
+          event_flags, ui::mojom::WindowOpenDisposition::kNewForegroundTab);
 
       GURL navigation_url = selection_navigation_url_;
       if (google_util::IsGoogleSearchUrl(navigation_url)) {
@@ -4379,8 +4424,8 @@ void RenderViewContextMenu::ExecuteCommand(int id, int event_flags) {
                     if (content::NavigationEntry* entry =
                             web_contents->GetController()
                                 .GetLastCommittedEntry()) {
-                      tracker->OnCopyRecorded(tab_id, entry->GetUniqueID(),
-                                              selection_text);
+                      tracker->OnContextMenuSearchRecorded(
+                          tab_id, entry->GetUniqueID(), selection_text);
                     }
                   }
                 }
@@ -4396,7 +4441,7 @@ void RenderViewContextMenu::ExecuteCommand(int id, int event_flags) {
     }
     case IDC_CONTENT_CONTEXT_GOTOURL: {
       auto disposition = ui::DispositionFromEventFlags(
-          event_flags, WindowOpenDisposition::kNewForegroundTab);
+          event_flags, ui::mojom::WindowOpenDisposition::kNewForegroundTab);
       OpenURL(selection_navigation_url_, GURL(), {}, disposition,
               ui::PAGE_TRANSITION_LINK);
       break;
@@ -4575,7 +4620,7 @@ const policy::DlpRulesManager* RenderViewContextMenu::GetDlpRulesManager()
 bool RenderViewContextMenu::IsSaveAsItemAllowedByPolicy(
     const GURL& item_url) const {
   PrefService* local_state = g_browser_process->local_state();
-  DCHECK(local_state);
+  CHECK(local_state, base::NotFatalUntil::M163);
   // Check if file-selection dialogs are forbidden by policy.
   if (!local_state->GetBoolean(prefs::kAllowFileSelectionDialogs)) {
     return false;
@@ -5028,9 +5073,24 @@ void RenderViewContextMenu::ExecOpenWebApp() {
     return;
   }
 
+  ui::mojom::WindowOpenDisposition disposition =
+      ui::mojom::WindowOpenDisposition::kCurrentTab;
+  if (web_app::AppBrowserController::IsForWebApp(GetBrowser(), *app_id)) {
+    // This is safe because this is read-only and IsTabbedWindowModeEnabled
+    // handles edge-case states by returning false.
+    const auto& registrar =
+        web_app::WebAppProvider::GetForLocalAppsUnchecked(GetProfile())
+            ->registrar_unsafe();
+    if (!registrar.IsTabbedWindowModeEnabled(*app_id)) {
+      // The same-app menu item explicitly promises a new window. Do not let
+      // focus-existing or navigate-existing reuse the source window.
+      // WebAppLaunchProcess enforces prevent-close for all launch callers.
+      disposition = ui::mojom::WindowOpenDisposition::kNewWindow;
+    }
+  }
   apps::AppLaunchParams launch_params(
-      *app_id, apps::LaunchContainer::kLaunchContainerWindow,
-      WindowOpenDisposition::kCurrentTab, apps::LaunchSource::kFromMenu);
+      *app_id, apps::LaunchContainer::kLaunchContainerWindow, disposition,
+      apps::LaunchSource::kFromMenu);
   launch_params.override_url = params_.link_url;
   // Forwarding `params_.frame_origin`, `params_.frame_url.GetAsReferrer()`, and
   // `params_.referrer_policy` directly mirrors
@@ -5060,16 +5120,17 @@ void RenderViewContextMenu::ExecProtocolHandler(int event_flags,
 
   base::RecordAction(
       UserMetricsAction("RegisterProtocolHandler.ContextMenu_Open"));
-  WindowOpenDisposition disposition = ui::DispositionFromEventFlags(
-      event_flags, WindowOpenDisposition::kNewForegroundTab);
+  ui::mojom::WindowOpenDisposition disposition = ui::DispositionFromEventFlags(
+      event_flags, ui::mojom::WindowOpenDisposition::kNewForegroundTab);
   OpenURL(handlers[handler_index].TranslateUrl(params_.link_url),
           params_.frame_url, params_.frame_origin, disposition,
           ui::PAGE_TRANSITION_LINK);
 }
 
 void RenderViewContextMenu::ExecOpenLinkInProfile(int profile_index) {
-  DCHECK_GE(profile_index, 0);
-  DCHECK_LE(profile_index, static_cast<int>(profile_link_paths_.size()));
+  CHECK_GE(profile_index, 0, base::NotFatalUntil::M163);
+  CHECK_LE(profile_index, static_cast<int>(profile_link_paths_.size()),
+           base::NotFatalUntil::M163);
 
   base::FilePath profile_path = profile_link_paths_[profile_index];
   profiles::SwitchToProfile(
@@ -5163,6 +5224,17 @@ void RenderViewContextMenu::ExecSaveToMemoryBanks() {
 #endif  // !BUILDFLAG(IS_ANDROID)
 }
 
+void RenderViewContextMenu::ExecBrowseMemoryBanks() {
+#if !BUILDFLAG(IS_ANDROID)
+  if (!GetBrowser() || !source_web_contents_) {
+    return;
+  }
+  MemoryBanksPaletteBubbleController::GetOrCreateForWebContents(
+      source_web_contents_)
+      ->ShowBubble();
+#endif  // !BUILDFLAG(IS_ANDROID)
+}
+
 void RenderViewContextMenu::ExecInspectElement() {
   base::RecordAction(UserMetricsAction("DevTools_InspectElement"));
   RenderFrameHost* render_frame_host = GetRenderFrameHost();
@@ -5174,8 +5246,8 @@ void RenderViewContextMenu::ExecInspectElement() {
 
 void RenderViewContextMenu::ExecInspectBackgroundPage() {
   const Extension* platform_app = GetExtension();
-  DCHECK(platform_app);
-  DCHECK(platform_app->is_platform_app());
+  CHECK(platform_app, base::NotFatalUntil::M163);
+  CHECK(platform_app->is_platform_app(), base::NotFatalUntil::M163);
 
   extensions::devtools_util::InspectBackgroundPage(
       platform_app, GetProfile(), DevToolsOpenedByAction::kContextMenuInspect);
@@ -5375,6 +5447,11 @@ void RenderViewContextMenu::ExecIndigo() {
           tabs::TabInterface::MaybeGetFromContents(source_web_contents_))) {
     UserEducationService::MaybeNotifyNewBadgeFeatureUsed(
         GetBrowserContext(), features::kIndigoContextMenu);
+    if (auto* user_ed = BrowserUserEducationInterface::From(GetBrowser())) {
+      user_ed->NotifyFeaturePromoFeatureUsed(
+          feature_engagement::kIPHIndigoContextMenuToastFeature,
+          FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
+    }
     indigo::RecordContextMenuTargetType(
         content_type_->SupportsGroup(
             ContextMenuContentType::ITEM_GROUP_MEDIA_IMAGE)
@@ -5693,8 +5770,8 @@ void RenderViewContextMenu::ExecRotateCCW() {
 
 void RenderViewContextMenu::ExecReloadPackagedApp() {
   const Extension* platform_app = GetExtension();
-  DCHECK(platform_app);
-  DCHECK(platform_app->is_platform_app());
+  CHECK(platform_app, base::NotFatalUntil::M163);
+  CHECK(platform_app->is_platform_app(), base::NotFatalUntil::M163);
 
   extensions::ExtensionRegistrar::Get(browser_context_)
       ->ReloadExtension(platform_app->id());
@@ -5702,8 +5779,8 @@ void RenderViewContextMenu::ExecReloadPackagedApp() {
 
 void RenderViewContextMenu::ExecRestartPackagedApp() {
   const Extension* platform_app = GetExtension();
-  DCHECK(platform_app);
-  DCHECK(platform_app->is_platform_app());
+  CHECK(platform_app, base::NotFatalUntil::M163);
+  CHECK(platform_app->is_platform_app(), base::NotFatalUntil::M163);
 
   apps::AppLoadService::Get(GetProfile())
       ->RestartApplication(platform_app->id());
@@ -5752,7 +5829,7 @@ void RenderViewContextMenu::ExecTranslate() {
 
   translate::TranslateManager* manager =
       chrome_translate_client->GetTranslateManager();
-  DCHECK(manager);
+  CHECK(manager, base::NotFatalUntil::M163);
   manager->ShowTranslateUI(/*auto_translate=*/true,
                            /*triggered_from_menu=*/true);
 }
@@ -5786,8 +5863,8 @@ void RenderViewContextMenu::ExecLanguageSettings(int event_flags) {
   chrome::SettingsWindowManager::GetInstance()->ShowOSSettings(
       GetProfile(), chromeos::settings::mojom::kLanguagesSubpagePath);
 #else
-  WindowOpenDisposition disposition = ui::DispositionFromEventFlags(
-      event_flags, WindowOpenDisposition::kNewForegroundTab);
+  ui::mojom::WindowOpenDisposition disposition = ui::DispositionFromEventFlags(
+      event_flags, ui::mojom::WindowOpenDisposition::kNewForegroundTab);
   GURL url = chrome::GetSettingsUrl(chrome::kLanguageOptionsSubPage);
   OpenURL(url, GURL(), {}, disposition, ui::PAGE_TRANSITION_LINK);
 #endif
@@ -5796,8 +5873,8 @@ void RenderViewContextMenu::ExecLanguageSettings(int event_flags) {
 void RenderViewContextMenu::ExecProtocolHandlerSettings(int event_flags) {
   base::RecordAction(
       UserMetricsAction("RegisterProtocolHandler.ContextMenu_Settings"));
-  WindowOpenDisposition disposition = ui::DispositionFromEventFlags(
-      event_flags, WindowOpenDisposition::kNewForegroundTab);
+  ui::mojom::WindowOpenDisposition disposition = ui::DispositionFromEventFlags(
+      event_flags, ui::mojom::WindowOpenDisposition::kNewForegroundTab);
   GURL url = chrome::GetSettingsUrl(chrome::kHandlerSettingsSubPage);
   OpenURL(url, GURL(), {}, disposition, ui::PAGE_TRANSITION_LINK);
 }
@@ -6182,7 +6259,8 @@ void RenderViewContextMenu::OpenLinkInSplitView(
     // Create new background tab.
     OpenURLParams params = GetOpenURLParamsWithExtraHeaders(
         params_.link_url, params_.frame_url, params_.frame_origin,
-        WindowOpenDisposition::kNewBackgroundTab, ui::PAGE_TRANSITION_LINK,
+        ui::mojom::WindowOpenDisposition::kNewBackgroundTab,
+        ui::PAGE_TRANSITION_LINK,
         /*extra_headers=*/std::string(), /*started_from_context_menu=*/true);
     const WebContents* new_web_contents = source_web_contents_->OpenURL(
         params, page_load_metrics::NavigationInitiatorHolder::AttacherCallback(
@@ -6247,7 +6325,8 @@ bool RenderViewContextMenu::CanAppendRegionSearchItem() const {
 }
 
 bool RenderViewContextMenu::CanAppendGlicShareImageItem() const {
-  if (!IsNormalBrowser()) {
+  if (!IsNormalBrowser() || glic_item_shown_ ||
+      !params_.selection_text.empty()) {
     return false;
   }
 
@@ -6310,13 +6389,18 @@ void RenderViewContextMenu::AppendLensGeminiSection() {
 
   menu_model_.AddSeparator(ui::NORMAL_SEPARATOR);
 
+  const bool glic_below_search =
+      base::FeatureList::IsEnabled(features::kGlicContextMenuBelowSearch);
+  if (!glic_below_search && can_glic) {
+    AppendGlicShareImageItem();
+  }
   if (can_region) {
     AppendRegionSearchItem();
   }
   if (can_image_search) {
     AppendSearchWebForImageItems();
   }
-  if (can_glic) {
+  if (glic_below_search && can_glic) {
     AppendGlicShareImageItem();
   }
   if (can_indigo) {

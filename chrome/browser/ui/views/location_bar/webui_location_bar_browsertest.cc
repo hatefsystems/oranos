@@ -4,8 +4,13 @@
 
 #include "chrome/browser/ui/views/location_bar/webui_location_bar.h"
 
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
 
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/scoped_observation.h"
 #include "base/strings/strcat.h"
@@ -54,14 +59,20 @@
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/tabs/public/tab_interface.h"
 #include "components/vector_icons/vector_icons.h"
+#include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/metrics_proto/omnibox_event.pb.h"
+#include "ui/base/clipboard/clipboard.h"
+#include "ui/base/clipboard/clipboard_buffer.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/base/clipboard/test/test_clipboard.h"
+#include "ui/base/data_transfer_policy/data_transfer_endpoint.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/color/color_id.h"
@@ -627,6 +638,92 @@ IN_PROC_BROWSER_TEST_F(WebUILocationBarBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(WebUILocationBarBrowserTest,
+                       UnstarredPageActionIconColorUpdatesOnThemeChange) {
+  // Pin location-icon ColorIds across theme changes so `UpdateLhsChipsState()`
+  // reuses its existing `IconHandleId` and does not mask missing `IconTable`
+  // flushes when only logical-ColorId icons (`kColorOmniboxActionIcon`) change.
+  ui::ColorProviderManager::Get().AppendColorProviderInitializer(
+      base::BindRepeating(
+          [](ui::ColorProvider* provider, const ui::ColorProviderKey& key) {
+            ui::ColorMixer& mixer = provider->AddMixer();
+            mixer[kColorOmniboxIconBackground] = {SK_ColorWHITE};
+            mixer[kColorOmniboxText] = {SK_ColorBLACK};
+            if (key.user_color == SK_ColorMAGENTA) {
+              mixer[kColorOmniboxActionIcon] = {SK_ColorMAGENTA};
+            }
+          }));
+  BrowserView::GetBrowserViewForBrowser(browser())
+      ->browser_widget()
+      ->SetUserColorOverride(SK_ColorBLUE);
+
+  ASSERT_TRUE(embedded_test_server()->Start());
+  const GURL url = embedded_test_server()->GetURL("/title1.html");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
+
+  WaitForInitialWebUIToolbar(browser());
+  ASSERT_TRUE(FlushWebUIToolbarPipes(browser()));
+
+  constexpr int kBookmarkMojomId = std::to_underlying(
+      toolbar_ui_api::mojom::PageActionId::kActionBookmarkThisTab);
+  const std::string get_bookmark_icon_color_script = content::JsReplace(
+      R"(
+      (async () => {
+        const app = document.querySelector('toolbar-app');
+        if (app?.updateComplete) {
+          await app.updateComplete;
+        }
+        const locationBar = app?.shadowRoot?.querySelector('location-bar');
+        if (locationBar?.updateComplete) {
+          await locationBar.updateComplete;
+        }
+        const pageActions =
+            locationBar?.shadowRoot?.querySelector('page-action-icons');
+        if (pageActions?.updateComplete) {
+          await pageActions.updateComplete;
+        }
+        const bookmarkIcon = Array.from(
+            pageActions?.shadowRoot?.querySelectorAll('page-action-icon') || []
+        ).find(icon => icon.state?.pageActionId === $1);
+        if (bookmarkIcon?.updateComplete) {
+          await bookmarkIcon.updateComplete;
+        }
+        const iconFromTable =
+            bookmarkIcon?.shadowRoot?.querySelector('icon-from-table');
+        if (iconFromTable?.updateComplete) {
+          await iconFromTable.updateComplete;
+        }
+        const container =
+            iconFromTable?.shadowRoot?.querySelector('#container');
+        return container ? getComputedStyle(container).color : '';
+      })()
+  )",
+      kBookmarkMojomId);
+
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return !content::EvalJs(GetWebUIToolbarWebContents(),
+                            get_bookmark_icon_color_script)
+                .ExtractString()
+                .empty();
+  }));
+  ASSERT_NE("rgb(255, 0, 255)", content::EvalJs(GetWebUIToolbarWebContents(),
+                                                get_bookmark_icon_color_script)
+                                    .ExtractString());
+
+  // Trigger a real Widget theme change (`ColorProviderKey::user_color` changes
+  // from `SK_ColorBLUE` to `SK_ColorMAGENTA`).
+  BrowserView::GetBrowserViewForBrowser(browser())
+      ->browser_widget()
+      ->SetUserColorOverride(SK_ColorMAGENTA);
+  ASSERT_TRUE(FlushWebUIToolbarPipes(browser()));
+
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return content::EvalJs(GetWebUIToolbarWebContents(),
+                           get_bookmark_icon_color_script)
+               .ExtractString() == "rgb(255, 0, 255)";
+  }));
+}
+
+IN_PROC_BROWSER_TEST_F(WebUILocationBarBrowserTest,
                        ContentSettingIconNoReanimateOnBookmarkClick) {
   WaitForInitialWebUIToolbar(browser());
   content::WebContents* web_contents =
@@ -913,6 +1010,144 @@ IN_PROC_BROWSER_TEST_F(WebUILocationBarBrowserTest, MiddleClickPasteAndGo) {
                            ->GetActiveWebContents()
                            ->GetLastCommittedURL());
 }
+
+class ObservingTestClipboard : public ui::TestClipboard {
+ public:
+  int read_text_count() const { return read_text_count_; }
+
+  // ui::TestClipboard:
+  void ReadText(ui::ClipboardBuffer buffer,
+                const std::optional<ui::DataTransferEndpoint>& data_dst,
+                ReadTextCallback callback) const override {
+    ui::TestClipboard::ReadText(buffer, data_dst, std::move(callback));
+    ++read_text_count_;
+  }
+
+ private:
+  mutable int read_text_count_ = 0;
+};
+
+struct BlockedClipboardUrlTestCase {
+  std::string_view test_name;
+  std::u16string_view clipboard_text;
+};
+
+class WebUILocationBarBlockedClipboardUrlBrowserTest
+    : public WebUILocationBarBrowserTest,
+      public testing::WithParamInterface<BlockedClipboardUrlTestCase> {
+ public:
+  void SetUpOnMainThread() override {
+    WebUILocationBarBrowserTest::SetUpOnMainThread();
+    ui::Clipboard::DestroyClipboardForCurrentThread();
+    auto clipboard = std::make_unique<ObservingTestClipboard>();
+    clipboard_ = clipboard.get();
+    ui::Clipboard::SetClipboardForCurrentThread(std::move(clipboard));
+  }
+
+  void TearDownOnMainThread() override {
+    clipboard_ = nullptr;
+    ui::Clipboard::DestroyClipboardForCurrentThread();
+    WebUILocationBarBrowserTest::TearDownOnMainThread();
+  }
+
+ protected:
+  raw_ptr<ObservingTestClipboard> clipboard_ = nullptr;
+};
+
+// Tests that non-HTTP(S) schemes (including web-safe schemes such as
+// filesystem:, blob:, data:, chrome-extension:, and ws:) are not allowed to be
+// opened from middle clicks.
+IN_PROC_BROWSER_TEST_P(WebUILocationBarBlockedClipboardUrlBrowserTest,
+                       MiddleClickPasteAndGoBlocksUnsafeScheme) {
+  if (!ui::Clipboard::IsMiddleClickPasteEnabled() ||
+      !ui::Clipboard::IsSupportedClipboardBuffer(
+          ui::ClipboardBuffer::kSelection)) {
+    return;
+  }
+
+  ASSERT_TRUE(embedded_test_server()->Start());
+  const GURL start_url = embedded_test_server()->GetURL("/title1.html");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), start_url));
+
+  WaitForInitialWebUIToolbar(browser());
+
+  {
+    ui::ScopedClipboardWriter writer(ui::ClipboardBuffer::kSelection);
+    writer.WriteText(GetParam().clipboard_text);
+  }
+
+  constexpr char kSimulateMiddleClickScript[] = R"(
+      (() => {
+        const locationIcon = document.querySelector('toolbar-app')?.
+            shadowRoot?.querySelector('location-bar')?.
+            shadowRoot?.querySelector('location-icon');
+        const container = locationIcon?.shadowRoot?.querySelector('#button');
+        if (!container) {
+          return false;
+        }
+
+        const eventInit = {
+          button: 1,
+          buttons: 4,
+          bubbles: true,
+          composed: true,
+          cancelable: true
+        };
+        container.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+        return true;
+      })()
+  )";
+
+  const int initial_read_count = clipboard_->read_text_count();
+  EXPECT_TRUE(
+      content::EvalJs(GetWebUIToolbarWebContents(), kSimulateMiddleClickScript)
+          .ExtractBool());
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return clipboard_->read_text_count() == initial_read_count + 1;
+  }));
+
+  content::WebContents* const web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  EXPECT_EQ(nullptr, web_contents->GetController().GetPendingEntry());
+  EXPECT_EQ(start_url, web_contents->GetVisibleURL());
+  EXPECT_EQ(start_url, web_contents->GetLastCommittedURL());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    WebUILocationBarBlockedClipboardUrlBrowserTest,
+    testing::Values(
+        BlockedClipboardUrlTestCase{"File", u"file:///etc/passwd"},
+        BlockedClipboardUrlTestCase{"ChromeUI", u"chrome://version"},
+        BlockedClipboardUrlTestCase{"ChromeUntrusted",
+                                    u"chrome-untrusted://terminal"},
+        BlockedClipboardUrlTestCase{
+            "ChromeExtension",
+            u"chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"
+            u"manifest.json"},
+        BlockedClipboardUrlTestCase{
+            "ChromeSearch", u"chrome-search://local-ntp/local-ntp.html"},
+        BlockedClipboardUrlTestCase{
+            "Filesystem", u"filesystem:http://127.0.0.1/temporary/test.html"},
+        BlockedClipboardUrlTestCase{
+            "Blob",
+            u"blob:http://127.0.0.1/550e8400-e29b-41d4-a716-446655440000"},
+        BlockedClipboardUrlTestCase{"Data", u"data:text/html,<h1>hi</h1>"},
+        BlockedClipboardUrlTestCase{
+            "JavascriptFilesystem",
+            u"javascript:filesystem:http://127.0.0.1/temporary/test.html"},
+        BlockedClipboardUrlTestCase{"JavascriptEmpty", u"javascript:"},
+        BlockedClipboardUrlTestCase{"AboutBlank", u"about:blank"},
+        BlockedClipboardUrlTestCase{
+            "ViewSource", u"view-source:http://127.0.0.1/title1.html"},
+        BlockedClipboardUrlTestCase{"Ws", u"ws://127.0.0.1/socket"},
+        BlockedClipboardUrlTestCase{"Wss", u"wss://127.0.0.1/socket"},
+        BlockedClipboardUrlTestCase{
+            "DevTools", u"devtools://devtools/bundled/inspector.html"},
+        BlockedClipboardUrlTestCase{"Whitespace", u"   "}),
+    [](const testing::TestParamInfo<BlockedClipboardUrlTestCase>& info) {
+      return std::string(info.param.test_name);
+    });
 
 IN_PROC_BROWSER_TEST_F(WebUILocationBarBrowserTest,
                        PageActionBookmarkBubbleHighlight) {

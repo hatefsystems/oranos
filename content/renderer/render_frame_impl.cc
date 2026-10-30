@@ -1104,8 +1104,6 @@ void FillMiscNavigationParams(
             cross_origin_isolation_key));
   }
 
-  navigation_params->reduced_accept_language =
-      WebString::FromAscii(commit_params.reduced_accept_language);
   navigation_params->enabled_client_hints.reserve(
       commit_params.enabled_client_hints.size());
   for (auto enabled_hint : commit_params.enabled_client_hints) {
@@ -4523,10 +4521,6 @@ bool RenderFrameImpl::SwapOutAndDeleteThis(
   }
 
   if (!success) {
-    // The swap can fail when the frame is detached during swap (this can
-    // happen while running the unload handlers). When that happens, delete
-    // the proxy.
-    remote_frame->Close(blink::DetachReason::kFrameDeletion);
     return false;
   }
 

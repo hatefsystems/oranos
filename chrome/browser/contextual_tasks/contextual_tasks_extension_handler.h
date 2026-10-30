@@ -28,10 +28,14 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/omnibox_proto/model_mode.pb.h"
 #include "third_party/omnibox_proto/tool_mode.pb.h"
-#include "ui/base/window_open_disposition.h"
+#include "ui/base/mojom/window_open_disposition.mojom-forward.h"
 #include "ui/webui/resources/cr_components/composebox/composebox.mojom.h"
 #include "ui/webui/resources/js/tracked_element/tracked_element.mojom-forward.h"
 #include "url/gurl.h"
+
+#if !BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/ui/webui/cr_components/searchbox/contextual_searchbox_tab_favicon_helper.h"
+#endif
 
 // Handles Mojo connection requests from the Contextual Tasks extension
 // document, implementing composebox and searchbox page handler interfaces.
@@ -49,10 +53,6 @@ struct TabContextState;
 namespace content {
 class WebContents;
 }  // namespace content
-
-namespace lens {
-class ClientToSearchMessage;
-}  // namespace lens
 
 namespace contextual_tasks {
 class ContextualTasksWebContentsUserData;
@@ -189,9 +189,10 @@ class ContextualTasksExtensionHandler
       searchbox::mojom::SmartComposeStatsPtr smart_compose_stats) override;
   void SetPopupSelection(
       searchbox::mojom::OmniboxPopupSelectionPtr selection) override;
-  void OpenPopupSelection(uint32_t result_sequence_id,
-                          searchbox::mojom::OmniboxPopupSelectionPtr selection,
-                          WindowOpenDisposition disposition) override;
+  void OpenPopupSelection(
+      uint32_t result_sequence_id,
+      searchbox::mojom::OmniboxPopupSelectionPtr selection,
+      ui::mojom::WindowOpenDisposition disposition) override;
   void OnNavigationLikely(
       uint8_t line,
       const GURL& url,
@@ -275,6 +276,9 @@ class ContextualTasksExtensionHandler
   void OnInputStateChanged(const omnibox::InputState& state);
   base::WeakPtr<contextual_search::InputStateModel>
   GetOrCreateInputStateModel();
+  void UpdateInputStateModelContext();
+  void OnSessionChanged(
+      contextual_search::ContextualSearchSessionHandle* session_handle);
   // Updates the tab context subscription callback if there is a new session.
   // Otherwise, return early.
   void MaybeRefreshTabContextSubscription(
@@ -284,9 +288,6 @@ class ContextualTasksExtensionHandler
   void SendTabContextToExtensionPage(
       const contextual_search::TabContextState& state);
   void OnLensThumbnailCreated(const std::string& thumbnail_uri);
-  void RecordTimeToHandshakeComplete();
-  void SendSearchMessageToBoundPage(const lens::ClientToSearchMessage& message);
-  void OnHandshakeComplete();
   void OnLensCropUpdated(const GURL& data_uri);
 
   mojo::Receiver<contextual_tasks::mojom::ExtensionPageHandlerFactory>
@@ -305,6 +306,7 @@ class ContextualTasksExtensionHandler
 
   base::WeakPtr<contextual_search::InputStateModel> input_state_model_;
   base::CallbackListSubscription input_state_subscription_;
+  base::CallbackListSubscription session_changed_subscription_;
   base::WeakPtr<contextual_search::ContextualSearchSessionHandle>
       subscribed_session_handle_;
   base::CallbackListSubscription tab_context_subscription_;
@@ -317,6 +319,9 @@ class ContextualTasksExtensionHandler
   omnibox::ModelMode active_model_ = omnibox::MODEL_MODE_UNSPECIFIED;
 
   std::unique_ptr<ui::TrackedElementHandler> tracked_element_handler_;
+#if !BUILDFLAG(IS_ANDROID)
+  ContextualSearchboxTabFaviconHelper tab_favicon_helper_;
+#endif
 
   base::WeakPtrFactory<ContextualTasksExtensionHandler> weak_ptr_factory_{this};
 };

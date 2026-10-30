@@ -25,7 +25,6 @@
 #include "components/contextual_tasks/public/contextual_tasks_service.h"
 #include "components/contextual_tasks/public/features.h"
 #include "components/contextual_tasks/public/mock_contextual_tasks_service.h"
-#include "components/lens/lens_features.h"
 #include "components/omnibox/browser/aim_eligibility_service.h"
 #include "components/omnibox/browser/mock_aim_eligibility_service.h"
 #include "components/omnibox/browser/omnibox_pref_names.h"
@@ -277,39 +276,33 @@ TEST_F(EntryPointEligibilityManagerTest,
   EXPECT_FALSE(manager_->AreEntryPointsEligible());
 }
 
-// Disable test on ChromeOS since ChromeOS does not support switching the
-// primary account without a restart.
-#if BUILDFLAG(IS_CHROMEOS)
-#define MAYBE_NotifyEntryPointEligibilityChanged \
-  DISABLED_NotifyEntryPointEligibilityChanged
-#else
-#define MAYBE_NotifyEntryPointEligibilityChanged \
-  NotifyEntryPointEligibilityChanged
-#endif
-TEST_F(EntryPointEligibilityManagerTest,
-       MAYBE_NotifyEntryPointEligibilityChanged) {
-  // Start with eligible state.
+TEST_F(EntryPointEligibilityManagerTest, NotifyEntryPointEligibilityChanged) {
+  // Start with account and cookies available, but primary account not yet set.
   auto account_info =
       identity_test_env_adaptor_->identity_test_env()->MakeAccountAvailable(
           "test@example.com");
   identity_test_env_adaptor_->identity_test_env()->SetCookieAccounts(
       {{.email = std::string(account_info.GetEmail()),
         .gaia_id = account_info.GetGaiaId()}});
-  identity_test_env_adaptor_->identity_test_env()->SetPrimaryAccount(
-      account_info.GetEmail(), signin::ConsentLevel::kSignin);
 
   EXPECT_CALL(*mock_ui_service_, IsSignedInToBrowserWithValidCredentials())
       .WillRepeatedly(Return(true));
   profile_->GetPrefs()->SetInteger(omnibox::kAIModeSettings, 0);
 
   InitializeManager();
-  ASSERT_TRUE(manager_->AreEntryPointsEligible());
+  ASSERT_FALSE(manager_->AreEntryPointsEligible());
 
   // Register observer.
   std::optional<bool> notified_eligibility;
   auto subscription = manager_->RegisterOnEntryPointEligibilityChanged(
       base::BindLambdaForTesting(
           [&](bool eligible) { notified_eligibility = eligible; }));
+
+  // Test OnPrimaryAccountChanged (sign-in): Set primary account.
+  identity_test_env_adaptor_->identity_test_env()->SetPrimaryAccount(
+      account_info.GetEmail(), signin::ConsentLevel::kSignin);
+  EXPECT_EQ(notified_eligibility, true);
+  ASSERT_TRUE(manager_->AreEntryPointsEligible());
 
   // 1. Test OnAccountsInCookieUpdated: Set cookies to empty.
   notified_eligibility.reset();
@@ -323,7 +316,10 @@ TEST_F(EntryPointEligibilityManagerTest,
         .gaia_id = account_info.GetGaiaId()}});
   EXPECT_EQ(notified_eligibility, true);
 
+#if !BUILDFLAG(IS_CHROMEOS)
   // 2. Test OnPrimaryAccountChanged: Clear primary account.
+  // Skipped on ChromeOS since signin::ClearPrimaryAccount() is not supported
+  // without a restart.
   notified_eligibility.reset();
   identity_test_env_adaptor_->identity_test_env()->ClearPrimaryAccount();
   EXPECT_EQ(notified_eligibility, false);
@@ -337,6 +333,7 @@ TEST_F(EntryPointEligibilityManagerTest,
       {{.email = std::string(account_info.GetEmail()),
         .gaia_id = account_info.GetGaiaId()}});
   EXPECT_EQ(notified_eligibility, true);
+#endif
 
   // 3. Test OnRefreshTokenUpdatedForAccount:
   // Change IsSignedIn expectation to false to simulate invalid credentials.
@@ -411,12 +408,8 @@ TEST_F(EntryPointEligibilityManagerTest, IsPinningEligible_True) {
 }
 
 TEST_F(EntryPointEligibilityManagerTest, IsPinningEligible_True_SignedOut) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeaturesAndParameters(
-      {{contextual_tasks::kEnableContextualTasksPinButtonInToolbar, {}},
-       {lens::features::kLensSidePanelUnification,
-        {{"allow-signed-out", "true"}}}},
-      {});
+  base::test::ScopedFeatureList feature_list(
+      contextual_tasks::kEnableContextualTasksPinButtonInToolbar);
 
   EXPECT_CALL(*mock_ui_service_, IsSignedInToBrowserWithValidCredentials())
       .WillRepeatedly(Return(false));
@@ -430,27 +423,6 @@ TEST_F(EntryPointEligibilityManagerTest, IsPinningEligible_True_SignedOut) {
 
   EXPECT_FALSE(EntryPointEligibilityManager::IsEligible(profile_.get()));
   EXPECT_TRUE(EntryPointEligibilityManager::IsPinningEligible(profile_.get()));
-}
-
-TEST_F(EntryPointEligibilityManagerTest,
-       IsPinningEligible_False_SignedOut_UnificationDisabled) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatures(
-      {contextual_tasks::kEnableContextualTasksPinButtonInToolbar},
-      {lens::features::kLensSidePanelUnification});
-
-  EXPECT_CALL(*mock_ui_service_, IsSignedInToBrowserWithValidCredentials())
-      .WillRepeatedly(Return(false));
-
-  profile_->GetPrefs()->SetInteger(omnibox::kAIModeSettings, 0);  // Allowed
-
-  EXPECT_CALL(*mock_aim_service_, IsFuseboxEligible())
-      .WillRepeatedly(testing::Return(true));
-
-  InitializeManager();
-
-  EXPECT_FALSE(EntryPointEligibilityManager::IsEligible(profile_.get()));
-  EXPECT_FALSE(EntryPointEligibilityManager::IsPinningEligible(profile_.get()));
 }
 
 TEST_F(EntryPointEligibilityManagerTest,
@@ -494,11 +466,8 @@ TEST_F(EntryPointEligibilityManagerTest,
 TEST_F(EntryPointEligibilityManagerTest,
        IsPinningEligible_False_NotAimEligible) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeaturesAndParameters(
-      {{contextual_tasks::kEnableContextualTasksPinButtonInToolbar, {}},
-       {lens::features::kLensSidePanelUnification,
-        {{"allow-signed-out", "true"}}}},
-      {});
+  feature_list.InitAndEnableFeature(
+      contextual_tasks::kEnableContextualTasksPinButtonInToolbar);
 
   EXPECT_CALL(*mock_aim_service_, IsAimEligible())
       .WillRepeatedly(testing::Return(false));
@@ -544,11 +513,8 @@ TEST_F(EntryPointEligibilityManagerTest,
 TEST_F(EntryPointEligibilityManagerTest,
        IsPinningEligible_False_Incognito) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeaturesAndParameters(
-      {{contextual_tasks::kEnableContextualTasksPinButtonInToolbar, {}},
-       {lens::features::kLensSidePanelUnification,
-        {{"allow-signed-out", "true"}}}},
-      {});
+  feature_list.InitAndEnableFeature(
+      contextual_tasks::kEnableContextualTasksPinButtonInToolbar);
 
   TestingProfile::Builder otr_builder;
   otr_builder.AddTestingFactory(

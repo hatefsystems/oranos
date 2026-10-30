@@ -100,7 +100,7 @@ Env::~Env() {
 
 // static
 std::unique_ptr<Env> Env::CreateInstance() {
-  DCHECK(!g_primary_instance);
+  CHECK(!g_primary_instance, base::NotFatalUntil::M163);
   // No make_unique as constructor is private.
   std::unique_ptr<Env> env(new Env());
   if (!env->Init())
@@ -159,6 +159,11 @@ void Env::SetTouchDown(bool is_touch_down) {
 
 std::optional<gfx::Point> Env::ConsumeTouchForDrag(const Window* window) {
   return env_controller_->ConsumeTouchForDrag(window);
+}
+
+bool Env::ConsumeLeftMousePressForDrag(const Window* window) {
+  return IsLeftMouseButtonDown() &&
+         env_controller_->ConsumeLeftMousePressForDrag(window);
 }
 
 void Env::SetGestureRecognizer(

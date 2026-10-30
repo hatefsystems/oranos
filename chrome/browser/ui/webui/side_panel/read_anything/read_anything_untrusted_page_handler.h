@@ -16,6 +16,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "base/types/expected.h"
 #include "chrome/browser/ui/read_anything/read_anything_controller.h"
 #include "chrome/browser/ui/read_anything/read_anything_enums.h"
@@ -51,6 +52,7 @@ class NavigationHandle;
 class ScopedAccessibilityMode;
 }
 
+class ReadAnythingIphController;
 class ReadAnythingUntrustedPageHandler;
 
 // LINT.IfChange(EngineInstallationState)
@@ -183,11 +185,11 @@ class ReadAnythingUntrustedPageHandler :
       const ReadAnythingUntrustedPageHandler&) = delete;
   ~ReadAnythingUntrustedPageHandler() override;
 
-  const std::optional<std::string>& dom_distiller_title() const {
-    return dom_distiller_title_;
+  const std::optional<std::string>& readability_title() const {
+    return readability_title_;
   }
-  const std::optional<std::string>& dom_distiller_content() const {
-    return dom_distiller_content_;
+  const std::optional<std::string>& readability_content() const {
+    return readability_content_;
   }
 
   base::TimeTicks readability_distillation_tree_change_start_time() const {
@@ -436,13 +438,13 @@ class ReadAnythingUntrustedPageHandler :
       bool is_available);
 
   // Called if IsReadAnythingWithReadabilityEnabled is enabled. Triggers
-  // DomDistiller Distillation for the current page. Returns true if
+  // Readability distillation for the current page if eligible. Returns true if
   // distillation was successfully started.
-  bool RequestDomDistillerDistillation(content::WebContents* contents);
+  bool MaybeStartReadabilityDistillation(content::WebContents* contents);
 
   // Resets the state of the current readability distillation: resolves an
   // outstanding RequestReadabilityDistillation callback with kCancelled and
-  // empty strings, cancels the in-flight DomDistiller distillation, if any, and
+  // empty strings, cancels the in-flight Readability distillation, if any, and
   // clears the cached article and its timing state.
   void ResetReadabilityState();
 
@@ -450,8 +452,8 @@ class ReadAnythingUntrustedPageHandler :
   // the current url scheme in ReadAnything.DistillationScheme.
   void RecordDistillationSchemeHistogram(const GURL& url) const;
 
-  // Called by the DomDistillerDelegate with the result of a DomDistiller
-  // distillation.
+  // Called by the ReadabilityDistillerDelegate with the result of a
+  // Readability distillation.
   void ProcessDistilledArticle(
       const dom_distiller::DistilledArticleProto* article_proto);
 
@@ -474,6 +476,9 @@ class ReadAnythingUntrustedPageHandler :
   const raw_ptr<content::WebUI> web_ui_;
   raw_ptr<tabs::TabInterface> tab_;
 
+  // Shows and closes Reading Mode's IPH.
+  std::unique_ptr<ReadAnythingIphController> iph_controller_;
+
   std::unique_ptr<ReadAnythingWebContentsObserver> main_observer_;
 
   // This observer is used when the current page is a pdf. It observes a child
@@ -483,11 +488,19 @@ class ReadAnythingUntrustedPageHandler :
 
   // Private implementation for dom_distiller::ViewRequestDelegate, not part of
   // the public API.
-  class DomDistillerDelegate;
-  std::unique_ptr<DomDistillerDelegate> distiller_delegate_;
+  class ReadabilityDistillerDelegate;
+  std::unique_ptr<ReadabilityDistillerDelegate> distiller_delegate_;
 
   const mojo::Receiver<read_anything::mojom::UntrustedPageHandler> receiver_;
   const mojo::Remote<read_anything::mojom::UntrustedPage> page_;
+
+  // The trigger used the last time Reading Mode was shown. Intentionally not
+  // reset when Reading Mode is hidden, so that a distillation result arriving
+  // after the UI is closed is still attributed to the right entry point.
+  // OnDistillationStatus() resets it to kUnknown after logging the omnibox
+  // distillation metrics, so they are only recorded once per omnibox open.
+  ReadAnythingOpenTrigger last_open_trigger_ =
+      ReadAnythingOpenTrigger::kUnknown;
 
   // Whether the tab is going to detach soon.
   bool tab_will_detach_ = false;
@@ -559,9 +572,9 @@ class ReadAnythingUntrustedPageHandler :
   ListenToThisPagePlaybackMetricState listen_to_this_page_playback_state_ =
       ListenToThisPagePlaybackMetricState::kInactive;
 
-  // Hold DOM distiller distillation results.
-  std::optional<std::string> dom_distiller_title_;
-  std::optional<std::string> dom_distiller_content_;
+  // Holds Readability distillation results.
+  std::optional<std::string> readability_title_;
+  std::optional<std::string> readability_content_;
 
   // Tracks the start time of a readability distillation triggered by an active
   // accessibility tree ID change. This is used to measure readability

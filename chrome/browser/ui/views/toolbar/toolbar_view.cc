@@ -61,7 +61,6 @@
 #include "chrome/browser/ui/omnibox/omnibox_view.h"
 #include "chrome/browser/ui/page_action/page_action_properties_provider.h"
 #include "chrome/browser/ui/side_panel/side_panel_entry_id.h"
-#include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_prefs.h"
 #include "chrome/browser/ui/tabs/vertical_tab_strip_state_controller.h"
@@ -186,7 +185,11 @@
 using base::UserMetricsAction;
 using content::WebContents;
 
+DEFINE_UI_CLASS_PROPERTY_TYPE(ActionItemEngagedIndicatorStyle)
 DEFINE_UI_CLASS_PROPERTY_KEY(bool, kActionItemUnderlineIndicatorKey, false)
+DEFINE_UI_CLASS_PROPERTY_KEY(ActionItemEngagedIndicatorStyle,
+                             kActionItemEngagedIndicatorStyleKey,
+                             ActionItemEngagedIndicatorStyle::kUnderline)
 
 namespace {
 
@@ -443,10 +446,15 @@ void ToolbarView::Init() {
   }
 
   if (!features::IsWebUIReloadButtonEnabled()) {
+    // TODO(crbug.com/548363252): Align `IsWebUIToolbarEnabled()` and
+    // `IsWebUIReloadButtonEnabled()` metrics gating so `OnCreated()` is not
+    // called by both `WebUIToolbarWebView` and `ReloadButton` when another
+    // WebUI toolbar element is enabled without `kWebUIReloadButton`.
+    auto* window_manager = InitialWebUIWindowMetricsManager::From(browser_);
     reload_ = AddChildView(std::make_unique<ReloadButton>(
         browser_->GetProfile(),
         chrome::BrowserCommandController::From(browser_),
-        InitialWebUIWindowMetricsManager::From(browser_)));
+        window_manager ? window_manager->GetMetricsDispatcher() : nullptr));
   }
 
   if (!features::IsWebUIHomeButtonEnabled()) {
@@ -785,12 +793,12 @@ void ToolbarView::OnGlicActorTaskIconClicked() {
     return;
   }
 
-  ActorTaskListBubbleController* controller =
-      ActorTaskListBubbleController::From(browser_view_->browser());
+  auto* controller =
+      glic::GlicActivityListBubbleController::From(browser_view_->browser());
   // Only show the bubble if the button is not currently pressed. Clicking on
   // the pressed button should dismiss the nudge.
-  if (!glic_actor_task_icon_->GetIsPressed()) {
-    controller->ShowBubble(glic_actor_task_icon_);
+  if (!glic_actor_task_icon_->GetIsPressed() && controller) {
+    controller->ShowBubble();
   }
 
   auto current_task_nudge_state =
@@ -991,34 +999,33 @@ void ToolbarView::SetGlicActorNudgePressedState(bool pressed) {
   }
 }
 
-void ToolbarView::ShowActorTaskListBubble() {
+void ToolbarView::ShowActivityListBubble() {
   if (!glic_actor_task_icon_) {
     return;
   }
-  if (!actor_task_list_bubble_) {
-    Profile* profile = browser_->GetProfile();
-    auto* manager = glic::LegacyGlicActivityManager::Get(profile);
-    auto* controller = ActorTaskListBubbleController::From(browser_);
-    if (manager && controller) {
-      actor_task_list_bubble_ = std::make_unique<ActorTaskListBubble>(
-          profile, browser_, manager->actor_task_list_bubble_rows(),
-          base::BindRepeating(&ActorTaskListBubbleController::OnTaskRowClicked,
-                              base::Unretained(controller)));
-    }
+  if (activity_list_bubble_) {
+    activity_list_bubble_->Close();
+    activity_list_bubble_.reset();
   }
-  if (actor_task_list_bubble_) {
-    actor_task_list_bubble_->Show(glic_actor_task_icon_);
-  }
-}
-
-void ToolbarView::CloseActorTaskListBubble() {
-  if (actor_task_list_bubble_) {
-    actor_task_list_bubble_->Close();
+  if (auto* controller =
+          glic::GlicActivityListBubbleController::From(browser_)) {
+    activity_list_bubble_ = std::make_unique<glic::GlicActivityListBubble>(
+        controller->CreateRowViewModels(),
+        base::BindRepeating(
+            &glic::GlicActivityListBubbleController::OnBubbleDestroyed,
+            controller->GetWeakPtr()));
+    activity_list_bubble_->Show(glic_actor_task_icon_);
   }
 }
 
-bool ToolbarView::IsActorTaskListBubbleShowing() {
-  return actor_task_list_bubble_ && actor_task_list_bubble_->IsShowing();
+void ToolbarView::CloseActivityListBubble() {
+  if (activity_list_bubble_) {
+    activity_list_bubble_->Close();
+  }
+}
+
+bool ToolbarView::IsActivityListBubbleShowing() {
+  return activity_list_bubble_ && activity_list_bubble_->IsShowing();
 }
 
 void ToolbarView::FinalizeHideGlicActorTaskIcon() {
@@ -2048,9 +2055,8 @@ views::BubbleAnchor ToolbarView::GetPageActionBubbleAnchor(
 }
 
 void ToolbarView::ZoomChangedForActiveTab(bool can_show_bubble) {
-  auto* zoom_view_controller = browser_->GetActiveTabInterface()
-                                   ->GetTabFeatures()
-                                   ->zoom_view_controller();
+  auto* zoom_view_controller =
+      zoom::ZoomViewController::From(browser_->GetActiveTabInterface());
   CHECK(zoom_view_controller);
   zoom_view_controller->UpdatePageActionIconAndBubbleVisibility(
       /*prefer_to_show_bubble=*/can_show_bubble, /*from_user_gesture=*/false);

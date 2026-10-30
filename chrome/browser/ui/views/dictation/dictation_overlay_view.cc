@@ -14,7 +14,6 @@
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
-#include "chrome/browser/ui/views/dictation/waveform_view.h"
 #include "chrome/browser/ui/views/dictation/waveform_view_button.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/tabs/public/tab_interface.h"
@@ -75,6 +74,7 @@ FullscreenController* GetFullscreenController(
 
 class DictationOverlayContentsView : public views::View {
   METADATA_HEADER(DictationOverlayContentsView, views::View)
+
  public:
   explicit DictationOverlayContentsView(
       base::RepeatingClosure toggle_active_stream_callback)
@@ -145,7 +145,7 @@ class DictationOverlayContentsView : public views::View {
     mic_button_->SetVisible(mic_visible);
 
     waveform_view_->SetVisible(waveform_visible);
-    waveform_view_->SetState(state);
+    waveform_view_->SetMode(ToWaveformMode(state));
     waveform_view_->SetEnabled(state == UiState::kInitializing ||
                                state == UiState::kTranscribing);
 
@@ -187,7 +187,7 @@ DictationOverlayView::DictationOverlayView(
   SetShowCloseButton(false);
   set_margins(gfx::Insets(0));
   set_corner_radius(kCornerRadius);
-  set_shadow(views::BubbleBorder::STANDARD_SHADOW);
+  set_shadow_config({.shadow_type = views::BubbleBorder::STANDARD_SHADOW});
 }
 
 DictationOverlayView::~DictationOverlayView() = default;

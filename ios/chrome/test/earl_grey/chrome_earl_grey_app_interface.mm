@@ -11,6 +11,7 @@
 #import <memory>
 #import <string>
 
+#import "GREYElementFilter.h"
 #import "base/apple/foundation_util.h"
 #import "base/barrier_closure.h"
 #import "base/command_line.h"
@@ -19,6 +20,7 @@
 #import "base/ios/ios_util.h"
 #import "base/json/json_writer.h"
 #import "base/no_destructor.h"
+#import "base/path_service.h"
 #import "base/strings/string_number_conversions.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
@@ -71,6 +73,7 @@
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/browser/browser_provider.h"
 #import "ios/chrome/browser/shared/model/browser/browser_provider_interface.h"
+#import "ios/chrome/browser/shared/model/paths/paths.h"
 #import "ios/chrome/browser/shared/model/profile/profile_attributes_storage_ios.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/profile/profile_manager_ios.h"
@@ -104,6 +107,7 @@
 #import "ios/public/provider/chrome/browser/lens/lens_api.h"
 #import "ios/public/provider/chrome/browser/primes/primes_api.h"
 #import "ios/public/provider/chrome/browser/signin/choice_api.h"
+#import "ios/testing/earl_grey/earl_grey_app.h"
 #import "ios/testing/hardware_keyboard_util.h"
 #import "ios/testing/nserror_util.h"
 #import "ios/testing/open_url_context.h"
@@ -128,9 +132,9 @@
 #import "third_party/perfetto/include/perfetto/tracing/tracing.h"
 #import "ui/base/device_form_factor.h"
 
+using base::test::ios::kSpinDelaySeconds;
 using base::test::ios::kWaitForActionTimeout;
 using base::test::ios::kWaitForJSCompletionTimeout;
-using base::test::ios::kWaitForPageLoadTimeout;
 using base::test::ios::WaitUntilConditionOrTimeout;
 using collaboration::messaging::MessagingBackendService;
 using collaboration::messaging::MessagingBackendServiceFactory;
@@ -205,6 +209,83 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
 
   return nil;
 }
+
+// Interval between polling attempts for UI element waits. UI hierarchy walks
+// and matcher evaluation are relatively expensive compared to simple state
+// boolean checks, so 50ms provides low latency with minimal CPU contention.
+constexpr base::TimeDelta kUIElementPollInterval = base::Milliseconds(50);
+
+// Manages an in-app condition wait on the main thread so the test process does
+// not need to poll across EDO on every spin iteration.
+class InAppWaiter {
+ public:
+  // Returns the singleton `InAppWaiter` for the main thread.
+  static InAppWaiter& Get() {
+    CHECK([NSThread isMainThread]);
+    static base::NoDestructor<InAppWaiter> instance;
+    return *instance;
+  }
+
+  // Evaluates `condition` immediately on the app's main thread. If not yet
+  // satisfied, stores `condition` and `poll_interval` for
+  // `StartWithCompletion()` and returns YES. Returns NO if `condition` is
+  // already satisfied and no wait is needed.
+  BOOL PrepareCondition(ConditionBlock condition,
+                        base::TimeDelta poll_interval = kSpinDelaySeconds) {
+    CHECK(!condition_);
+    CHECK(!timer_);
+    if (condition()) {
+      return NO;
+    }
+    condition_ = [condition copy];
+    poll_interval_ = poll_interval;
+    return YES;
+  }
+
+  // Starts a non-blocking repeating timer on the app's main runloop that polls
+  // `condition_` in-memory and invokes `completion` once satisfied.
+  void StartWithCompletion(ProceduralBlock completion) {
+    CHECK(condition_);
+    CHECK(completion);
+    CHECK(!timer_);
+    completion_ = [completion copy];
+    timer_ = [NSTimer timerWithTimeInterval:poll_interval_.InSecondsF()
+                                    repeats:YES
+                                      block:^(NSTimer*) {
+                                        InAppWaiter::Get().OnTimerFired();
+                                      }];
+    [[NSRunLoop currentRunLoop] addTimer:timer_ forMode:NSRunLoopCommonModes];
+  }
+
+  // Invalidates any active wait timer and releases the pending condition and
+  // completion blocks.
+  void Cancel() {
+    [timer_ invalidate];
+    timer_ = nil;
+    condition_ = nil;
+    completion_ = nil;
+    poll_interval_ = kSpinDelaySeconds;
+  }
+
+ private:
+  // Evaluates `condition_` on each timer tick and invokes `completion_` once
+  // satisfied.
+  void OnTimerFired() {
+    CHECK(condition_);
+    CHECK(completion_);
+    if (!condition_()) {
+      return;
+    }
+    ProceduralBlock completion = completion_;
+    Cancel();
+    completion();
+  }
+
+  NSTimer* timer_ = nil;
+  ConditionBlock condition_ = nil;
+  ProceduralBlock completion_ = nil;
+  base::TimeDelta poll_interval_ = kSpinDelaySeconds;
+};
 
 }  // namespace
 
@@ -471,6 +552,60 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
   return NO;
 }
 
++ (void)startPendingWaitWithCompletion:(ProceduralBlock)completion {
+  InAppWaiter::Get().StartWithCompletion(completion);
+}
+
++ (void)cancelPendingWait {
+  InAppWaiter::Get().Cancel();
+}
+
++ (BOOL)prepareConditionForUIElementWithMatcher:(id<GREYMatcher>)matcher
+                                    rootMatcher:(id<GREYMatcher>)rootMatcher
+                               assertionMatcher:
+                                   (id<GREYMatcher>)assertionMatcher {
+  id<GREYMatcher> effectiveMatcher = matcher;
+  if (rootMatcher) {
+    effectiveMatcher = [[GREYAllOf alloc]
+        initWithMatchers:@[ matcher, grey_ancestor(rootMatcher) ]];
+  }
+  GREYElementFinder* elementFinder =
+      [[GREYElementFinder alloc] initWithMatcher:effectiveMatcher];
+  return InAppWaiter::Get().PrepareCondition(
+      ^bool {
+        NSArray<id>* elements =
+            [elementFinder elementsMatchedInAllWindowsIncludingStatusBar:NO];
+        if (elements.count > 1) {
+          elements = [GREYElementFilter filterElements:elements];
+        }
+        if ([assertionMatcher matches:nil]) {
+          for (id element in elements) {
+            if (![assertionMatcher matches:element]) {
+              return false;
+            }
+          }
+          return true;
+        }
+        if (elements.count > 1) {
+          return false;
+        }
+        return [assertionMatcher matches:elements.firstObject];
+      },
+      kUIElementPollInterval);
+}
+
++ (BOOL)prepareConditionForPageToFinishLoading {
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    return ![self isLoading];
+  });
+}
+
++ (BOOL)prepareConditionForAllWebStatesToFinishLoading {
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    return ![self isAnyWebStateLoading];
+  });
+}
+
 + (void)startReloading {
   WebNavigationBrowserAgent::FromBrowser(chrome_test_util::GetMainBrowser())
       ->Reload();
@@ -502,6 +637,20 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
                                      ->GetPersonalProfileName());
 }
 
++ (BOOL)prepareConditionForCurrentProfileName:(NSString*)profileName {
+  NSString* expectedProfileName = [profileName copy];
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    Browser* browser = chrome_test_util::GetMainBrowser();
+    // The main browser or its profile may be temporarily null during scene
+    // initialization or profile switching transitions.
+    if (!browser || !browser->GetProfile()) {
+      return false;
+    }
+    return [base::SysUTF8ToNSString(browser->GetProfile()->GetProfileName())
+        isEqualToString:expectedProfileName];
+  });
+}
+
 #pragma mark - Tab Utilities (EG2)
 
 + (void)selectTabAtIndex:(NSUInteger)index {
@@ -526,10 +675,6 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
 
 + (NSUInteger)incognitoTabCount {
   return chrome_test_util::GetIncognitoTabCount();
-}
-
-+ (NSUInteger)browserCount {
-  return chrome_test_util::RegularBrowserCount();
 }
 
 + (NSInteger)realizedWebStatesCount {
@@ -700,6 +845,31 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
   return IsVisibleURLNewTabPage(chrome_test_util::GetCurrentWebState());
 }
 
++ (BOOL)prepareConditionForCurrentTabTitle:(NSString*)tabTitle {
+  NSString* expectedTabTitle = [tabTitle copy];
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    return [[self currentTabTitle] isEqualToString:expectedTabTitle];
+  });
+}
+
++ (BOOL)prepareConditionForMainTabCount:(NSUInteger)count {
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    return [self mainTabCount] == count;
+  });
+}
+
++ (BOOL)prepareConditionForInactiveTabCount:(NSUInteger)count {
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    return [self inactiveTabCount] == count;
+  });
+}
+
++ (BOOL)prepareConditionForIncognitoTabCount:(NSUInteger)count {
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    return [self incognitoTabCount] == count;
+  });
+}
+
 #pragma mark - Window utilities (EG2)
 
 + (SceneState*)sceneStateWithNumber:(int)windowNumber {
@@ -751,6 +921,18 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
     }
   }
   return count;
+}
+
++ (BOOL)prepareConditionForWindowCount:(NSUInteger)count {
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    return [self windowCount] == count;
+  });
+}
+
++ (BOOL)prepareConditionForForegroundWindowCount:(NSUInteger)count {
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    return [self foregroundWindowCount] == count;
+  });
 }
 
 + (NSError*)openNewWindow {
@@ -871,6 +1053,27 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
 + (NSUInteger)incognitoTabCountInWindowWithNumber:(int)windowNumber {
   return chrome_test_util::GetIncognitoTabCountForWindowWithNumber(
       windowNumber);
+}
+
++ (BOOL)prepareConditionForPageToFinishLoadingInWindowWithNumber:
+    (int)windowNumber {
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    return ![self isLoadingInWindowWithNumber:windowNumber];
+  });
+}
+
++ (BOOL)prepareConditionForMainTabCount:(NSUInteger)count
+                     inWindowWithNumber:(int)windowNumber {
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    return [self mainTabCountInWindowWithNumber:windowNumber] == count;
+  });
+}
+
++ (BOOL)prepareConditionForIncognitoTabCount:(NSUInteger)count
+                          inWindowWithNumber:(int)windowNumber {
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    return [self incognitoTabCountInWindowWithNumber:windowNumber] == count;
+  });
 }
 
 + (UIWindow*)keyWindow {
@@ -997,6 +1200,12 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
   return (current_scale > (scale - 0.05)) && (current_scale < (scale + 0.05));
 }
 
++ (BOOL)prepareConditionForWebStateZoomScale:(CGFloat)scale {
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    return [self webStateZoomScaleCloseTo:scale];
+  });
+}
+
 + (void)signOutAndClearIdentitiesWithCompletion:(ProceduralBlock)completion {
   chrome_test_util::SignOutAndClearIdentities(completion);
 }
@@ -1008,6 +1217,14 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
 + (NSString*)webStateVisibleURL {
   return base::SysUTF8ToNSString(
       chrome_test_util::GetCurrentWebState()->GetVisibleURL().spec());
+}
+
++ (BOOL)prepareConditionForWebStateVisibleURL:(NSString*)spec {
+  GURL expectedURL(base::SysNSStringToUTF8(spec));
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    web::WebState* webState = chrome_test_util::GetCurrentWebState();
+    return webState && webState->GetVisibleURL() == expectedURL;
+  });
 }
 
 + (NSString*)webStateLastCommittedURL {
@@ -1034,16 +1251,6 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
   web_state->GetNavigationManager()->LoadIfNecessary();
 
   return nil;
-}
-
-+ (BOOL)webStateWebViewUsesContentInset {
-  web::WebState* web_state = chrome_test_util::GetCurrentWebState();
-  return web_state && web_state->GetWebViewProxy().shouldUseViewContentInset;
-}
-
-+ (CGSize)webStateWebViewSize {
-  web::WebState* web_state = chrome_test_util::GetCurrentWebState();
-  return web_state ? [web_state->GetWebViewProxy() bounds].size : CGSizeZero;
 }
 
 + (void)stopAllWebStatesLoading {
@@ -1201,6 +1408,20 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
   return NO;
 }
 
++ (BOOL)prepareConditionForSendTabToSelfEntryWithGUID:(NSString*)guid {
+  NSString* expectedGUID = [guid copy];
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    return [self hasSendTabToSelfEntryWithGUID:expectedGUID];
+  });
+}
+
++ (BOOL)prepareConditionForSendTabToSelfTargetDevice:(NSString*)deviceName {
+  NSString* expectedDeviceName = [deviceName copy];
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    return [self hasSendTabToSelfTargetDevice:expectedDeviceName];
+  });
+}
+
 + (NSString*)textFragmentForSendTabToSelfEntryWithURL:(NSString*)URL {
   send_tab_to_self::SendTabToSelfSyncService* service =
       SendTabToSelfSyncServiceFactory::GetForProfile(
@@ -1287,11 +1508,6 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
   return chrome_test_util::IsAutofillProfilePresent(utfGUID, utfFullName);
 }
 
-+ (void)deleteAutofillProfileFromFakeSyncServerWithGUID:(NSString*)GUID {
-  chrome_test_util::DeleteAutofillProfileFromFakeSyncServer(
-      base::SysNSStringToUTF8(GUID));
-}
-
 + (NSError*)waitForSyncTransportStateActiveWithTimeout:
     (base::TimeDelta)timeout {
   bool success = WaitUntilConditionOrTimeout(timeout, ^{
@@ -1369,6 +1585,17 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
   return error;
 }
 
++ (BOOL)prepareConditionForSyncServerEntitiesWithType:(NSUInteger)type
+                                                 name:(NSString*)name
+                                                count:(NSUInteger)count {
+  NSString* expectedName = [name copy];
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    return ![self verifyNumberOfSyncEntitiesWithType:type
+                                                name:expectedName
+                                               count:count];
+  });
+}
+
 + (NSError*)verifySessionsOnSyncServerWithSpecs:(NSArray<NSString*>*)specs {
   std::multiset<std::string> multisetSpecs;
   for (NSString* spec in specs) {
@@ -1426,13 +1653,6 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
   return [ChromeEarlGreyAppInterface
       executeJavaScript:javaScript
                 inWorld:static_cast<int>(web::ContentWorld::kPageContentWorld)];
-}
-
-+ (JavaScriptExecutionResult*)executeJavaScriptInIsolatedWorld:
-    (NSString*)javaScript {
-  return [ChromeEarlGreyAppInterface
-      executeJavaScript:javaScript
-                inWorld:static_cast<int>(web::ContentWorld::kIsolatedWorld)];
 }
 
 + (JavaScriptExecutionResult*)executeJavaScript:(NSString*)javaScript
@@ -1636,10 +1856,12 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
 
 + (void)setUserDefaultsObject:(id)value forKey:(NSString*)defaultName {
   [[NSUserDefaults standardUserDefaults] setObject:value forKey:defaultName];
+  [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
 + (void)removeUserDefaultsObjectForKey:(NSString*)key {
   [[NSUserDefaults standardUserDefaults] removeObjectForKey:key];
+  [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
 + (id)userDefaultsObjectForKey:(NSString*)key {
@@ -1680,12 +1902,6 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
   const PrefService::Preference* pref =
       GetApplicationContext()->GetLocalState()->FindPreference(path);
   return SerializedPref(pref);
-}
-
-+ (base::Time)localStateTimePref:(NSString*)prefName {
-  std::string path = base::SysNSStringToUTF8(prefName);
-  PrefService* prefService = GetApplicationContext()->GetLocalState();
-  return prefService->GetTime(path);
 }
 
 + (void)setIntegerValue:(int)value forLocalStatePref:(NSString*)prefName {
@@ -1845,113 +2061,13 @@ UIViewController* FindBrowserViewController(UIViewController* root) {
 
 #pragma mark - Watcher utilities
 
-// Delay between two watch cycles.
-constexpr base::TimeDelta kWatcherCycleDelay = base::Milliseconds(200);
-
-// Set of buttons being watched for.
-NSMutableSet* watchingButtons;
-// Set of buttons that were actually watched.
-NSMutableSet* watchedButtons;
-
-// Current watch number, to allow terminating older scheduled runs.
-int watchRunNumber = 0;
-
-+ (void)watchForButtonsWithLabels:(NSArray<NSString*>*)labels
-                          timeout:(base::TimeDelta)timeout {
-  watchRunNumber++;
-  watchedButtons = [NSMutableSet set];
-  watchingButtons = [NSMutableSet set];
-  for (NSString* label in labels) {
-    [watchingButtons addObject:label];
-  }
-  [self scheduleNextWatchForButtonsWithTimeout:timeout
-                                     runNumber:watchRunNumber];
-}
-
-+ (BOOL)watcherDetectedButtonWithLabel:(NSString*)label {
-  return [watchedButtons containsObject:label];
-}
-
 + (void)stopWatcher {
-  [watchingButtons removeAllObjects];
-  [watchedButtons removeAllObjects];
-}
-
-// Schedule the next watch cycles from a background thread, that will dispatch
-// the actual check, async, on the main thread, since UI objects can only
-// be accessed from there. Scheduling directly on the main
-// thread would let EG to try to drain the main thread queue without
-// success.
-+ (void)scheduleNextWatchForButtonsWithTimeout:(base::TimeDelta)timeout
-                                     runNumber:(int)runNumber {
-  dispatch_queue_t background_queue =
-      dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
-  dispatch_after(
-      dispatch_time(DISPATCH_TIME_NOW, kWatcherCycleDelay.InNanoseconds()),
-      background_queue, ^{
-        dispatch_async(dispatch_get_main_queue(), ^{
-          if (!watchingButtons.count || runNumber != watchRunNumber) {
-            return;
-          }
-
-          NSMutableArray<UIWindow*>* windows = [[NSMutableArray alloc] init];
-          for (UIScene* scene in UIApplication.sharedApplication
-                   .connectedScenes) {
-            UIWindowScene* windowScene =
-                base::apple::ObjCCastStrict<UIWindowScene>(scene);
-            [windows addObjectsFromArray:windowScene.windows];
-          }
-
-          [self findButtonsWithLabelsInViews:windows];
-
-          if (watchingButtons.count && timeout.is_positive()) {
-            [self scheduleNextWatchForButtonsWithTimeout:timeout -
-                                                         kWatcherCycleDelay
-                                               runNumber:runNumber];
-          } else {
-            [watchingButtons removeAllObjects];
-          }
-        });
-      });
-}
-
-// Looks for a button (based on traits) with the given `label`,
-// recursively in the given `views`.
-+ (void)findButtonsWithLabelsInViews:(NSArray<UIView*>*)views {
-  if (!watchingButtons.count) {
-    return;
-  }
-
-  for (UIView* view in views) {
-    [self buttonsWithLabelsMatchView:view];
-    [self findButtonsWithLabelsInViews:view.subviews];
-  }
-}
-
-// Checks if the given `view` is a button (based on traits) with the
-// given accessibility label.
-+ (void)buttonsWithLabelsMatchView:(UIView*)view {
-  if (![view respondsToSelector:@selector(accessibilityLabel)]) {
-    return;
-  }
-  if (([view accessibilityTraits] & UIAccessibilityTraitButton) == 0) {
-    return;
-  }
-  if ([watchingButtons containsObject:view.accessibilityLabel]) {
-    [watchedButtons addObject:view.accessibilityLabel];
-    [watchingButtons removeObject:view.accessibilityLabel];
-  }
 }
 
 #pragma mark - Default Browser Promo Utilities
 
 + (void)clearDefaultBrowserPromoData {
   ClearDefaultBrowserPromoData();
-}
-
-+ (void)copyURLToPasteBoard {
-  UIPasteboard* pasteboard = UIPasteboard.generalPasteboard;
-  pasteboard.URL = [NSURL URLWithString:@"chrome://version"];
 }
 
 #pragma mark - First Run Utilities
@@ -1980,6 +2096,29 @@ int watchRunNumber = 0;
   return HasFirstRunSentinel();
 }
 
+#pragma mark - Post Restore Utilities
+
++ (void)writeDeviceRestoreSentinel {
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  base::FilePath user_data_path;
+  CHECK(base::PathService::Get(ios::DIR_USER_DATA, &user_data_path));
+  base::FilePath backed_up_path =
+      user_data_path.Append(FILE_PATH_LITERAL("BackedUpSentinel"));
+  CHECK(base::WriteFile(backed_up_path, ""));
+}
+
++ (void)removeDeviceRestoreSentinel {
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  base::FilePath user_data_path;
+  CHECK(base::PathService::Get(ios::DIR_USER_DATA, &user_data_path));
+  base::FilePath backed_up_path =
+      user_data_path.Append(FILE_PATH_LITERAL("BackedUpSentinel"));
+  base::FilePath not_backed_up_path =
+      user_data_path.Append(FILE_PATH_LITERAL("NotBackedUpSentinel"));
+  base::DeleteFile(backed_up_path);
+  base::DeleteFile(not_backed_up_path);
+}
+
 #pragma mark - Notification Utilities
 
 + (void)requestTipsNotification:(TipsNotificationType)type {
@@ -1995,15 +2134,6 @@ int watchRunNumber = 0;
                     trigger:nil];
 
   [center addNotificationRequest:request withCompletionHandler:nil];
-}
-
-#pragma mark - Variations Utilities
-
-+ (void)overrideVariationsServiceStoredPermanentCountry:(NSString*)country {
-  std::string UTF8Country = base::SysNSStringToUTF8(country);
-  variations::VariationsService* variationsService =
-      GetApplicationContext()->GetVariationsService();
-  variationsService->OverrideStoredPermanentCountry(UTF8Country);
 }
 
 #pragma mark - Shared Tab Groups Utilities
@@ -2066,8 +2196,12 @@ int watchRunNumber = 0;
   return NO;
 }
 
-+ (void)induceCrash {
-  abort();
++ (BOOL)prepareConditionForViewToStopAnimatingWithAccessibilityID:
+    (NSString*)accessibilityID {
+  NSString* expectedID = [accessibilityID copy];
+  return InAppWaiter::Get().PrepareCondition(^bool {
+    return ![self isViewAnimatingWithAccessibilityID:expectedID];
+  });
 }
 
 @end

@@ -15,6 +15,7 @@ source_set("omnibox") {
     "omnibox_next_features.h",
     "omnibox_pedal_implementations.h",
     "omnibox_popup_state_manager.h",
+    "omnibox_popup_webui_creation.h",
     "omnibox_view.h",
   ]
   sources = []
@@ -82,6 +83,7 @@ source_set("impl") {
     "omnibox_next_features.cc",
     "omnibox_pedal_implementations.cc",
     "omnibox_popup_state_manager.cc",
+    "omnibox_popup_webui_creation.cc",
     "omnibox_view.cc",
   ]
   deps = [
@@ -154,7 +156,6 @@ source_set("impl") {
       "//chrome/browser:primitives",
       "//chrome/browser/extensions/api/omnibox",
       "//chrome/browser/feature_engagement",
-      "//chrome/browser/history_embeddings",
       "//chrome/browser/infobars",
       "//chrome/browser/omnibox",
       "//chrome/browser/predictors",
@@ -195,8 +196,6 @@ source_set("impl") {
       "//components/contextual_search:public",
       "//components/dom_distiller/core",
       "//components/favicon/content",
-      "//components/history_embeddings/content",
-      "//components/history_embeddings/core",
       "//components/infobars/content",
       "//components/infobars/core",
       "//components/resources:components_scaled_resources_grit",

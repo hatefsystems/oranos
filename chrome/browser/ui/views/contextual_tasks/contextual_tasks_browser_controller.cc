@@ -55,7 +55,8 @@ ContextualTasksBrowserController::ContextualTasksBrowserController(
 
 #if !BUILDFLAG(IS_ANDROID)
   if (kShowEntryPoint.Get() == EntryPointOption::kToolbarEphemeralBranded ||
-      IsContextualTasksPinnedButtonActiveIndicatorEnabled()) {
+      IsContextualTasksPinnedButtonActiveIndicatorEnabled() ||
+      IsContextualTasksEphemeralPinButtonRefactorEnabled()) {
     ephemeral_button_controller_ =
         std::make_unique<ContextualTasksEphemeralButtonController>(
             browser_window_interface_);
@@ -122,10 +123,11 @@ void ContextualTasksBrowserController::OnActionsChanged() {
   }
   was_pinned_ = is_pinned;
   if (is_pinned) {
-    // If the user pins the button while already in the Super G icon arm, mark
+    // If the user pins the button while already in a Super G icon arm, mark
     // the "icon changed" promo as dismissed and used so it will not trigger on
     // future startups or new windows.
-    if (ShouldUseSuperGIconForPinButtons()) {
+    if (ShouldUseSuperGIconForPinButtons() ||
+        ShouldUseGraySuperGIconForPinButtons()) {
       if (auto* const service =
               UserEducationServiceFactory::GetForBrowserContext(profile)) {
         auto& storage = service->user_education_storage_service();
@@ -169,11 +171,17 @@ void ContextualTasksBrowserController::MaybeShowPinnedIconChangedPromo() {
   if (!profile || profile->IsOffTheRecord()) {
     return;
   }
-  // Show the promo at startup if the user is in the Super G arm and already has
+  // Show the promo at startup if the user is in a Super G arm and already has
   // the toolbar button pinned. Users who pinned or clicked the button after
   // entering the Super G arm have already dismissed the promo or notified
   // Feature Engagement that the feature was used, which suppresses the promo.
-  if (!ShouldUseSuperGIconForPinButtons() || !GetEffectivePinState(profile) ||
+  const bool is_using_super_g_icon =
+      ShouldUseSuperGIconForPinButtons() ||
+      ShouldUseGraySuperGIconForPinButtons();
+  if (!is_using_super_g_icon) {
+    return;
+  }
+  if (!GetEffectivePinState(profile) ||
       !EntryPointEligibilityManager::IsPinningEligible(profile)) {
     return;
   }

@@ -17,6 +17,7 @@
 #include "components/contextual_tasks/public/contextual_task.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/omnibox_proto/chrome_aim_entry_point.pb.h"
+#include "url/gurl.h"
 
 namespace content {
 class WebContents;
@@ -42,13 +43,14 @@ class MockContextualTasksPanelController
               (override));
   MOCK_METHOD(void, Close, (), (override));
   MOCK_METHOD(void, OpenInZeroState, (), (override));
+  MOCK_METHOD(void, OpenUrlInNewTab, (const GURL& url), (override));
   MOCK_METHOD(bool, MoveActiveTabToNewThreadIfShared, (), (override));
   MOCK_METHOD((std::map<std::string, std::string>),
               GetTabRestoreData,
               (tabs::TabInterface*),
               (const, override));
   MOCK_METHOD(void,
-              ShareTabsWithActiveOrNewThread,
+              ShareTabsWithNewThread,
               (const std::vector<tabs::TabHandle>&),
               (override));
   MOCK_METHOD(void,
@@ -61,12 +63,18 @@ class MockContextualTasksPanelController
               GetRecentThreads,
               (),
               (const, override));
+  MOCK_METHOD(void,
+              UnshareTabs,
+              (const std::vector<tabs::TabHandle>&),
+              (override));
   MOCK_METHOD(bool, IsPanelOpenForContextualTask, (), (const, override));
   MOCK_METHOD(bool, IsShowingResults, (), (const, override));
+  MOCK_METHOD(bool, HasResults, (), (const, override));
   MOCK_METHOD(ContextualTasksPanelController::EntrySource,
               GetActiveEntrySource,
               (),
               (const, override));
+  MOCK_METHOD(bool, IsOnboardingTooltipVisible, (), (const, override));
   MOCK_METHOD(std::optional<tabs::TabHandle>,
               GetAutoSuggestedTabHandle,
               (),
@@ -76,6 +84,7 @@ class MockContextualTasksPanelController
               (content::WebContents*, base::Uuid),
               (override));
   MOCK_METHOD(void, OnAiInteraction, (), (override));
+  MOCK_METHOD(void, OnLinkClicked, (), (override));
   MOCK_METHOD(void,
               SetPendingTaskForTab,
               (tabs::TabInterface*, const base::Uuid&),
@@ -120,6 +129,10 @@ class MockContextualTasksPanelController
               (bool is_pointer_interaction),
               (override));
   MOCK_METHOD(void, OnLogoPointerDown, (), (override));
+  MOCK_METHOD(ContextualTasksPermissionController*,
+              permission_controller,
+              (),
+              (override));
   MOCK_METHOD(void,
               RecordTimeToHandshakeComplete,
               (content::WebContents*),

@@ -35,6 +35,7 @@
 #include "chrome/browser/contextual_cueing/features.h"
 #include "chrome/browser/contextual_search/contextual_search_cue_tab_state.h"
 #include "chrome/browser/contextual_search/contextual_search_cue_target.h"
+#include "chrome/browser/dictation/features.h"
 #include "chrome/browser/enterprise/data_protection/data_protection_navigation_controller.h"
 #include "chrome/browser/enterprise/net/enterprise_proxy_error_service_factory.h"
 #include "chrome/browser/enterprise/reporting/saas_usage/saas_usage_navigation_observer.h"
@@ -88,6 +89,7 @@
 #include "chrome/browser/preloading/prefetch/no_state_prefetch/no_state_prefetch_manager_factory.h"
 #include "chrome/browser/preloading/prefetch/no_state_prefetch/no_state_prefetch_tab_helper.h"
 #include "chrome/browser/preloading/prefetch/zero_suggest_prefetch/zero_suggest_prefetch_tab_helper.h"
+#include "chrome/browser/preloading/prerender/prewarm_tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_key.h"
 #include "chrome/browser/resource_coordinator/tab_helper.h"
@@ -182,6 +184,7 @@
 #include "chrome/browser/ui/views/bookmarks/bookmark_page_action_controller.h"
 #include "chrome/browser/ui/views/commerce/discounts_page_action_view_controller.h"
 #include "chrome/browser/ui/views/commerce/price_insights_page_action_view_controller.h"
+#include "chrome/browser/ui/views/dictation/dictation_iph_controller.h"
 #include "chrome/browser/ui/views/file_system_access/file_system_access_page_action_controller.h"
 #include "chrome/browser/ui/views/intent_picker/intent_picker_view_page_action_controller.h"
 #include "chrome/browser/ui/views/js_optimization/js_optimizations_page_action_controller.h"
@@ -234,6 +237,7 @@
 #include "components/feature_engagement/public/feature_constants.h"
 #endif
 #include "chrome/browser/glic/browser_ui/glic_tab_indicator_helper.h"
+#include "chrome/browser/glic/glic_gemini_web_warming_observer.h"
 #include "chrome/browser/glic/glic_marketing_page_tab_helper.h"
 #include "chrome/browser/glic/glic_promotion_source_navigation_observer.h"
 #include "chrome/browser/glic/glic_selection_observer.h"
@@ -542,14 +546,15 @@ void TabFeatures::Init(TabInterface& tab, Profile* profile) {
   }
 
   if (page_action_controller_->ActionExists(kActionShowZoomBubble)) {
-    zoom_view_controller_ = std::make_unique<zoom::ZoomViewController>(
-        tab, *page_action_controller_);
+    zoom_view_controller_ =
+        GetUserDataFactory().CreateInstance<zoom::ZoomViewController>(
+            tab, tab, *page_action_controller_);
   }
 
   if (page_action_controller_->ActionExists(kActionInstallPwa)) {
     pwa_install_page_action_controller_ =
-        std::make_unique<PwaInstallPageActionController>(
-            tab, *page_action_controller_);
+        GetUserDataFactory().CreateInstance<PwaInstallPageActionController>(
+            tab, tab, *page_action_controller_);
   }
 
   if (page_action_controller_->ActionExists(kActionCommercePriceInsights)) {
@@ -705,6 +710,10 @@ void TabFeatures::Init(TabInterface& tab, Profile* profile) {
               tab, &tab, profile->GetPrefs());
       glic_promotion_source_navigation_observer_ =
           std::make_unique<glic::GlicPromotionSourceNavigationObserver>(&tab);
+      if (base::FeatureList::IsEnabled(features::kGlicWarmOnGeminiWeb)) {
+        glic_gemini_web_warming_observer_ =
+            std::make_unique<glic::GlicGeminiWebWarmingObserver>(&tab);
+      }
 
       if (glic::GlicEnabling::IsEnabledForProfile(profile)) {
         glic_selection_observer_ =
@@ -833,18 +842,6 @@ void TabFeatures::Init(TabInterface& tab, Profile* profile) {
   security_state_event_observer_ =
       std::make_unique<SecurityStateEventObserver>(tab.GetContents());
 
-  sync_sessions_router_ =
-      std::make_unique<sync_sessions::SyncSessionsRouterTabHelper>(
-          tab.GetContents(),
-          sync_sessions::SyncSessionsWebContentsRouterFactory::GetForProfile(
-              profile),
-          ChromeTranslateClient::FromWebContents(tab.GetContents()),
-          favicon::ContentFaviconDriver::FromWebContents(tab.GetContents()));
-
-  browser_synced_tab_delegate_ =
-      GetUserDataFactory().CreateInstance<BrowserSyncedTabDelegate>(
-          tab, tab, tab.GetContents());
-
   focus_tab_after_navigation_helper_ =
       std::make_unique<FocusTabAfterNavigationHelper>(tab.GetContents());
 
@@ -861,6 +858,8 @@ void TabFeatures::Init(TabInterface& tab, Profile* profile) {
 
   zero_suggest_prefetch_tab_helper_ =
       std::make_unique<ZeroSuggestPrefetchTabHelper>(tab.GetContents());
+
+  prewarm_tab_helper_ = PrewarmTabHelper::MaybeCreate(tab.GetContents());
 
   if (SearchEngineChoiceTabHelper::IsHelperNeeded()) {
     search_engine_choice_tab_helper_ =
@@ -1043,6 +1042,12 @@ void TabFeatures::Init(TabInterface& tab, Profile* profile) {
             .CreateInstance<back_to_opener::BackToOpenerController>(tab, tab);
   }
 
+  if (base::FeatureList::IsEnabled(dictation::kDictation) &&
+      profile->IsRegularProfile()) {
+    dictation_iph_controller_ =
+        std::make_unique<dictation::DictationIphController>(tab);
+  }
+
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || \
     BUILDFLAG(IS_CHROMEOS)
   if (base::FeatureList::IsEnabled(enterprise_reporting::kSaasUsageReporting)) {
@@ -1218,9 +1223,7 @@ void TabFeatures::Init(TabInterface& tab, Profile* profile) {
   if (g_browser_process->safe_browsing_service()) {
     safe_browsing::AsyncCheckTracker::CreateForWebContents(
         tab.GetContents(),
-        g_browser_process->safe_browsing_service()->ui_manager(),
-        safe_browsing::AsyncCheckTracker::
-            IsPlatformEligibleForSyncCheckerCheckAllowlist());
+        g_browser_process->safe_browsing_service()->ui_manager());
   }
   if (autofill::ContentAutofillClient::FromWebContents(tab.GetContents())) {
     ChromePasswordReuseDetectionManagerClient::CreateForWebContents(
@@ -1310,6 +1313,19 @@ void TabFeatures::Init(TabInterface& tab, Profile* profile) {
             tab, tab, tab.GetContents());
   }
 #endif
+
+  browser_synced_tab_delegate_ =
+      GetUserDataFactory().CreateInstance<BrowserSyncedTabDelegate>(
+          tab, tab, tab.GetContents(), task_tab_helper_.get(),
+          supervised_user_navigation_observer_.get());
+
+  sync_sessions_router_ =
+      std::make_unique<sync_sessions::SyncSessionsRouterTabHelper>(
+          tab.GetContents(),
+          sync_sessions::SyncSessionsWebContentsRouterFactory::GetForProfile(
+              profile),
+          ChromeTranslateClient::FromWebContents(tab.GetContents()),
+          favicon::ContentFaviconDriver::FromWebContents(tab.GetContents()));
 
 #if BUILDFLAG(ENABLE_OFFLINE_PAGES)
   offline_page_tab_helper_ =
@@ -1623,6 +1639,8 @@ void TabFeatures::WillDiscardContents(tabs::TabInterface* tab,
   zero_suggest_prefetch_tab_helper_ =
       std::make_unique<ZeroSuggestPrefetchTabHelper>(new_contents);
 
+  prewarm_tab_helper_ = PrewarmTabHelper::MaybeCreate(new_contents);
+
   security_state_event_observer_ =
       std::make_unique<SecurityStateEventObserver>(new_contents);
 
@@ -1678,23 +1696,6 @@ void TabFeatures::WillDiscardContents(tabs::TabInterface* tab,
         contextual_cueing::ContextualCueingWebContentsObserver>(
         new_contents, contextual_cueing_service);
   }
-
-  sync_sessions_router_.reset();
-  sync_sessions_router_ =
-      std::make_unique<sync_sessions::SyncSessionsRouterTabHelper>(
-          new_contents,
-          sync_sessions::SyncSessionsWebContentsRouterFactory::GetForProfile(
-              profile),
-          ChromeTranslateClient::FromWebContents(new_contents),
-          favicon::ContentFaviconDriver::FromWebContents(new_contents));
-
-  // The reset() must happen first so that the old instance deregisters
-  // itself from the UnownedUserDataHost before the new instance registers
-  // itself.
-  browser_synced_tab_delegate_.reset();
-  browser_synced_tab_delegate_ =
-      GetUserDataFactory().CreateInstance<BrowserSyncedTabDelegate>(
-          *tab, *tab, new_contents);
 
   if (permission_indicators_tab_data_) {
     permission_indicators_tab_data_ =
@@ -1912,9 +1913,7 @@ void TabFeatures::WillDiscardContents(tabs::TabInterface* tab,
       enterprise_connectors::IsReferrerChainNeededForEnterprise(profile));
   if (g_browser_process->safe_browsing_service()) {
     safe_browsing::AsyncCheckTracker::CreateForWebContents(
-        new_contents, g_browser_process->safe_browsing_service()->ui_manager(),
-        safe_browsing::AsyncCheckTracker::
-            IsPlatformEligibleForSyncCheckerCheckAllowlist());
+        new_contents, g_browser_process->safe_browsing_service()->ui_manager());
   }
   safe_browsing_tab_observer_.reset();
   if (autofill::ContentAutofillClient::FromWebContents(new_contents)) {
@@ -1954,6 +1953,12 @@ void TabFeatures::WillDiscardContents(tabs::TabInterface* tab,
   sound_content_setting_observer_ =
       GetUserDataFactory().CreateInstance<SoundContentSettingObserver>(
           *tab, *tab, new_contents);
+
+  // Reset `sync_sessions_router_` and `browser_synced_tab_delegate_` before
+  // resetting `task_tab_helper_` and `supervised_user_navigation_observer_` so
+  // `browser_synced_tab_delegate_` never holds dangling pointers to them.
+  sync_sessions_router_.reset();
+  browser_synced_tab_delegate_.reset();
 
   task_tab_helper_.reset();
   task_tab_helper_ = GetUserDataFactory().CreateInstance<tasks::TaskTabHelper>(
@@ -2002,6 +2007,19 @@ void TabFeatures::WillDiscardContents(tabs::TabInterface* tab,
         GetUserDataFactory().CreateInstance<SupervisedUserNavigationObserver>(
             *tab, *tab, new_contents);
   }
+
+  browser_synced_tab_delegate_ =
+      GetUserDataFactory().CreateInstance<BrowserSyncedTabDelegate>(
+          *tab, *tab, new_contents, task_tab_helper_.get(),
+          supervised_user_navigation_observer_.get());
+
+  sync_sessions_router_ =
+      std::make_unique<sync_sessions::SyncSessionsRouterTabHelper>(
+          new_contents,
+          sync_sessions::SyncSessionsWebContentsRouterFactory::GetForProfile(
+              profile),
+          ChromeTranslateClient::FromWebContents(new_contents),
+          favicon::ContentFaviconDriver::FromWebContents(new_contents));
 
 #if BUILDFLAG(ENABLE_OFFLINE_PAGES)
   offline_page_tab_helper_.reset();

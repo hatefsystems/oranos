@@ -20,6 +20,8 @@ import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 import type {PropertyValues} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 import type {TabInfo} from 'chrome://resources/mojo/components/omnibox/browser/searchbox.mojom-webui.js';
+import {InputType} from 'chrome://resources/mojo/components/omnibox/composebox/composebox_query.mojom-webui.js';
+import type {InputState} from 'chrome://resources/mojo/components/omnibox/composebox/composebox_query.mojom-webui.js';
 
 import {getCss} from './tab_picker_app.css.js';
 import {getHtml} from './tab_picker_app.html.js';
@@ -74,6 +76,7 @@ export class TabPickerAppElement extends TabPickerAppElementBase {
         type: Boolean,
         reflect: true,
       },
+      inputState: {type: Object},
     };
   }
 
@@ -83,6 +86,7 @@ export class TabPickerAppElement extends TabPickerAppElementBase {
   accessor recentTabId: number|null = null;
   accessor useUnbounded: boolean = true;
   accessor darkMode: boolean = false;
+  accessor inputState: InputState|null = null;
 
   protected accessor sharingTabsText_: string = '';
 
@@ -93,7 +97,11 @@ export class TabPickerAppElement extends TabPickerAppElementBase {
   // Tracks the latest open request so an in-flight async fetch does not open
   // the menu after the pointer leaves the trigger or the menu is closed.
   private openMenuRequestId_: number = 0;
-  private listenerIds_: number[] = [];
+  // Tracks the latest suggestions fetch so out-of-order getRecentTabs()
+  // responses do not overwrite newer suggestions.
+  private fetchSuggestionsRequestId_: number = 0;
+  private extensionListenerIds_: number[] = [];
+  private searchboxListenerIds_: number[] = [];
   private browserProxy_: TabPickerBrowserProxy =
       TabPickerBrowserProxyImpl.getInstance();
   // Caches the pending setUnbounded() call initiated in firstUpdated() so that
@@ -111,22 +119,54 @@ export class TabPickerAppElement extends TabPickerAppElementBase {
 
     const callbackRouter =
         ExtensionBrowserProxyImpl.getInstance().callbackRouter;
-    this.listenerIds_.push(
-        callbackRouter.onTabContextUpdated.addListener((tabs: TabInfo[]) => {
+    const searchboxCallbackRouter =
+        this.browserProxy_.getSearchboxCallbackRouter();
+
+    this.browserProxy_.getInputState()
+        .then(({state}) => {
+          if (this.isConnected && state && this.inputState === null) {
+            this.inputState = state;
+          }
+        })
+        .catch(() => {});
+
+    this.searchboxListenerIds_.push(
+        searchboxCallbackRouter.onInputStateChanged.addListener(
+            (state: InputState) => {
+              this.inputState = state;
+            }));
+    this.extensionListenerIds_.push(
+        callbackRouter.onTabContextUpdated.addListener(
+            async (tabs: TabInfo[]) => {
           this.selectedTabs = tabs;
+          if (this.$.tabMenu.open) {
+            await this.fetchTabSuggestions_();
+            if (this.isConnected && !this.hasTabSuggestions_ &&
+                this.$.tabMenu.open) {
+              this.$.tabMenu.close();
+            }
+          }
         }));
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     ++this.openMenuRequestId_;
+    ++this.fetchSuggestionsRequestId_;
     this.cancelCloseTimer_();
+    this.inputState = null;
     const callbackRouter =
         ExtensionBrowserProxyImpl.getInstance().callbackRouter;
-    for (const id of this.listenerIds_) {
+    for (const id of this.extensionListenerIds_) {
       callbackRouter.removeListener(id);
     }
-    this.listenerIds_ = [];
+    this.extensionListenerIds_ = [];
+    const searchboxCallbackRouter =
+        this.browserProxy_.getSearchboxCallbackRouter();
+    for (const id of this.searchboxListenerIds_) {
+      searchboxCallbackRouter.removeListener(id);
+    }
+    this.searchboxListenerIds_ = [];
   }
 
   override firstUpdated() {
@@ -168,8 +208,12 @@ export class TabPickerAppElement extends TabPickerAppElementBase {
 
   private async fetchTabSuggestions_(
       recordInitialLoadLatency: boolean = false) {
+    const requestId = ++this.fetchSuggestionsRequestId_;
     try {
       const {tabs} = await this.browserProxy_.getRecentTabs();
+      if (requestId !== this.fetchSuggestionsRequestId_ || !this.isConnected) {
+        return;
+      }
       this.tabSuggestions = tabs || [];
       this.recentTabId =
           this.tabSuggestions.length > 0 ? this.tabSuggestions[0]!.tabId : null;
@@ -236,6 +280,26 @@ export class TabPickerAppElement extends TabPickerAppElementBase {
 
   protected isTabSelected_(tab: TabInfo): boolean {
     return this.selectedTabs.some(t => t.tabId === tab.tabId);
+  }
+
+  protected isTabDisabled_(tab: TabInfo): boolean {
+    if (this.isTabSelected_(tab)) {
+      return false;
+    }
+
+    // If browser tab input type is disabled, all unselected tabs are disabled.
+    if (this.inputState?.disabledInputTypes.includes(InputType.kBrowserTab)) {
+      return true;
+    }
+
+    // UI-side check in case the browser process input state model has not yet
+    // updated its limits. InputStateModel disables the browser tab input type
+    // when over the maximum attached tabs.
+    if (this.inputState && this.inputState.maxTotalInputs > 0) {
+      return this.selectedTabs.length >= this.inputState.maxTotalInputs;
+    }
+
+    return false;
   }
 
   // FocusOutlineManager defaults to visible=true and only listens to keydown
@@ -389,7 +453,11 @@ export class TabPickerAppElement extends TabPickerAppElementBase {
     if (!tab) {
       return;
     }
+    if (this.isTabDisabled_(tab)) {
+      return;
+    }
     const isSelected = this.isTabSelected_(tab);
+
     if (isSelected) {
       this.selectedTabs = this.selectedTabs.filter(t => t.tabId !== tab.tabId);
       this.browserProxy_.deleteTabContext(tab.tabId);

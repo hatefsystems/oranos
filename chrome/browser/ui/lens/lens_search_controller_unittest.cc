@@ -40,7 +40,7 @@ class LensSearchControllerTest : public testing::Test {
     feature_list_.InitWithFeatures(
         {lens::features::kLensOverlayNonBlockingPrivacyNotice,
          lens::features::kLensOverlayNonBlockingPrivacyNoticeForImageSearch},
-        {lens::features::kLensSidePanelUnification});
+        {});
     profile_ = std::make_unique<TestingProfile>();
     web_contents_ = content::WebContentsTester::CreateTestWebContents(
         profile_.get(), content::SiteInstance::Create(profile_.get()));
@@ -113,6 +113,29 @@ TEST_F(LensSearchControllerTest,
       std::move(region), bitmap);
 
   EXPECT_FALSE(controller_->IsOff());
+}
+
+TEST_F(LensSearchControllerTest,
+       OpenLensOverlay_AllowsReinvokingFromContextualTasksComposebox) {
+  ASSERT_TRUE(controller_->IsOff());
+
+  // Start an initial Lens session so the controller is no longer off.
+  controller_->OpenLensOverlay(lens::LensOverlayInvocationSource::kToolbar);
+  EXPECT_FALSE(controller_->IsOff());
+  EXPECT_EQ(controller_->invocation_source(),
+            lens::LensOverlayInvocationSource::kToolbar);
+
+  // With kLensSearchReinvocationAffordance disabled by default, reinvoking from
+  // a standard entrypoint should be blocked while a session is active.
+  controller_->OpenLensOverlay(lens::LensOverlayInvocationSource::kAppMenu);
+  EXPECT_EQ(controller_->invocation_source(),
+            lens::LensOverlayInvocationSource::kToolbar);
+
+  // Reinvoking from the Contextual Tasks composebox should be permitted.
+  controller_->OpenLensOverlay(
+      lens::LensOverlayInvocationSource::kContextualTasksComposebox);
+  EXPECT_EQ(controller_->invocation_source(),
+            lens::LensOverlayInvocationSource::kContextualTasksComposebox);
 }
 
 }  // namespace lens

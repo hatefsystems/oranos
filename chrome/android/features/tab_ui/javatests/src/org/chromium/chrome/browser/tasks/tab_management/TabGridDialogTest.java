@@ -125,6 +125,7 @@ import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.DoNotRevive;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
@@ -197,7 +198,6 @@ import java.util.concurrent.TimeoutException;
     ChromeFeatureList.ANDROID_BOTTOM_BAR
 })
 @Batch(Batch.PER_CLASS)
-@DisableIf.Device(DeviceFormFactor.DESKTOP) // crbug.com/394671175
 public class TabGridDialogTest {
     private static final String CUSTOMIZED_TITLE1 = "wfh tips";
     private static final String CUSTOMIZED_TITLE2 = "wfh funs";
@@ -210,7 +210,6 @@ public class TabGridDialogTest {
     private static final ActivityLifecycleMonitor sMonitor =
             ActivityLifecycleMonitorRegistry.getInstance();
 
-    private boolean mHasReceivedSourceRect;
     private final TabListEditorTestingRobot mSelectionEditorRobot = new TabListEditorTestingRobot();
     private ModalDialogManager mModalDialogManager;
     private PrefService mPrefService;
@@ -323,7 +322,7 @@ public class TabGridDialogTest {
                 addBlankTabs(cta, false, 1);
             }
         } else {
-            LayoutTestUtils.waitForLayout(cta.getLayoutManager(), LayoutType.BROWSING);
+            LayoutTestUtils.waitForBrowsingLayout(cta);
         }
     }
 
@@ -455,6 +454,7 @@ public class TabGridDialogTest {
     @Test
     @MediumTest
     @RequiresRestart("Group creation modal dialog is sometimes persistent after dismissing")
+    @DisableIf.Device(DeviceFormFactor.DESKTOP) // crbug.com/394671175
     public void testTabGroupDialogUi() {
         final ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         createTabs(cta, false, 2);
@@ -470,64 +470,6 @@ public class TabGridDialogTest {
 
         // Verify TabGroupsContinuation related functionality is exposed.
         verifyTabGroupDialogUi(cta);
-    }
-
-    @Test
-    @MediumTest
-    @DisabledTest(message = "crbug.com/565472116")
-    public void testTabGridDialogAnimation() {
-        final ChromeTabbedActivity cta = mActivityTestRule.getActivity();
-        createTabs(cta, false, 2);
-        enterTabSwitcher(cta);
-        verifyTabSwitcherCardCount(cta, 2);
-
-        // Create a tab group.
-        mergeAllNormalTabsToAGroup(cta);
-        verifyTabSwitcherCardCount(cta, 1);
-
-        // Add 400px top margin to the recyclerView.
-        RecyclerView recyclerView = getRecyclerView(cta);
-        assertNotNull(recyclerView);
-        float tabGridCardPadding = TabUiThemeProvider.getTabGridCardMargin(cta);
-        int deltaTopMargin = 400;
-        ViewGroup.MarginLayoutParams params =
-                (ViewGroup.MarginLayoutParams) recyclerView.getLayoutParams();
-        params.topMargin += deltaTopMargin;
-        try {
-            ThreadUtils.runOnUiThreadBlocking(() -> recyclerView.setLayoutParams(params));
-            CriteriaHelper.pollUiThread(() -> !recyclerView.isComputingLayout());
-
-            // Calculate expected values of animation source rect.
-            mHasReceivedSourceRect = false;
-            View parentView = cta.getCompositorViewHolderForTesting();
-            Rect parentRect = new Rect();
-            parentView.getGlobalVisibleRect(parentRect);
-            Rect sourceRect = new Rect();
-            recyclerView.getChildAt(0).getGlobalVisibleRect(sourceRect);
-            // TODO(yuezhanggg): Figure out why the sourceRect.left is wrong after setting the
-            // margin.
-            float expectedTop =
-                    sourceRect.top - parentRect.top + tabGridCardPadding + deltaTopMargin;
-            float expectedWidth = sourceRect.width() - 2 * tabGridCardPadding;
-            float expectedHeight = sourceRect.height() - 2 * tabGridCardPadding;
-
-            // Setup the callback to verify the animation source Rect.
-            TabGridDialogView.setSourceRectCallbackForTesting(
-                    result -> {
-                        mHasReceivedSourceRect = true;
-                        assertEquals("Top mismatch", expectedTop, result.top, 0.0);
-                        assertEquals("Height mismatch", expectedHeight, result.height(), 0.0);
-                        assertEquals("Width mismatch", expectedWidth, result.width(), 0.0);
-                    });
-
-            TabUiTestHelper.clickFirstCardFromTabSwitcher(cta);
-            CriteriaHelper.pollUiThread(() -> mHasReceivedSourceRect);
-            CriteriaHelper.pollUiThread(() -> isDialogFullyVisible(cta));
-        } finally {
-            TabGridDialogView.setSourceRectCallbackForTesting(/* callback= */ null);
-            params.topMargin -= deltaTopMargin;
-            ThreadUtils.runOnUiThreadBlocking(() -> recyclerView.setLayoutParams(params));
-        }
     }
 
     @Test
@@ -790,6 +732,8 @@ public class TabGridDialogTest {
     @Test
     @MediumTest
     @Restriction({DeviceRestriction.RESTRICTION_TYPE_NON_AUTO}) // crbug.com/391655333
+    @DisableIf.Device(DeviceFormFactor.DESKTOP) // crbug.com/578245446
+    @DoNotRevive(reason = "Hangs the batch on desktop, crbug.com/578245446")
     public void testDialogSelectionEditor_BookmarkSingleTabView() {
         final ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         SnackbarManager snackbarManager = cta.getSnackbarManager();
@@ -832,6 +776,8 @@ public class TabGridDialogTest {
     @Test
     @MediumTest
     @Restriction({DeviceRestriction.RESTRICTION_TYPE_NON_AUTO}) // crbug.com/391655333
+    @DisableIf.Device(DeviceFormFactor.DESKTOP) // crbug.com/578245446
+    @DoNotRevive(reason = "Hangs the batch on desktop, crbug.com/578245446")
     public void testDialogSelectionEditor_BookmarkTabsView() {
         final ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         SnackbarManager snackbarManager = cta.getSnackbarManager();
@@ -1257,6 +1203,7 @@ public class TabGridDialogTest {
 
     @Test
     @LargeTest
+    @DisableIf.Device(DeviceFormFactor.DESKTOP) // crbug.com/394671175
     public void testTabGroupNaming() throws ExecutionException {
         final ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         createTabs(cta, false, 2);
@@ -1298,6 +1245,7 @@ public class TabGridDialogTest {
     @Test
     @LargeTest
     @RequiresRestart("Group creation modal dialog is sometimes persistent when dismissing")
+    @DisableIf.Device(DeviceFormFactor.DESKTOP) // crbug.com/394671175
     public void testTabGroupNaming_KeyboardVisibility() throws ExecutionException {
         final ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         createTabs(cta, false, 2);
@@ -1329,6 +1277,7 @@ public class TabGridDialogTest {
     // Regression test for https://crbug.com/40895368
     @Test
     @MediumTest
+    @DisableIf.Device(DeviceFormFactor.DESKTOP) // crbug.com/394671175
     public void testTabGroupNaming_afterFocusNoTitleSaved() throws ExecutionException {
         final ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         createTabs(cta, false, 3);
@@ -1385,7 +1334,6 @@ public class TabGridDialogTest {
     @MediumTest
     @RequiresRestart("Finishes the activity which can have cascading effects.")
     @Restriction(DeviceFormFactor.PHONE)
-    @DisabledTest(message = "https://crbug.com/40147345")
     public void testDialogInitialShowFromStrip() throws Exception {
         final ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         prepareTabsWithThumbnail(mActivityTestRule.getActivityTestRule(), 2, 0, "about:blank");
@@ -1601,7 +1549,6 @@ public class TabGridDialogTest {
 
     @Test
     @MediumTest
-    @DisabledTest(message = "crbug.com/40148943")
     public void testAccessibilityString() throws ExecutionException {
         final ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         createTabs(cta, false, 3);
@@ -1759,7 +1706,7 @@ public class TabGridDialogTest {
         clickThroughConfirmationDialog();
 
         // Rather than destroying the activity the GTS should be showing.
-        LayoutTestUtils.waitForLayout(cta.getLayoutManager(), LayoutType.HUB);
+        LayoutTestUtils.waitForHubLayout(cta);
         verifyTabSwitcherCardCount(cta, 0);
     }
 
@@ -1909,7 +1856,7 @@ public class TabGridDialogTest {
                                             withId(R.id.tab_grid_dialog_toolbar_container))))
                     .perform(click());
             waitForDialogHidingAnimation(cta);
-            LayoutTestUtils.waitForLayout(cta.getLayoutManager(), LayoutType.BROWSING);
+            LayoutTestUtils.waitForBrowsingLayout(cta);
 
             openDialogFromStripAndVerify(cta, 4, null);
         }
@@ -1959,7 +1906,6 @@ public class TabGridDialogTest {
     @Test
     @MediumTest
     @EnableAnimations
-    @DisabledTest(message = "crbug.com/412364951")
     public void testCreateIncognitoGroupAndCloseAllTabsInDialogTwice_Bug354745444() {
         // The first round leaves the dialog torn down mid-animation.
         CtaPageStation page = createIncognitoGroupAndCloseAllTabsInDialog(mPage);

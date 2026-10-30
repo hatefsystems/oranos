@@ -28,6 +28,10 @@ export interface AudioMenuElement {
   };
 }
 
+const VOICE_GROUP_INDEX = 0;
+const VOICE_SELECTION_ITEM_INDEX = 0;
+const ACCENT_MENU_ITEM_INDEX = 1;
+
 const AudioMenuElementBase = WebUiListenerMixinLit(CrLitElement);
 
 export class AudioMenuElement extends AudioMenuElementBase implements
@@ -79,6 +83,8 @@ export class AudioMenuElement extends AudioMenuElementBase implements
       title: loadTimeData.getString('wordHighlightTitle'),
       data: this.audioBrowserProxy_.getWordHighlighting(),
     },
+    // TODO: b/444029483 - Don't show the phrase highlighting option on
+    // non-English pages, since phrase highlighting only supports English.
     ...(this.audioBrowserProxy_.isPhraseHighlightingEnabled()?[{
       title: loadTimeData.getString('phraseHighlightTitle'),
       data: this.audioBrowserProxy_.getPhraseHighlighting(),
@@ -162,6 +168,7 @@ export class AudioMenuElement extends AudioMenuElementBase implements
     event.preventDefault();
     event.stopPropagation();
     this.showAccentMenuDialog_ = false;
+    this.focusMenuItem_(ACCENT_MENU_ITEM_INDEX);
   }
 
   protected onOpenVoiceSelectionDialog_() {
@@ -174,6 +181,13 @@ export class AudioMenuElement extends AudioMenuElementBase implements
     event.stopPropagation();
     this.showVoiceSelectionDialog_ = false;
     this.fire(ToolbarEvent.VOICE_MENU_CLOSE);
+    this.focusMenuItem_(VOICE_SELECTION_ITEM_INDEX);
+  }
+
+  private focusMenuItem_(itemIndex: number) {
+    this.updateComplete.then(() => {
+      this.$.menu.focusItem(VOICE_GROUP_INDEX, itemIndex);
+    });
   }
 }
 

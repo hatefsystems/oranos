@@ -25,6 +25,7 @@ import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.Callback;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.transit.Triggers;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
@@ -51,14 +52,20 @@ import org.chromium.chrome.browser.tasks.tab_management.TabUiThemeProvider;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
 import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.Journeys;
 import org.chromium.chrome.test.transit.ntp.IncognitoNewTabPageStation;
+import org.chromium.chrome.test.transit.page.CtaPageStation;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.chrome.test.util.TabStripUtils;
 import org.chromium.content_public.browser.test.util.DOMUtils;
+import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.test.util.DeviceRestriction;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
@@ -91,6 +98,25 @@ public class TabStripTest {
                     LocalizationUtils.setRtlForTesting(false);
                 });
         resetTabStripsOnUiThread();
+    }
+
+    /** Starts on a blank page and opens {@code numTabs} more blank tabs after it. */
+    private void openBlankTabs(int numTabs) {
+        Journeys.createRegularTabsWithWebPages(
+                mActivityTestRule.startOnBlankPage(), blankUrls(numTabs));
+    }
+
+    /** Like {@link #openBlankTabs(int)}, but in one Trip that only waits for the last tab. */
+    private void openBlankTabsFast(int numTabs) {
+        Journeys.createTabsFast(
+                mActivityTestRule.startOnBlankPage(),
+                blankUrls(numTabs),
+                /* isIncognito= */ false,
+                WebPageStation::newBuilder);
+    }
+
+    private static List<String> blankUrls(int numTabs) {
+        return Collections.nCopies(numTabs, ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
     }
 
     private void resetTabStripsOnUiThread() {
@@ -168,8 +194,7 @@ public class TabStripTest {
     @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     public void testNewTabButtonWithManyTabs() throws Exception {
-        ChromeTabUtils.newTabsFromMenu(
-                InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity(), 3);
+        openBlankTabs(3);
         InstrumentationRegistry.getInstrumentation()
                 .runOnMainSync(
                         new Runnable() {
@@ -299,8 +324,7 @@ public class TabStripTest {
     @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     public void testSelectWithManyTabs() throws Exception {
-        ChromeTabUtils.newTabsFromMenu(
-                InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity(), 4);
+        openBlankTabs(4);
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         Assert.assertEquals(
                 "The last tab is not selected",
@@ -382,8 +406,7 @@ public class TabStripTest {
     @Feature({"TabStrip"})
     @DisabledTest(message = "crbug.com/40855224")
     public void testCloseTabWithManyTabs() throws Exception {
-        ChromeTabUtils.newTabsFromMenu(
-                InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity(), 4);
+        openBlankTabs(4);
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         Assert.assertEquals(
                 "There are not five tabs present",
@@ -675,11 +698,11 @@ public class TabStripTest {
     @DisabledTest(message = "https://crbug.com/328302523")
     public void testScrollingStripStackersWithIncognito() throws Exception {
         // Open an incognito tab to switch to the incognito model.
-        mActivityTestRule.newIncognitoTabFromMenu();
+        IncognitoNewTabPageStation incognitoNtp =
+                mActivityTestRule.startOnBlankPage().openNewIncognitoTabFast();
 
         // Open enough regular tabs to cause the tab strip to scroll.
-        ChromeTabUtils.newTabsFromMenu(
-                InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity(), 20);
+        Journeys.createRegularTabsWithWebPages(incognitoNtp, blankUrls(20));
 
         // Check scrolling tab strip
         checkTabStrips();
@@ -747,8 +770,7 @@ public class TabStripTest {
         resetTabStripsOnUiThread();
 
         // Open enough regular tabs to cause the strip to scroll
-        ChromeTabUtils.newTabsFromMenu(
-                InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity(), 20);
+        openBlankTabsFast(20);
 
         // Check scrolling tab strip
         checkTabStrips();
@@ -763,8 +785,7 @@ public class TabStripTest {
     // Disable due to flakiness in scrolling to hide the first tab.
     public void testScrollingStripStackersWithFirstTabSelected() throws Exception {
         // Open enough regular tabs to cause the tab strip to scroll.
-        ChromeTabUtils.newTabsFromMenu(
-                InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity(), 20);
+        openBlankTabsFast(20);
 
         // Select the first tab by setting the index directly. It may not be visible, so don't
         // try to tap on it.
@@ -826,8 +847,7 @@ public class TabStripTest {
     @DisabledTest(message = "crbug.com/40855224")
     public void testScrollingStripStackersWithMiddleTabSelected() throws Exception {
         // Open enough regular tabs to cause the tab strip to scroll.
-        ChromeTabUtils.newTabsFromMenu(
-                InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity(), 10);
+        openBlankTabsFast(10);
 
         // Select the sixth tab by setting the index directly. It may not be visible, so don't
         // try to tap on it.
@@ -951,8 +971,7 @@ public class TabStripTest {
         checkTabStrips();
 
         // Open enough regular tabs to cause the strip to scroll and select the first tab.
-        ChromeTabUtils.newTabsFromMenu(
-                InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity(), 10);
+        openBlankTabsFast(10);
 
         // Set up some variables.
         StripLayoutHelper strip =
@@ -1063,8 +1082,7 @@ public class TabStripTest {
     @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     public void testHoverOnTabStripTabs() throws Exception {
         // Open a few regular tabs.
-        ChromeTabUtils.newTabsFromMenu(
-                InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity(), 4);
+        openBlankTabs(4);
 
         // Select tabs to hover on.
         TabModel model = mActivityTestRule.getActivity().getTabModelSelector().getModel(false);
@@ -1158,8 +1176,7 @@ public class TabStripTest {
     @DisableFeatures(ChromeFeatureList.ANDROID_OPEN_INCOGNITO_AS_WINDOW)
     public void testHoverOnTabStrip_switchTabModel() throws Exception {
         // Open regular tabs.
-        ChromeTabUtils.newTabsFromMenu(
-                InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity(), 2);
+        openBlankTabs(2);
 
         // Select a tab to hover on.
         TabModel model = mActivityTestRule.getActivity().getTabModelSelector().getModel(false);
@@ -1325,26 +1342,27 @@ public class TabStripTest {
     }
 
     /**
-     * Simulates a click on a tab, selecting it.
+     * Simulates a click on a tab, selecting it, and hops on at the selected tab.
      *
      * @param incognito Whether or not this tab is in the incognito or normal stack.
      * @param id The id of the tab to click.
+     * @return The CtaPageStation for the selected tab.
      */
-    protected void selectTab(final boolean incognito, final int id) {
+    protected CtaPageStation selectTab(final boolean incognito, final int id) {
         resetTabStripsOnUiThread();
-        ChromeTabUtils.selectTabWithAction(
-                InstrumentationRegistry.getInstrumentation(),
-                mActivityTestRule.getActivity(),
-                new Runnable() {
-                    @Override
-                    public void run() {
-                        TabStripUtils.clickTab(
-                                TabStripUtils.findStripLayoutTab(
-                                        mActivityTestRule.getActivity(), incognito, id),
-                                InstrumentationRegistry.getInstrumentation(),
-                                mActivityTestRule.getActivity());
-                    }
-                });
+        ChromeTabbedActivity activity = mActivityTestRule.getActivity();
+        return Triggers.runTo(
+                        () ->
+                                TabStripUtils.clickTab(
+                                        TabStripUtils.findStripLayoutTab(activity, incognito, id),
+                                        InstrumentationRegistry.getInstrumentation(),
+                                        activity))
+                .hopOnTo(
+                        activity,
+                        CtaPageStation.newGenericBuilder()
+                                .withIncognito(incognito)
+                                .initSelectingExistingTab()
+                                .build());
     }
 
     /**

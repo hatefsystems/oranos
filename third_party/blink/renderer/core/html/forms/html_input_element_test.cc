@@ -172,7 +172,7 @@ class HTMLInputElementTest : public PageTestBase {
   }
 
   HTMLInputElement& TestElement() {
-    Element* element = GetDocument().getElementById(AtomicString("test"));
+    Element* element = GetElementById("test");
     DCHECK(element);
     return To<HTMLInputElement>(*element);
   }
@@ -441,8 +441,7 @@ TEST_F(HTMLInputElementTest, TemporalInputBlurPreservesHandlerFocus) {
   SetBodyContent("<input id=test type=date><input id=other>");
 
   HTMLInputElement& input = TestElement();
-  auto& other = To<HTMLInputElement>(
-      *GetDocument().getElementById(AtomicString("other")));
+  auto& other = To<HTMLInputElement>(*GetElementById("other"));
   auto* refocus = MakeGarbageCollected<FocusOnBlurListener>(other);
   input.addEventListener(event_type_names::kBlur, refocus);
   GetDocument().body()->setAttribute(html_names::kTabindexAttr,
@@ -593,8 +592,7 @@ TEST_P(HTMLInputElementTemporalBlurTest,
   UpdateAllLifecyclePhasesForTest();
 
   HTMLInputElement& input = TestElement();
-  auto& other = To<HTMLInputElement>(
-      *GetDocument().getElementById(AtomicString("other")));
+  auto& other = To<HTMLInputElement>(*GetElementById("other"));
   auto* blur_events = MakeGarbageCollected<BlurEventCounter>();
   input.addEventListener(event_type_names::kBlur, blur_events);
   GetDocument().body()->setAttribute(html_names::kTabindexAttr,
@@ -1193,6 +1191,29 @@ TEST_F(HTMLInputElementTest, SuggestedValueFontFamilyIsGeneric) {
   EXPECT_TRUE(style->GetFontDescription().Family().FamilyIsGeneric());
 }
 
+TEST_F(HTMLInputElementTest,
+       RecreatedPlaceholderWithSuggestedValueIsNotAuthorStyled) {
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
+      "<style>input::placeholder { font-family: author-font; }</style>"
+      "<input id=test>");
+  HTMLInputElement& input = TestElement();
+  UpdateAllLifecyclePhasesForTest();
+
+  input.SetSuggestedValue("preview");
+  input.setAttribute(html_names::kTypeAttr, input_type_names::kPassword);
+  // Recreates the placeholder element in the new shadow tree.
+  input.setAttribute(html_names::kPlaceholderAttr, AtomicString("hint"));
+  UpdateAllLifecyclePhasesForTest();
+
+  HTMLElement* placeholder = input.PlaceholderElement();
+  ASSERT_TRUE(placeholder);
+  EXPECT_EQ(shadow_element_names::kPseudoInternalInputSuggested,
+            placeholder->ShadowPseudoId());
+  const ComputedStyle* style = placeholder->GetComputedStyle();
+  ASSERT_TRUE(style);
+  EXPECT_TRUE(style->GetFontDescription().Family().FamilyIsGeneric());
+}
+
 TEST_F(HTMLInputElementTest, SetCheckedForBindingClearsSuggestedValue) {
   GetDocument().body()->SetInnerHTMLWithoutTrustedTypes("<input id=test>");
   HTMLInputElement& input = TestElement();
@@ -1226,7 +1247,7 @@ TEST_F(HTMLInputElementTest, RadioGroupInRemovedDisabledFieldset) {
   // is being removed.
   EXPECT_TRUE(static_cast<ListedElement&>(r2).IsValidElement());
 
-  Element* fieldset = GetDocument().getElementById(AtomicString("fs"));
+  Element* fieldset = GetElementById("fs");
   fieldset->remove();
 
   // Still inside the (now detached) disabled fieldset.

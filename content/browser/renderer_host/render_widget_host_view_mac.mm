@@ -1828,8 +1828,13 @@ void RenderWidgetHostViewMac::SetActive(bool active) {
       host()->LostFocus();
     }
   }
-  if (HasFocus())
+  // Always deactivate text input when becoming inactive, so that Secure Event
+  // Input isn't left enabled for a focused password field in a window that is
+  // no longer key. Don't gate deactivation on HasFocus(), which already returns
+  // false once the window has resigned key. https://crbug.com/577708579
+  if (!active || HasFocus()) {
     SetTextInputActive(active);
+  }
   if (!active)
     UnlockPointer();
 }
@@ -2051,6 +2056,9 @@ void RenderWidgetHostViewMac::OnWindowIsKeyChanged(bool is_key) {
     return;
   is_window_key_ = is_key;
   accessibility_focus_overrider_.SetWindowIsKey(is_window_key_);
+  if (!is_window_key_) {
+    DismissUnboundedSurface();
+  }
   if (is_first_responder_)
     SetActive(is_key);
 }
@@ -2452,6 +2460,51 @@ void RenderWidgetHostViewMac::SyncGetFirstRectForRange(
   SyncGetFirstRectForRange(requested_range, &out_rect, &out_actual_range,
                            &success);
   std::move(callback).Run(out_rect, out_actual_range, success);
+}
+
+void RenderWidgetHostViewMac::GetFirstRectForRange(
+    const gfx::Range& requested_range,
+    GetFirstRectForRangeCallback callback) {
+  TRACE_EVENT1("ime", "RenderWidgetHostViewMac::GetFirstRectForRange",
+               "requested range", requested_range.ToString());
+  RenderWidgetHostImpl* focused_widget = GetFocusedWidget();
+  if (!focused_widget) {
+    std::move(callback).Run(std::nullopt);
+    return;
+  }
+
+  // Ask the renderer for the bounds, since waiting for it here doesn't block
+  // and the cache may only have approximate bounds (e.g. the caret's, when
+  // kCachedFirstRectAllowRangeOutsideSelection is enabled).
+  TextInputClientMac::GetInstance()->AsyncGetFirstRectForRange(
+      focused_widget, requested_range,
+      base::BindOnce(&RenderWidgetHostViewMac::OnGotFirstRectForRange,
+                     weak_factory_.GetWeakPtr(), requested_range,
+                     GetDeviceScaleFactor(), std::move(callback)));
+}
+
+void RenderWidgetHostViewMac::OnGotFirstRectForRange(
+    const gfx::Range& requested_range,
+    float device_scale_factor,
+    GetFirstRectForRangeCallback callback,
+    gfx::Rect blink_rect) {
+  gfx::Rect rect =
+      gfx::ScaleToEnclosingRect(blink_rect, 1.f / device_scale_factor);
+
+  // If the renderer returns an empty rect, fall back to the cached bounds.
+  if (rect.IsEmpty() && GetFocusedWidget()) {
+    gfx::Rect cached_rect;
+    if (GetCachedFirstRectForCharacterRange(requested_range, &cached_rect,
+                                            /*actual_range=*/nullptr) ==
+        GetCachedFirstRectResult::kFound) {
+      rect = cached_rect;
+    }
+  }
+
+  // Clamp to the viewport so that a compromised renderer can't place UI outside
+  // the page. See https://crbug.com/519210950.
+  rect.AdjustToFit(gfx::Rect(GetVisibleViewportSize()));
+  std::move(callback).Run(rect);
 }
 
 void RenderWidgetHostViewMac::ExecuteEditCommand(const std::string& command) {

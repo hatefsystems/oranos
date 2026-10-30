@@ -38,6 +38,7 @@
 #include "base/byte_size.h"
 #include "base/compiler_specific.h"
 #include "base/feature_list.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/numerics/checked_math.h"
@@ -68,6 +69,7 @@
 #include "third_party/blink/public/web/blink.h"
 #include "third_party/blink/renderer/platform/graphics/accelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource.h"
+#include "third_party/blink/renderer/platform/graphics/exported_canvas_resource.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/canvas_utils.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/extensions_3d_util.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/shared_gpu_context.h"
@@ -842,7 +844,7 @@ DrawingBuffer::CreateOrRecycleColorBuffer() {
   return color_buffer;
 }
 
-scoped_refptr<ExternalCanvasResource>
+scoped_refptr<ExportedCanvasResource>
 DrawingBuffer::ExportLowLatencyCanvasResource() {
   gpu::SyncToken sync_token;
   if (contents_changed_) {
@@ -856,13 +858,33 @@ DrawingBuffer::ExportLowLatencyCanvasResource() {
     back_color_buffer_->BeginAccess(gpu::SyncToken(), /*readonly=*/false);
   }
 
-  return base::MakeRefCounted<ExternalCanvasResource>(
+  return base::MakeRefCounted<ExportedCanvasResource>(
       back_color_buffer_->shared_image, sync_token,
       viz::TransferableResource::ResourceSource::kDrawingBuffer, hdr_metadata_,
       viz::ReleaseCallback(), context_provider_->GetWeakPtr());
 }
 
-scoped_refptr<CanvasResource> DrawingBuffer::ExportCanvasResource() {
+scoped_refptr<StaticBitmapImage> DrawingBuffer::ExportLowLatencyBitmap() {
+  gpu::SyncToken sync_token;
+  if (contents_changed_) {
+    ScopedStateRestorer scoped_state_restorer(this);
+    ResolveIfNeeded(kDiscardAllowed);
+
+    // Restart SharedImage access on the back buffer to ensure a write fence is
+    // generated on it to guarantee display reads this frame completely.
+    // Display may still read parts of subsequent frames, which is okay.
+    sync_token = back_color_buffer_->EndAccess();
+    back_color_buffer_->BeginAccess(gpu::SyncToken(), /*readonly=*/false);
+  }
+
+  return AcceleratedStaticBitmapImage::CreateFromCanvasSharedImage(
+      back_color_buffer_->shared_image, sync_token, kPremul_SkAlphaType,
+      hdr_metadata_, context_provider_->GetWeakPtr(),
+      base::PlatformThread::CurrentRef(),
+      ThreadScheduler::Current()->CleanupTaskRunner(), base::DoNothing());
+}
+
+scoped_refptr<ExportedCanvasResource> DrawingBuffer::ExportCanvasResource() {
   ScopedStateRestorer scoped_state_restorer(this);
   TRACE_EVENT0("blink", "DrawingBuffer::ExportCanvasResource");
 
@@ -880,7 +902,7 @@ scoped_refptr<CanvasResource> DrawingBuffer::ExportCanvasResource() {
     return nullptr;
   }
 
-  return base::MakeRefCounted<ExternalCanvasResource>(
+  return base::MakeRefCounted<ExportedCanvasResource>(
       client_si, sync_token,
       viz::TransferableResource::ResourceSource::kDrawingBuffer, hdr_metadata_,
       std::move(out_release_callback), context_provider_->GetWeakPtr());

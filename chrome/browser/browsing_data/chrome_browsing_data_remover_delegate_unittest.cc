@@ -34,6 +34,7 @@
 #include "base/test/bind.h"
 #include "base/test/gtest_util.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/run_until.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_path_override.h"
 #include "base/test/simple_test_clock.h"
@@ -105,7 +106,8 @@
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
 #include "components/autofill/core/browser/data_manager/autofill_ai/entity_suppression_manager.h"
-#include "components/autofill/core/browser/data_manager/autofill_ai/entity_suppression_manager_test_util.h"
+#include "components/autofill/core/browser/data_manager/autofill_ai/entity_suppression_sync_bridge.h"
+#include "components/autofill/core/browser/data_manager/autofill_ai/entity_suppression_sync_bridge_test_util.h"
 #include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
 #include "components/autofill/core/browser/data_manager/personal_data_manager.h"
 #include "components/autofill/core/browser/data_manager/personal_data_manager_test_util.h"
@@ -440,30 +442,54 @@ class RemoveCookieTester {
   mojo::Remote<network::mojom::CookieManager> cookie_manager_;
 };
 
+// Test `safe_browsing::SafeBrowsingService` subclass that creates and owns an
+// isolated in-process `network::NetworkContext` so that Safe Browsing cookie
+// removal can be tested in unit tests without a production network service.
+class FakeSafeBrowsingService : public safe_browsing::SafeBrowsingService {
+ public:
+  // Creates an isolated in-memory `network::NetworkContext` for testing.
+  FakeSafeBrowsingService() {
+    auto network_context_params = network::mojom::NetworkContextParams::New();
+    network_context_params->cert_verifier_params =
+        content::GetCertVerifierParams(
+            cert_verifier::mojom::CertVerifierCreationParams::New());
+    network_context_ = network::NetworkContext::CreateForTesting(
+        network::NetworkService::GetNetworkServiceForTesting(),
+        network_context_remote_.BindNewPipeAndPassReceiver(),
+        std::move(network_context_params), base::NullCallback());
+  }
+
+  FakeSafeBrowsingService(const FakeSafeBrowsingService&) = delete;
+  FakeSafeBrowsingService& operator=(const FakeSafeBrowsingService&) = delete;
+
+  network::mojom::NetworkContext* GetNetworkContext(
+      content::BrowserContext* browser_context) override {
+    return network_context_.get();
+  }
+
+ protected:
+  ~FakeSafeBrowsingService() override = default;
+
+ private:
+  mojo::Remote<network::mojom::NetworkContext> network_context_remote_;
+  std::unique_ptr<network::NetworkContext> network_context_;
+};
+
+// Helper class for testing Safe Browsing cookie removal using a
+// `FakeSafeBrowsingService`.
 class RemoveSafeBrowsingCookieTester : public RemoveCookieTester {
  public:
+  // Registers a `FakeSafeBrowsingService` on the global `TestingBrowserProcess`
+  // and binds the cookie manager for `profile`.
   explicit RemoveSafeBrowsingCookieTester(Profile* profile)
       : browser_process_(TestingBrowserProcess::GetGlobal()) {
-    // TODO(crbug.com/41437292): Port consumers of the |sb_service| to use the
-    // interface in components/safe_browsing, and remove this cast.
     scoped_refptr<safe_browsing::SafeBrowsingService> sb_service =
-        static_cast<safe_browsing::SafeBrowsingService*>(
-            safe_browsing::SafeBrowsingService::CreateSafeBrowsingService());
+        base::MakeRefCounted<FakeSafeBrowsingService>();
     browser_process_->SetSafeBrowsingService(sb_service.get());
-    sb_service->Initialize();
-    base::RunLoop().RunUntilIdle();
 
-    // Make sure the safe browsing cookie store has no cookies.
-    // TODO(mmenke): Is this really needed?
-    base::RunLoop run_loop;
     mojo::Remote<network::mojom::CookieManager> cookie_manager;
     sb_service->GetNetworkContext(profile)->GetCookieManager(
         cookie_manager.BindNewPipeAndPassReceiver());
-    cookie_manager->DeleteCookies(
-        network::mojom::CookieDeletionFilter::New(),
-        base::BindLambdaForTesting(
-            [&](uint32_t num_deleted) { run_loop.Quit(); }));
-    run_loop.Run();
 
     SetCookieManager(std::move(cookie_manager));
   }
@@ -473,9 +499,8 @@ class RemoveSafeBrowsingCookieTester : public RemoveCookieTester {
   RemoveSafeBrowsingCookieTester& operator=(
       const RemoveSafeBrowsingCookieTester&) = delete;
 
+  // Unregisters the `FakeSafeBrowsingService` from `browser_process_`.
   virtual ~RemoveSafeBrowsingCookieTester() {
-    browser_process_->safe_browsing_service()->ShutDown();
-    base::RunLoop().RunUntilIdle();
     browser_process_->SetSafeBrowsingService(nullptr);
   }
 
@@ -1503,10 +1528,9 @@ class ChromeBrowsingDataRemoverDelegateWithPasswordsTest
   }
 };
 
-// TODO(crbug.com/41370786): Disabled due to flakiness in cookie store
-//                         initialization.
-TEST_F(ChromeBrowsingDataRemoverDelegateTest,
-       DISABLED_RemoveSafeBrowsingCookieForever) {
+// Tests that clearing cookies with an all-time time range successfully removes
+// Safe Browsing cookies.
+TEST_F(ChromeBrowsingDataRemoverDelegateTest, RemoveSafeBrowsingCookieForever) {
   RemoveSafeBrowsingCookieTester tester(GetProfile());
 
   tester.AddCookie();
@@ -1522,10 +1546,10 @@ TEST_F(ChromeBrowsingDataRemoverDelegateTest,
   EXPECT_FALSE(tester.ContainsCookie());
 }
 
-// TODO(crbug.com/41370786): Disabled due to flakiness in cookie store
-//                         initialization.
+// Tests that clearing cookies for the last hour preserves Safe Browsing
+// cookies.
 TEST_F(ChromeBrowsingDataRemoverDelegateTest,
-       DISABLED_RemoveSafeBrowsingCookieLastHour) {
+       RemoveSafeBrowsingCookieLastHour) {
   RemoveSafeBrowsingCookieTester tester(GetProfile());
 
   tester.AddCookie();
@@ -1543,10 +1567,10 @@ TEST_F(ChromeBrowsingDataRemoverDelegateTest,
   EXPECT_TRUE(tester.ContainsCookie());
 }
 
-// TODO(crbug.com/41370786): Disabled due to flakiness in cookie store
-//                         initialization.
+// Tests that clearing cookies for all time with a `BrowsingDataFilterBuilder`
+// preserves or deletes Safe Browsing cookies according to the filter mode.
 TEST_F(ChromeBrowsingDataRemoverDelegateTest,
-       DISABLED_RemoveSafeBrowsingCookieForeverWithPredicate) {
+       RemoveSafeBrowsingCookieForeverWithPredicate) {
   RemoveSafeBrowsingCookieTester tester(GetProfile());
 
   tester.AddCookie();
@@ -2405,10 +2429,9 @@ TEST_F(ChromeBrowsingDataRemoverDelegateTest,
   // No crash means test passes.
 }
 
-// TODO(crbug.com/40458377): Disabled, since history is not yet marked as
-// a filterable datatype.
-TEST_F(ChromeBrowsingDataRemoverDelegateTest,
-       DISABLED_TimeBasedHistoryRemoval) {
+// Tests that removing history within a time range correctly deletes entries
+// within that range while preserving older entries.
+TEST_F(ChromeBrowsingDataRemoverDelegateTest, TimeBasedHistoryRemoval) {
   RemoveHistoryTester tester;
   ASSERT_TRUE(tester.Init(GetProfile()));
 
@@ -2617,7 +2640,7 @@ TEST_F(ChromeBrowsingDataRemoverDelegateTest, AutofillRemovalOlderThan30Days) {
   task_environment()->AdvanceClock(base::Days(30));
 
   // Add profiles and cards with modification date as 31 days old from now.
-  autofill::TestAutofillClock test_clock;
+  autofill::TestAutofillClockDeprecated test_clock;
   test_clock.SetNow(k31DaysOld);
 
   ASSERT_FALSE(tester.HasProfileAndCard());
@@ -2737,14 +2760,22 @@ TEST_F(ChromeBrowsingDataRemoverDelegateTest,
        EntitySuppressionsClearedOnAutofillRemoval) {
   base::test::ScopedFeatureList feature_list{
       autofill::features::kAutofillAmbientAutofillSuppression};
+  std::unique_ptr<autofill::EntitySuppressionSyncBridge> bridge =
+      autofill::CreateTestEntitySuppressionSyncBridge();
+  ASSERT_TRUE(base::test::RunUntil([&]() { return bridge->IsLoaded(); }));
   auto* suppression_manager = static_cast<autofill::EntitySuppressionManager*>(
       autofill::EntitySuppressionManagerFactory::GetInstance()
           ->SetTestingFactoryAndUse(
               GetProfile(),
-              base::BindOnce([](content::BrowserContext*)
-                                 -> std::unique_ptr<KeyedService> {
-                return autofill::CreateTestEntitySuppressionManager();
-              })));
+              base::BindOnce(
+                  [](std::unique_ptr<autofill::EntitySuppressionSyncBridge>
+                         bridge,
+                     content::BrowserContext*)
+                      -> std::unique_ptr<KeyedService> {
+                    return std::make_unique<autofill::EntitySuppressionManager>(
+                        std::move(bridge));
+                  },
+                  std::move(bridge))));
 
   // Suppress one entity two hours ago and one now.
   const autofill::EntityInstance old_entity =
@@ -2919,12 +2950,9 @@ TEST_F(ChromeBrowsingDataRemoverDelegateTest,
             tester.last_clear_mode());
 }
 
-// TODO(juliatuttle): This isn't actually testing the no-monitor case, since
-// BrowsingDataRemoverTest now creates one unconditionally, since it's needed
-// for some unrelated test cases. This should be fixed so it tests the no-
-// monitor case again.
-TEST_F(ChromeBrowsingDataRemoverDelegateTest,
-       DISABLED_DomainReliability_NoMonitor) {
+// Tests that removing history and cookies without a monitor override executes
+// the default clearing path and completes without crashing or hanging.
+TEST_F(ChromeBrowsingDataRemoverDelegateTest, DomainReliability_NoMonitor) {
   BlockUntilBrowsingDataRemoved(
       base::Time(), base::Time::Max(),
       constants::DATA_TYPE_HISTORY |

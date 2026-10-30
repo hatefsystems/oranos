@@ -89,6 +89,13 @@ extern const base::FeatureParam<std::string> kCsdClipboardCopyApiRemoteRunners;
 extern const base::FeatureParam<std::string> kCsdClipboardCopyApiDecoders;
 extern const base::FeatureParam<bool> kCSDClipboardCopyApiSuspiciousTokenFilter;
 
+// Runs client-side phishing visual classification and image embedding in the
+// browser process, capturing page pixels via
+// `RenderWidgetHostView::CopyFromSurface`, instead of in the renderer process.
+// When enabled, the browser process owns the `Scorer` instead of distributing
+// the phishing models to renderers.
+BASE_DECLARE_FEATURE(kClientSideDetectionCopyFromSurface);
+
 // Enables sending a CSD ping on the detection of a credit card form.
 BASE_DECLARE_FEATURE(kClientSideDetectionCreditCardForm);
 // Sets the high-confidence allowlist acceptance rate for determining whether
@@ -432,11 +439,6 @@ BASE_DECLARE_FEATURE_PARAM(
 BASE_DECLARE_FEATURE_PARAM(bool,
                            kMigrateToBlockV8OptimizerOnUnfamiliarSitesDryRun);
 
-// When enabled, the Password Leak detection toggle is moved out from under the
-// 'Standard protection' Safe Browsing option to the top-level 'Privacy and
-// security' page.
-BASE_DECLARE_FEATURE(kMovePasswordLeakDetectionToggleIos);
-
 // Enables the notice queue integration for the ESB notice.
 BASE_DECLARE_FEATURE(kNoticeQueueForEsb);
 
@@ -493,6 +495,10 @@ BASE_DECLARE_FEATURE(kReportNotificationContentDetectionData);
 extern const base::FeatureParam<int>
     kReportNotificationContentDetectionDataRate;
 
+// Enables the Rust implementation of mojom::PhishingModelSetter in the
+// renderer process.
+BASE_DECLARE_FEATURE(kRustPhishingModelSetter);
+
 // Enables client side phishing daily reports limit to be configured via Finch
 // for ESB and SBER users
 BASE_DECLARE_FEATURE(kSafeBrowsingDailyPhishingReportsLimit);
@@ -519,13 +525,6 @@ BASE_DECLARE_FEATURE(kSafeBrowsingRustDmgParser);
 
 // Skips Safe Browsing Real-Time URL lookups when the device is offline.
 BASE_DECLARE_FEATURE(kSafeBrowsingSkipRealTimeLookupIfOffline);
-
-#if BUILDFLAG(IS_ANDROID)
-// Enables sync checker to check allowlist first on Chrome on Android. This is
-// an optimization to improve the speed of Safe Browsing checks.
-// See go/skip-sync-hpd-allowlist-android for details.
-BASE_DECLARE_FEATURE(kSafeBrowsingSyncCheckerCheckAllowlist);
-#endif
 
 // Allows Safe Browsing Real-Time URL lookups to wait for DNS resolution of the
 // main frame URL.

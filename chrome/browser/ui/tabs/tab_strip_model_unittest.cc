@@ -73,6 +73,12 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/models/list_selection_model.h"
 #include "ui/base/page_transition_types.h"
+#include "ui/base/test/mock_base_window.h"
+
+#if BUILDFLAG(IS_CHROMEOS)
+#include "base/auto_reset.h"
+#include "chrome/browser/lifetime/browser_shutdown.h"  // nogncheck
+#endif                                                 // BUILDFLAG(IS_CHROMEOS)
 
 using content::WebContents;
 
@@ -3260,57 +3266,56 @@ TEST_F(TabStripModelTest, RotateFocusedGroup) {
   tabstrip()->RotateFocusedGroup(/*forward=*/false);
   EXPECT_EQ(std::nullopt, tabstrip()->GetFocusedGroup());
 
-  // Case 2: If there is one tab group, rotation toggles between unfocused and
-  // the group.
+  // Case 2: If there is a tab group but not in focus mode, rotation is a no-op.
   tab_groups::TabGroupId group0 = tabstrip()->AddToNewGroup({0});
   EXPECT_EQ(std::nullopt, tabstrip()->GetFocusedGroup());
-
-  // Rotating forward cycles from unfocused to group0, then back to unfocused.
-  tabstrip()->RotateFocusedGroup(/*forward=*/true);
-  EXPECT_EQ(group0, tabstrip()->GetFocusedGroup());
   tabstrip()->RotateFocusedGroup(/*forward=*/true);
   EXPECT_EQ(std::nullopt, tabstrip()->GetFocusedGroup());
-
-  // Rotating backward cycles from unfocused to group0, then back to unfocused.
-  tabstrip()->RotateFocusedGroup(/*forward=*/false);
-  EXPECT_EQ(group0, tabstrip()->GetFocusedGroup());
   tabstrip()->RotateFocusedGroup(/*forward=*/false);
   EXPECT_EQ(std::nullopt, tabstrip()->GetFocusedGroup());
 
-  // Case 3: When multiple groups exist, rotation wraps around in a carousel.
+  // Case 3: If there is only one tab group and it is focused, rotation keeps
+  // the group focused and does not unfocus.
+  tabstrip()->EnterFocusMode(group0);
+  EXPECT_EQ(group0, tabstrip()->GetFocusedGroup());
+  tabstrip()->RotateFocusedGroup(/*forward=*/true);
+  EXPECT_EQ(group0, tabstrip()->GetFocusedGroup());
+  tabstrip()->RotateFocusedGroup(/*forward=*/false);
+  EXPECT_EQ(group0, tabstrip()->GetFocusedGroup());
+
+  // Case 4: When multiple groups exist, rotation cycles through open groups and
+  // wraps around without unfocusing.
   PrepareTabs(tabstrip(), 3);
   tab_groups::TabGroupId group1 = tabstrip()->AddToNewGroup({2});
   tab_groups::TabGroupId group2 = tabstrip()->AddToNewGroup({4});
 
-  // Rotating forward transitions through all groups in visual order, returns
-  // to unfocused, and wraps around.
-  EXPECT_EQ(std::nullopt, tabstrip()->GetFocusedGroup());
-  tabstrip()->RotateFocusedGroup(/*forward=*/true);
-  EXPECT_EQ(group0, tabstrip()->GetFocusedGroup());
-  tabstrip()->RotateFocusedGroup(/*forward=*/true);
-  EXPECT_EQ(group1, tabstrip()->GetFocusedGroup());
-  tabstrip()->RotateFocusedGroup(/*forward=*/true);
-  EXPECT_EQ(group2, tabstrip()->GetFocusedGroup());
-  tabstrip()->RotateFocusedGroup(/*forward=*/true);
-  EXPECT_EQ(std::nullopt, tabstrip()->GetFocusedGroup());
-  tabstrip()->RotateFocusedGroup(/*forward=*/true);
-  EXPECT_EQ(group0, tabstrip()->GetFocusedGroup());
-
-  // Reset to the unfocused state.
+  // While unfocused, rotating forward or backward is still a no-op.
   tabstrip()->ExitFocusMode();
+  EXPECT_EQ(std::nullopt, tabstrip()->GetFocusedGroup());
+  tabstrip()->RotateFocusedGroup(/*forward=*/true);
+  EXPECT_EQ(std::nullopt, tabstrip()->GetFocusedGroup());
+  tabstrip()->RotateFocusedGroup(/*forward=*/false);
+  EXPECT_EQ(std::nullopt, tabstrip()->GetFocusedGroup());
 
-  // Rotating backward transitions through all groups in reverse visual order,
-  // returns to unfocused, and wraps around.
+  // Enter focus mode on group0. Rotating forward transitions through all groups
+  // in visual order and wraps around to group0 without unfocusing.
+  tabstrip()->EnterFocusMode(group0);
+  EXPECT_EQ(group0, tabstrip()->GetFocusedGroup());
+  tabstrip()->RotateFocusedGroup(/*forward=*/true);
+  EXPECT_EQ(group1, tabstrip()->GetFocusedGroup());
+  tabstrip()->RotateFocusedGroup(/*forward=*/true);
+  EXPECT_EQ(group2, tabstrip()->GetFocusedGroup());
+  tabstrip()->RotateFocusedGroup(/*forward=*/true);
+  EXPECT_EQ(group0, tabstrip()->GetFocusedGroup());
+
+  // Rotating backward transitions through all groups in reverse visual order
+  // and wraps around without unfocusing.
   tabstrip()->RotateFocusedGroup(/*forward=*/false);
   EXPECT_EQ(group2, tabstrip()->GetFocusedGroup());
   tabstrip()->RotateFocusedGroup(/*forward=*/false);
   EXPECT_EQ(group1, tabstrip()->GetFocusedGroup());
   tabstrip()->RotateFocusedGroup(/*forward=*/false);
   EXPECT_EQ(group0, tabstrip()->GetFocusedGroup());
-  tabstrip()->RotateFocusedGroup(/*forward=*/false);
-  EXPECT_EQ(std::nullopt, tabstrip()->GetFocusedGroup());
-  tabstrip()->RotateFocusedGroup(/*forward=*/false);
-  EXPECT_EQ(group2, tabstrip()->GetFocusedGroup());
 }
 
 TEST_F(TabStripModelTest, RotateFocusedGroup_EphemeralGroup) {
@@ -3333,6 +3338,25 @@ TEST_F(TabStripModelTest, RotateFocusedGroup_EphemeralGroup) {
 
   tabstrip()->RotateFocusedGroup(/*forward=*/false);
   EXPECT_EQ(ephemeral_group, tabstrip()->GetFocusedGroup());
+}
+
+TEST_F(TabStripModelTest, CloseAllTabsInGroup_EphemeralGroup) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      {features::kTabGroupsFocusing, features::kNonGroupFocus}, {});
+
+  PrepareTabs(tabstrip(), 2);
+  tab_groups::TabGroupId ephemeral_group =
+      tabstrip()->AddToNewGroup({0, 1}, /*is_ephemeral=*/true);
+  tabstrip()->EnterFocusMode(ephemeral_group);
+  ASSERT_EQ(ephemeral_group, tabstrip()->GetFocusedGroup());
+
+  // Closing a tab group should be a no-op for an ephemeral group in non-group
+  // focus mode.
+  tabstrip()->CloseAllTabsInGroup(ephemeral_group);
+  EXPECT_EQ(2, tabstrip()->count());
+  EXPECT_EQ(ephemeral_group, tabstrip()->GetFocusedGroup());
+  EXPECT_TRUE(tabstrip()->group_model()->ContainsTabGroup(ephemeral_group));
 }
 
 // Moving every tab of an ephemeral group to another window dissolves the group
@@ -4261,6 +4285,196 @@ TEST_F(TabStripModelTest, HasTabsClosedByCommand) {
       tabs::TabHandle::Null(), TabStripModel::CommandCloseOtherTabs));
 }
 
+TEST_F(TabStripModelTest, GetCommonGroupForTabs) {
+  // Empty vector returns nullopt.
+  EXPECT_EQ(tabstrip()->GetCommonGroupForTabs({}), std::nullopt);
+
+  // Vector with null handle returns nullopt without crashing.
+  EXPECT_EQ(tabstrip()->GetCommonGroupForTabs({tabs::TabHandle::Null()}),
+            std::nullopt);
+
+  // Append four tabs.
+  for (int i = 0; i < 4; ++i) {
+    tabstrip()->AppendWebContents(CreateWebContents(), true);
+  }
+  tabs::TabHandle tab0 = tabstrip()->GetTabAtIndex(0)->GetHandle();
+  tabs::TabHandle tab1 = tabstrip()->GetTabAtIndex(1)->GetHandle();
+  tabs::TabHandle tab2 = tabstrip()->GetTabAtIndex(2)->GetHandle();
+  tabs::TabHandle tab3 = tabstrip()->GetTabAtIndex(3)->GetHandle();
+
+  // Ungrouped tabs return nullopt.
+  EXPECT_EQ(tabstrip()->GetCommonGroupForTabs({tab0, tab1}), std::nullopt);
+
+  // Group tab0 and tab1 together.
+  tab_groups::TabGroupId group1 = tabstrip()->AddToNewGroup({0, 1});
+  EXPECT_EQ(tabstrip()->GetCommonGroupForTabs({tab0}), group1);
+  EXPECT_EQ(tabstrip()->GetCommonGroupForTabs({tab0, tab1}), group1);
+
+  // Group tab2 into a distinct group.
+  tab_groups::TabGroupId group2 = tabstrip()->AddToNewGroup({2});
+  EXPECT_EQ(tabstrip()->GetCommonGroupForTabs({tab2}), group2);
+
+  // Tabs from different groups return nullopt.
+  EXPECT_EQ(tabstrip()->GetCommonGroupForTabs({tab0, tab2}), std::nullopt);
+  EXPECT_EQ(tabstrip()->GetCommonGroupForTabs({tab0, tab1, tab2}),
+            std::nullopt);
+
+  // Mixture of grouped and ungrouped tabs returns nullopt.
+  EXPECT_EQ(tabstrip()->GetCommonGroupForTabs({tab0, tab3}), std::nullopt);
+
+  // Vector with a valid tab and a null handle returns nullopt.
+  EXPECT_EQ(tabstrip()->GetCommonGroupForTabs({tab0, tabs::TabHandle::Null()}),
+            std::nullopt);
+
+  // Tabs belonging to a different TabStripModel return nullopt.
+  TestTabStripModelDelegate other_delegate;
+  TabStripModel other_model(&other_delegate, profile());
+  other_model.AppendWebContents(CreateWebContents(), true);
+  other_model.AddToNewGroup({0});
+  tabs::TabHandle other_tab = other_model.GetTabAtIndex(0)->GetHandle();
+  EXPECT_EQ(tabstrip()->GetCommonGroupForTabs({other_tab}), std::nullopt);
+  EXPECT_EQ(tabstrip()->GetCommonGroupForTabs({tab0, other_tab}), std::nullopt);
+  other_model.CloseAllTabs();
+
+  tabstrip()->CloseAllTabs();
+}
+
+TEST_F(TabStripModelTest, AreAllUngrouped) {
+  // Empty vector returns false.
+  EXPECT_FALSE(tabstrip()->AreAllUngrouped({}));
+
+  // Append three tabs (all initially ungrouped).
+  for (int i = 0; i < 3; ++i) {
+    tabstrip()->AppendWebContents(CreateWebContents(), true);
+  }
+  tabs::TabHandle tab0 = tabstrip()->GetTabAtIndex(0)->GetHandle();
+  tabs::TabHandle tab1 = tabstrip()->GetTabAtIndex(1)->GetHandle();
+  tabs::TabHandle tab2 = tabstrip()->GetTabAtIndex(2)->GetHandle();
+
+  // All ungrouped tabs return true.
+  EXPECT_TRUE(tabstrip()->AreAllUngrouped({tab0}));
+  EXPECT_TRUE(tabstrip()->AreAllUngrouped({tab0, tab1, tab2}));
+
+  // Group tab0.
+  tabstrip()->AddToNewGroup({0});
+
+  // Since tab0 is grouped, sets containing tab0 return false.
+  EXPECT_FALSE(tabstrip()->AreAllUngrouped({tab0}));
+  EXPECT_FALSE(tabstrip()->AreAllUngrouped({tab0, tab1}));
+  EXPECT_FALSE(tabstrip()->AreAllUngrouped({tab0, tab1, tab2}));
+
+  // The remaining ungrouped tabs still return true.
+  EXPECT_TRUE(tabstrip()->AreAllUngrouped({tab1, tab2}));
+
+  // Vector with null handle or tab from a different TabStripModel returns
+  // false.
+  EXPECT_FALSE(tabstrip()->AreAllUngrouped({tabs::TabHandle::Null()}));
+  EXPECT_FALSE(tabstrip()->AreAllUngrouped({tab1, tabs::TabHandle::Null()}));
+
+  TestTabStripModelDelegate other_delegate;
+  TabStripModel other_model(&other_delegate, profile());
+  other_model.AppendWebContents(CreateWebContents(), true);
+  tabs::TabHandle other_tab = other_model.GetTabAtIndex(0)->GetHandle();
+  EXPECT_FALSE(tabstrip()->AreAllUngrouped({other_tab}));
+  EXPECT_FALSE(tabstrip()->AreAllUngrouped({tab1, other_tab}));
+  other_model.CloseAllTabs();
+
+  tabstrip()->CloseAllTabs();
+}
+
+TEST_F(TabStripModelTest, WillContextMenuPin) {
+  EXPECT_FALSE(tabstrip()->WillContextMenuPin(tabs::TabHandle::Null()));
+
+  tabstrip()->AppendWebContents(CreateWebContents(), true);
+  tabs::TabHandle tab0 = tabstrip()->GetTabAtIndex(0)->GetHandle();
+  // Unpinned tab: will pin.
+  EXPECT_TRUE(tabstrip()->WillContextMenuPin(tab0));
+
+  tabstrip()->SetTabPinned(0, true);
+  // Pinned tab: will unpin (so WillContextMenuPin returns false).
+  EXPECT_FALSE(tabstrip()->WillContextMenuPin(tab0));
+
+  // Add a second (unpinned) tab and select both tabs.
+  tabstrip()->AppendWebContents(CreateWebContents(), true);
+  tabs::TabHandle tab1 = tabstrip()->GetTabAtIndex(1)->GetHandle();
+  tabstrip()->SelectTabAt(0);
+  tabstrip()->SelectTabAt(1);
+  // Mixed selection (tab0 pinned, tab1 unpinned): will pin all selected tabs.
+  EXPECT_TRUE(tabstrip()->WillContextMenuPin(tab0));
+  EXPECT_TRUE(tabstrip()->WillContextMenuPin(tab1));
+
+  // Pin tab1 as well so all selected tabs are pinned: will unpin.
+  tabstrip()->SetTabPinned(1, true);
+  tabstrip()->SelectTabAt(0);
+  tabstrip()->SelectTabAt(1);
+  EXPECT_FALSE(tabstrip()->WillContextMenuPin(tab0));
+  EXPECT_FALSE(tabstrip()->WillContextMenuPin(tab1));
+
+  // Unpin both tabs so all selected tabs are unpinned: will pin.
+  tabstrip()->SetTabPinned(0, false);
+  tabstrip()->SetTabPinned(1, false);
+  tabstrip()->SelectTabAt(0);
+  tabstrip()->SelectTabAt(1);
+  EXPECT_TRUE(tabstrip()->WillContextMenuPin(tab0));
+  EXPECT_TRUE(tabstrip()->WillContextMenuPin(tab1));
+
+  tabstrip()->CloseAllTabs();
+}
+
+TEST_F(TabStripModelTest, WillContextMenuGroup) {
+  EXPECT_FALSE(tabstrip()->WillContextMenuGroup(tabs::TabHandle::Null()));
+
+  tabstrip()->AppendWebContents(CreateWebContents(), true);
+  tabs::TabHandle tab0 = tabstrip()->GetTabAtIndex(0)->GetHandle();
+  // Ungrouped tab: will group.
+  EXPECT_TRUE(tabstrip()->WillContextMenuGroup(tab0));
+
+  tab_groups::TabGroupId group1 = tabstrip()->AddToNewGroup({0});
+  // Grouped tab: will ungroup (so WillContextMenuGroup returns false).
+  EXPECT_FALSE(tabstrip()->WillContextMenuGroup(tab0));
+
+  // Add a second (ungrouped) tab and select both tabs.
+  tabstrip()->AppendWebContents(CreateWebContents(), true);
+  tabs::TabHandle tab1 = tabstrip()->GetTabAtIndex(1)->GetHandle();
+  tabstrip()->SelectTabAt(0);
+  tabstrip()->SelectTabAt(1);
+  // Mixed selection (tab0 grouped, tab1 ungrouped): will group.
+  EXPECT_TRUE(tabstrip()->WillContextMenuGroup(tab0));
+  EXPECT_TRUE(tabstrip()->WillContextMenuGroup(tab1));
+
+  // Put tab1 into a different group while both are selected: will group into a
+  // single group.
+  tabstrip()->AddToNewGroup({1});
+  tabstrip()->SelectTabAt(0);
+  tabstrip()->SelectTabAt(1);
+  EXPECT_TRUE(tabstrip()->WillContextMenuGroup(tab0));
+  EXPECT_TRUE(tabstrip()->WillContextMenuGroup(tab1));
+
+  // Move tab1 into group1 so all selected tabs share the same group: will
+  // ungroup.
+  tabstrip()->AddToExistingGroup({1}, group1);
+  tabstrip()->SelectTabAt(0);
+  tabstrip()->SelectTabAt(1);
+  EXPECT_FALSE(tabstrip()->WillContextMenuGroup(tab0));
+  EXPECT_FALSE(tabstrip()->WillContextMenuGroup(tab1));
+
+  // Remove both from group so all selected tabs are ungrouped: will group.
+  tabstrip()->RemoveFromGroup({0, 1});
+  tabstrip()->SelectTabAt(0);
+  tabstrip()->SelectTabAt(1);
+  EXPECT_TRUE(tabstrip()->WillContextMenuGroup(tab0));
+  EXPECT_TRUE(tabstrip()->WillContextMenuGroup(tab1));
+
+  // Put both tabs into an ephemeral group: will still group into a real group.
+  tabstrip()->AddToNewGroup({0, 1}, /*is_ephemeral=*/true);
+  tabstrip()->SelectTabAt(0);
+  tabstrip()->SelectTabAt(1);
+  EXPECT_TRUE(tabstrip()->WillContextMenuGroup(tab0));
+  EXPECT_TRUE(tabstrip()->WillContextMenuGroup(tab1));
+
+  tabstrip()->CloseAllTabs();
+}
+
 // Tests whether or not WebContentses are inserted in the correct position
 // using this "smart" function with a simulated middle click action on a series
 // of links on the home page.
@@ -4896,6 +5110,13 @@ class UnloadListenerTabStripModelDelegate : public TestTabStripModelDelegate {
   ~UnloadListenerTabStripModelDelegate() override = default;
 
   void set_run_unload_listener(bool value) { run_unload_ = value; }
+  void set_should_run_unload_listener(bool value) {
+    should_run_unload_ = value;
+  }
+
+  bool ShouldRunUnloadListenerBeforeClosing(WebContents* contents) override {
+    return should_run_unload_;
+  }
 
   bool RunUnloadListenerBeforeClosing(WebContents* contents) override {
     return run_unload_;
@@ -4903,6 +5124,7 @@ class UnloadListenerTabStripModelDelegate : public TestTabStripModelDelegate {
 
  private:
   // Whether to report that we need to run an unload listener before closing.
+  bool should_run_unload_ = false;
   bool run_unload_ = false;
 };
 
@@ -4973,6 +5195,34 @@ TEST_F(TabStripModelTest, FastShutdown) {
     EXPECT_TRUE(tabstrip.empty());
   }
 }
+
+#if BUILDFLAG(IS_CHROMEOS)
+TEST_F(TabStripModelTest, FastShutdownOnSessionEnd) {
+  for (browser_shutdown::ShutdownType type :
+       {browser_shutdown::ShutdownType::kEndSession,
+        browser_shutdown::ShutdownType::kBrowserExit}) {
+    UnloadListenerTabStripModelDelegate delegate;
+    TabStripModel tabstrip(&delegate, profile());
+
+    std::unique_ptr<WebContents> contents1 = CreateWebContents();
+    content::RenderProcessHost* rph =
+        contents1->GetPrimaryMainFrame()->GetProcess();
+    std::unique_ptr<WebContents> contents2 =
+        CreateWebContentsWithSharedRPH(contents1.get());
+
+    tabstrip.AppendWebContents(std::move(contents1), true);
+    tabstrip.AppendWebContents(std::move(contents2), true);
+    delegate.set_should_run_unload_listener(true);
+
+    base::AutoReset<browser_shutdown::ShutdownType> shutdown_type =
+        browser_shutdown::SetShutdownTypeForTesting(type);
+
+    tabstrip.CloseAllTabs();
+    EXPECT_TRUE(rph->FastShutdownStarted());
+    EXPECT_TRUE(tabstrip.empty());
+  }
+}
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 // Tests that close_types are preserved when unload listeners are triggered.
 TEST_F(TabStripModelTest, CloseTypesPreservedAfterUnload) {
@@ -7502,19 +7752,19 @@ TEST_F(TabStripModelTest, ToggleSiteMuted) {
   // Validate if the mute site menu item shows up and the site is unmuted
   EXPECT_TRUE(tabstrip()->IsContextMenuCommandEnabled(
       0, TabStripModel::CommandToggleSiteMuted));
-  EXPECT_FALSE(IsSiteMuted(*tabstrip(), 0));
+  EXPECT_FALSE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
 
   // Validate if toggling the state successfully mutes the site
   tabstrip()->ExecuteContextMenuCommand(0,
                                         TabStripModel::CommandToggleSiteMuted);
-  EXPECT_TRUE(IsSiteMuted(*tabstrip(), 0));
+  EXPECT_TRUE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
   EXPECT_TRUE(IsSiteInContentSettingExceptionList(settings, url,
                                                   ContentSettingsType::SOUND));
 
   // Toggling the state again to successfully unmute the site
   tabstrip()->ExecuteContextMenuCommand(0,
                                         TabStripModel::CommandToggleSiteMuted);
-  EXPECT_FALSE(IsSiteMuted(*tabstrip(), 0));
+  EXPECT_FALSE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
   EXPECT_FALSE(IsSiteInContentSettingExceptionList(settings, url,
                                                    ContentSettingsType::SOUND));
 
@@ -7537,7 +7787,7 @@ TEST_F(TabStripModelTest, ToggleSiteMutedWithLessSpecificRule) {
   // Validate if the mute site menu item shows up and the site is unmuted
   EXPECT_TRUE(tabstrip()->IsContextMenuCommandEnabled(
       0, TabStripModel::CommandToggleSiteMuted));
-  EXPECT_FALSE(IsSiteMuted(*tabstrip(), 0));
+  EXPECT_FALSE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
 
   // Add a wildcard to mute all HTTPS sites as a custom behavior
   ContentSettingsPattern primary_pattern =
@@ -7547,24 +7797,24 @@ TEST_F(TabStripModelTest, ToggleSiteMutedWithLessSpecificRule) {
   settings->SetContentSettingCustomScope(primary_pattern, secondary_pattern,
                                          ContentSettingsType::SOUND,
                                          CONTENT_SETTING_BLOCK);
-  EXPECT_TRUE(IsSiteMuted(*tabstrip(), 0));
+  EXPECT_TRUE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
 
   // Validate we are able to unmute the site (with the wildcard custom behavior)
   tabstrip()->ExecuteContextMenuCommand(0,
                                         TabStripModel::CommandToggleSiteMuted);
-  EXPECT_FALSE(IsSiteMuted(*tabstrip(), 0));
+  EXPECT_FALSE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
   EXPECT_TRUE(IsSiteInContentSettingExceptionList(settings, url,
                                                   ContentSettingsType::SOUND));
 
   // Validate we are able to mute the site
   tabstrip()->ExecuteContextMenuCommand(0,
                                         TabStripModel::CommandToggleSiteMuted);
-  EXPECT_TRUE(IsSiteMuted(*tabstrip(), 0));
+  EXPECT_TRUE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
 
   // Validate we are able to unmute the site
   tabstrip()->ExecuteContextMenuCommand(0,
                                         TabStripModel::CommandToggleSiteMuted);
-  EXPECT_FALSE(IsSiteMuted(*tabstrip(), 0));
+  EXPECT_FALSE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
   EXPECT_TRUE(IsSiteInContentSettingExceptionList(settings, url,
                                                   ContentSettingsType::SOUND));
 
@@ -7587,7 +7837,7 @@ TEST_F(TabStripModelTest, ToggleSiteMutedWithOtherDisjointRule) {
   // Validate if the mute site menu item shows up and the site is unmuted
   EXPECT_TRUE(tabstrip()->IsContextMenuCommandEnabled(
       0, TabStripModel::CommandToggleSiteMuted));
-  EXPECT_FALSE(IsSiteMuted(*tabstrip(), 0));
+  EXPECT_FALSE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
 
   // Add a wildcard to mute all HTTPS sites as a custom behavior
   ContentSettingsPattern primary_pattern =
@@ -7597,19 +7847,19 @@ TEST_F(TabStripModelTest, ToggleSiteMutedWithOtherDisjointRule) {
   settings->SetContentSettingCustomScope(primary_pattern, secondary_pattern,
                                          ContentSettingsType::SOUND,
                                          CONTENT_SETTING_BLOCK);
-  EXPECT_FALSE(IsSiteMuted(*tabstrip(), 0));
+  EXPECT_FALSE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
 
   // Validate we are able to mute the site
   tabstrip()->ExecuteContextMenuCommand(0,
                                         TabStripModel::CommandToggleSiteMuted);
-  EXPECT_TRUE(IsSiteMuted(*tabstrip(), 0));
+  EXPECT_TRUE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
   EXPECT_TRUE(IsSiteInContentSettingExceptionList(settings, url,
                                                   ContentSettingsType::SOUND));
 
   // Validate we are able to unmute the site
   tabstrip()->ExecuteContextMenuCommand(0,
                                         TabStripModel::CommandToggleSiteMuted);
-  EXPECT_FALSE(IsSiteMuted(*tabstrip(), 0));
+  EXPECT_FALSE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
   EXPECT_FALSE(IsSiteInContentSettingExceptionList(settings, url,
                                                    ContentSettingsType::SOUND));
 
@@ -7635,12 +7885,12 @@ TEST_F(TabStripModelTest, ToggleSiteMutedWithDifferentDefault) {
   // Validate if the mute site menu item shows up and the site is muted
   EXPECT_TRUE(tabstrip()->IsContextMenuCommandEnabled(
       0, TabStripModel::CommandToggleSiteMuted));
-  EXPECT_TRUE(IsSiteMuted(*tabstrip(), 0));
+  EXPECT_TRUE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
 
   // Validate if toggling the state successfully unmutes the site
   tabstrip()->ExecuteContextMenuCommand(0,
                                         TabStripModel::CommandToggleSiteMuted);
-  EXPECT_FALSE(IsSiteMuted(*tabstrip(), 0));
+  EXPECT_FALSE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
   EXPECT_TRUE(IsSiteInContentSettingExceptionList(settings, url,
                                                   ContentSettingsType::SOUND));
 
@@ -7655,7 +7905,7 @@ TEST_F(TabStripModelTest, ToggleMuteUnmuteMultipleSites) {
   tabstrip()->AddWebContents(std::move(new_tab_contents1), -1,
                              ui::PAGE_TRANSITION_TYPED,
                              AddTabTypes::ADD_ACTIVE);
-  EXPECT_FALSE(IsSiteMuted(*tabstrip(), 0));
+  EXPECT_FALSE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
 
   GURL url2("https://example2.com/");
   std::unique_ptr<WebContents> new_tab_contents2 = CreateWebContents();
@@ -7664,7 +7914,7 @@ TEST_F(TabStripModelTest, ToggleMuteUnmuteMultipleSites) {
   tabstrip()->AddWebContents(std::move(new_tab_contents2), -1,
                              ui::PAGE_TRANSITION_TYPED,
                              AddTabTypes::ADD_ACTIVE);
-  EXPECT_FALSE(IsSiteMuted(*tabstrip(), 1));
+  EXPECT_FALSE(IsSiteMuted(tabstrip()->GetTabAtIndex(1)->GetHandle()));
 
   tabstrip()->SelectTabAt(0);
   EXPECT_TRUE(
@@ -7672,13 +7922,17 @@ TEST_F(TabStripModelTest, ToggleMuteUnmuteMultipleSites) {
 
   tabstrip()->ExecuteContextMenuCommand(0,
                                         TabStripModel::CommandToggleSiteMuted);
-  EXPECT_TRUE(IsSiteMuted(*tabstrip(), 0));
-  EXPECT_TRUE(IsSiteMuted(*tabstrip(), 1));
+  EXPECT_TRUE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
+  EXPECT_TRUE(IsSiteMuted(tabstrip()->GetTabAtIndex(1)->GetHandle()));
 
   tabstrip()->ExecuteContextMenuCommand(0,
                                         TabStripModel::CommandToggleSiteMuted);
-  EXPECT_FALSE(IsSiteMuted(*tabstrip(), 0));
-  EXPECT_FALSE(IsSiteMuted(*tabstrip(), 1));
+  EXPECT_FALSE(IsSiteMuted(tabstrip()->GetTabAtIndex(0)->GetHandle()));
+  EXPECT_FALSE(IsSiteMuted(tabstrip()->GetTabAtIndex(1)->GetHandle()));
+
+  // Also test null handles with IsSiteMuted and WillContextMenuMuteSites.
+  EXPECT_FALSE(IsSiteMuted(tabs::TabHandle::Null()));
+  EXPECT_FALSE(tabstrip()->WillContextMenuMuteSites(tabs::TabHandle::Null()));
 
   tabstrip()->CloseAllTabs();
 }
@@ -8615,4 +8869,62 @@ TEST_F(TabStripModelTest, CloseWebContents) {
   EXPECT_EQ(2, tabstrip()->count());
   EXPECT_EQ(TabStripModel::kNoTab,
             tabstrip()->GetIndexOfWebContents(contents_to_close));
+}
+
+TEST_F(TabStripModelTest, ContextMenuCommandWindowActivation) {
+  testing::NiceMock<MockBrowserWindowInterface> bwi;
+  testing::NiceMock<ui::MockBaseWindow> base_window;
+  ON_CALL(bwi, GetWindow()).WillByDefault(::testing::Return(&base_window));
+  ON_CALL(bwi, GetTabStripModel()).WillByDefault(::testing::Return(tabstrip()));
+  delegate()->SetBrowserWindowInterface(&bwi);
+
+  PrepareTabstripForSelectionTest(tabstrip(), /*tab_count=*/5,
+                                  /*pinned_count=*/0,
+                                  /*selected_tabs=*/{0});
+
+  // Executing a non-close context menu command on an inactive window should
+  // activate it.
+  ON_CALL(base_window, IsActive()).WillByDefault(::testing::Return(false));
+  EXPECT_CALL(base_window, Activate()).Times(1);
+  tabstrip()->ExecuteContextMenuCommand(0, TabStripModel::CommandNewTabToRight);
+  testing::Mock::VerifyAndClearExpectations(&base_window);
+
+  // Executing a context menu command when the window is already active should
+  // not call Activate() again.
+  ON_CALL(base_window, IsActive()).WillByDefault(::testing::Return(true));
+  EXPECT_CALL(base_window, Activate()).Times(0);
+  tabstrip()->ExecuteContextMenuCommand(0, TabStripModel::CommandTogglePinned);
+  testing::Mock::VerifyAndClearExpectations(&base_window);
+
+  // Unpinning while inactive should activate the window.
+  ON_CALL(base_window, IsActive()).WillByDefault(::testing::Return(false));
+  EXPECT_CALL(base_window, Activate()).Times(1);
+  tabstrip()->ExecuteContextMenuCommand(0, TabStripModel::CommandTogglePinned);
+  testing::Mock::VerifyAndClearExpectations(&base_window);
+
+  // Submenu commands should also activate an inactive window.
+  const tab_groups::TabGroupId group_id = tabstrip()->AddToNewGroup({0});
+  ON_CALL(base_window, IsActive()).WillByDefault(::testing::Return(false));
+  EXPECT_CALL(base_window, Activate()).Times(1);
+  tabstrip()->ExecuteAddToExistingGroupCommand(1, group_id);
+  testing::Mock::VerifyAndClearExpectations(&base_window);
+
+  ON_CALL(base_window, IsActive()).WillByDefault(::testing::Return(false));
+  EXPECT_CALL(base_window, Activate()).Times(1);
+  tabstrip()->ExecuteAddToNewSplitCommand(
+      1, split_tabs::SplitTabLayout::kSideBySide);
+  testing::Mock::VerifyAndClearExpectations(&base_window);
+
+  // Close commands should not activate an inactive window.
+  ON_CALL(base_window, IsActive()).WillByDefault(::testing::Return(false));
+  EXPECT_CALL(base_window, Activate()).Times(0);
+  tabstrip()->ExecuteContextMenuCommand(4, TabStripModel::CommandCloseTab);
+  tabstrip()->ExecuteContextMenuCommand(2,
+                                        TabStripModel::CommandCloseTabsToRight);
+  tabstrip()->ExecuteContextMenuCommand(0,
+                                        TabStripModel::CommandCloseOtherTabs);
+  testing::Mock::VerifyAndClearExpectations(&base_window);
+
+  delegate()->SetBrowserWindowInterface(nullptr);
+  tabstrip()->CloseAllTabs();
 }

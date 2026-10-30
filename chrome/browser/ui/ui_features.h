@@ -36,11 +36,15 @@ BASE_DECLARE_FEATURE(kLegacySearchIntegrityCheck);
 
 BASE_DECLARE_FEATURE(kFedCmPermissionUiWithContainer);
 
+BASE_DECLARE_FEATURE(kFindInPageMatchCase);
+
 BASE_DECLARE_FEATURE(kImportExportFlags);
 
 // Shows a "+N" count pill in the bottom-most infobar while lower-priority
 // infobars wait in the prioritization queue.
 BASE_DECLARE_FEATURE(kInfoBarQueuedCountPill);
+
+BASE_DECLARE_FEATURE(kFindInPageSkipViewport);
 
 BASE_DECLARE_FEATURE(kKeyboardLockHeldEscExitsTabFullscreen);
 
@@ -277,7 +281,6 @@ BASE_DECLARE_FEATURE(kPasswordSaveUpdateDropdownMenuExperiment);
 BASE_DECLARE_FEATURE(kNTPFooterBadgingPolicies);
 
 BASE_DECLARE_FEATURE(kEnterpriseManagementDisclaimerUsesCustomLabel);
-BASE_DECLARE_FEATURE(kEnterpriseReleaseNotes);
 BASE_DECLARE_FEATURE(kManagedProfileRequiredInterstitial);
 // Enables WebUI migration for chrome://management on Android Mobile.
 BASE_DECLARE_FEATURE(kMigrateManagementPageToWebUIOnMobile);
@@ -298,9 +301,6 @@ BASE_DECLARE_FEATURE(kMacDeferInputContextUntilFirstPaint);
 // Controls whether the site-specific data dialog shows a related installed
 // applications section.
 BASE_DECLARE_FEATURE(kPageSpecificDataDialogRelatedInstalledAppsSection);
-
-// Feature for the promotion banner on the top of chrome://management page
-BASE_DECLARE_FEATURE(kEnableManagementPromotionBanner);
 
 // Gates the optimization to cache LocationBarView in
 // LensOverlayHomeworkPageActionController.
@@ -336,10 +336,6 @@ BASE_DECLARE_FEATURE(kByDateHistoryInSidePanel);
 
 // If enabled, the "Tabs from other devices" side panel will be available.
 BASE_DECLARE_FEATURE(kTabsFromOtherDevicesSidePanel);
-
-// If enabled, the "Tabs from other devices" toolbar button will be pinned by
-// default.
-BASE_DECLARE_FEATURE(kTabsFromOtherDevicesSidePanelPinnedByDefault);
 
 #if !BUILDFLAG(IS_ANDROID)
 
@@ -402,6 +398,8 @@ BASE_DECLARE_FEATURE(kAiOverlayDisableNavigationContext);
 
 BASE_DECLARE_FEATURE(kTabGroupsFocusing);
 BASE_DECLARE_FEATURE_PARAM(bool, kTabGroupsFocusFreezing);
+BASE_DECLARE_FEATURE_PARAM(int, kTabGroupsFocusingIphMinTabs);
+BASE_DECLARE_FEATURE_PARAM(base::TimeDelta, kTabGroupsFocusingIphPromoDelay);
 bool IsTabGroupsFocusFreezingEnabled();
 
 BASE_DECLARE_FEATURE(kTabGroupRibbon);

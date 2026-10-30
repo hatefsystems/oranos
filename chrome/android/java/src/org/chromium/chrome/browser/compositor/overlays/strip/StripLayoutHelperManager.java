@@ -678,7 +678,6 @@ public class StripLayoutHelperManager
                                     getStripVisibilityStateSupplier().get()
                                             == StripVisibilityState.VISIBLE,
                             tabContentManagerSupplier,
-                            mLayerTitleCacheSupplier,
                             multiInstanceManager,
                             dragDropDelegate,
                             browserControlsStateProvider,
@@ -707,6 +706,9 @@ public class StripLayoutHelperManager
                     @Override
                     public void fadeCompositorButtons(boolean fade) {
                         mTrailingButtonsCoordinator.fadeCompositorButtons(fade);
+                        if (mNtbWebUiCoordinator != null) {
+                            mNtbWebUiCoordinator.setButtonVisible(fade);
+                        }
                     }
 
                     @Override
@@ -1033,17 +1035,14 @@ public class StripLayoutHelperManager
     private void maybeUpdateNtbWebUiBounds() {
         if (mNtbWebUiCoordinator == null) return;
         // The WebUI new tab button's position and size are decided natively by
-        // StripLayoutHelperManager, mirroring the layout of the native new tab button.
-        // TODO(crbug.com/565326385): The WebUI only covers the button's drawn rect, which is
-        // smaller than the native button's touch target. Taps near the button's edge, outside of
-        // the WebUI, still reach the native strip and trigger the native new tab button. Extend
-        // the WebUI bounds to the touch target and let the WebUI pad the button accordingly.
-        TintedCompositorButton newTabButton = getNewTabButton();
+        // StripLayoutHelperManager, mirroring the touch target of the native new tab button.
+        RectF touchTarget = getNewTabButton().getTouchTargetBounds();
         mNtbWebUiCoordinator.updateBounds(
-                newTabButton.getDrawX(),
-                mTopPadding + newTabButton.getDrawY(),
-                newTabButton.getWidth(),
-                newTabButton.getHeight());
+                touchTarget.left,
+                touchTarget.top,
+                touchTarget.width(),
+                touchTarget.height(),
+                mHeight);
     }
 
     private void updateNtbWebUiInteractive() {
@@ -1651,13 +1650,8 @@ public class StripLayoutHelperManager
 
                     @Override
                     public void didMoveTab(Tab tab, int newIndex, int curIndex) {
-                        // For right-direction move, layout helper re-ordering logic
-                        // expects destination index = position + 1
                         getStripLayoutHelper(tab.isIncognitoBranded())
-                                .tabMoved(
-                                        tab.getId(),
-                                        curIndex,
-                                        newIndex > curIndex ? newIndex + 1 : newIndex);
+                                .tabMoved(tab.getId(), curIndex, newIndex);
                     }
 
                     @Override
@@ -2063,5 +2057,9 @@ public class StripLayoutHelperManager
 
     private boolean isActivityInXrFullSpaceModeNow() {
         return mXrSpaceModeObservableSupplier != null && mXrSpaceModeObservableSupplier.get();
+    }
+
+    @Nullable TabModelSelectorTabObserver getTabModelSelectorTabObserverForTesting() {
+        return mTabModelSelectorTabObserver;
     }
 }

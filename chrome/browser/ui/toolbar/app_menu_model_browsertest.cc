@@ -750,9 +750,6 @@ class ContextualTasksAskGoogleEnabledTest : public AppMenuModelTest {
   ContextualTasksAskGoogleEnabledTest() {
     feature_list_.InitWithFeaturesAndParameters(
         {{lens::features::kLensOverlay, {}},
-         {contextual_tasks::kContextualTasks, {}},
-         {contextual_tasks::kContextualTasksForceEntryPointEligibility, {}},
-         {lens::features::kLensSidePanelUnification, {}},
          {contextual_tasks::kContextualTasksUpdatedEntryPoints,
           {{"ContextualTasksContextMenuShowAskGoogle", "true"},
            {"ContextualTasksContextMenuSubmenu", "false"}}}},
@@ -806,9 +803,6 @@ class ContextualTasksAskGoogleSubmenuTest : public AppMenuModelTest {
   ContextualTasksAskGoogleSubmenuTest() {
     feature_list_.InitWithFeaturesAndParameters(
         {{lens::features::kLensOverlay, {}},
-         {contextual_tasks::kContextualTasks, {}},
-         {contextual_tasks::kContextualTasksForceEntryPointEligibility, {}},
-         {lens::features::kLensSidePanelUnification, {}},
          {contextual_tasks::kContextualTasksUpdatedEntryPoints,
           {{"ContextualTasksContextMenuShowAskGoogle", "true"},
            {"ContextualTasksContextMenuSubmenu", "true"}}}},
@@ -1417,16 +1411,7 @@ IN_PROC_BROWSER_TEST_P(AppMenuModelBookmarkBarTest, BookmarkBarSubmenu) {
 
 INSTANTIATE_TEST_SUITE_P(All, AppMenuModelBookmarkBarTest, testing::Bool());
 
-class AppMenuModelEnterpriseReleaseNotesTest
-    : public base::test::WithFeatureOverride,
-      public AppMenuModelTest {
- public:
-  AppMenuModelEnterpriseReleaseNotesTest()
-      : WithFeatureOverride(features::kEnterpriseReleaseNotes) {}
-  ~AppMenuModelEnterpriseReleaseNotesTest() override = default;
-};
-
-IN_PROC_BROWSER_TEST_P(AppMenuModelEnterpriseReleaseNotesTest, MenuVisibility) {
+IN_PROC_BROWSER_TEST_F(AppMenuModelTest, EnterpriseReleaseNotesMenuVisibility) {
   {
     AppMenuModel model(this, browser());
     model.Init();
@@ -1442,17 +1427,14 @@ IN_PROC_BROWSER_TEST_P(AppMenuModelEnterpriseReleaseNotesTest, MenuVisibility) {
     AppMenuModel model(this, browser());
     model.Init();
 #if BUILDFLAG(IS_LINUX)
-    EXPECT_EQ(IsParamFeatureEnabled(),
-              model.GetIndexOfCommandId(IDC_CHROME_ENTERPRISE_RELEASE_NOTES)
-                  .has_value());
+    EXPECT_TRUE(model.GetIndexOfCommandId(IDC_CHROME_ENTERPRISE_RELEASE_NOTES)
+                    .has_value());
 #else
     EXPECT_FALSE(model.GetIndexOfCommandId(IDC_CHROME_ENTERPRISE_RELEASE_NOTES)
                      .has_value());
 #endif
   }
 }
-
-INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(AppMenuModelEnterpriseReleaseNotesTest);
 
 namespace {
 

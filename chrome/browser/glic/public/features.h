@@ -62,6 +62,9 @@ base::flat_set<std::string> GetGlicSelectionDefaultBlockedSites();
 
 BASE_DECLARE_FEATURE(kGlicSelectionOverlayPrompt);
 BASE_DECLARE_FEATURE(kGlicSelectionOverlayPromptBox);
+BASE_DECLARE_FEATURE(kGlicSelectionOverlayDogfoodFeedback);
+BASE_DECLARE_FEATURE_PARAM(std::string,
+                           kGlicSelectionOverlayDogfoodFeedbackUrl);
 BASE_DECLARE_FEATURE(kGlicSelectionSuggestions);
 BASE_DECLARE_FEATURE_PARAM(std::string, kGlicSelectionSuggestionsCapabilities);
 
@@ -178,6 +181,8 @@ BASE_DECLARE_FEATURE(kGlicShowForSignedOut);
 BASE_DECLARE_FEATURE(kGlicAnchorEntryPointForOnboardedUsers);
 BASE_DECLARE_FEATURE(kGlicProcessCounterAbuseVerdict);
 BASE_DECLARE_FEATURE(kGlicNoWebUiLoader);
+BASE_DECLARE_FEATURE(kGlicNativeLoadingPlaceholder);
+bool IsGlicNativeLoadingPlaceholderEnabled();
 
 // TODO(b/576288240): Move the GEiC features below into a GEiC-specific
 // header and namespace under chrome/browser/glic/gemini_enterprise/.
@@ -197,6 +202,15 @@ extern const base::FeatureParam<std::string> kGeicGuestURL;
 // in `geic.completed_fre`, exposes it to the GE web app, and gates GEiC
 // features on its completion. Without it, GEiC profiles are always consented.
 BASE_DECLARE_FEATURE(kGeicFre);
+
+// Allows the Gemini Enterprise (GEiC) guest to use the Glic actor (web
+// actuation).
+BASE_DECLARE_FEATURE(kGeicActuation);
+
+// Lets the Gemini Enterprise (GEiC) guest use server-side rendering. This is
+// independent of `kGlicSsr`, which only applies to consumer Gemini, so the two
+// can be rolled out separately.
+BASE_DECLARE_FEATURE(kGeicSsr);
 
 BASE_DECLARE_FEATURE(kGlicMarketingAutoOpen);
 extern const base::FeatureParam<std::string> kGlicMarketingUrlAllowlist;
@@ -243,6 +257,8 @@ BASE_DECLARE_FEATURE(kGlicWarmOnNudge);
 
 BASE_DECLARE_FEATURE(kGlicWarmOnIph);
 
+BASE_DECLARE_FEATURE(kGlicWarmOnGeminiWeb);
+
 BASE_DECLARE_FEATURE(kGlicBackfillWarmingUsePerformanceManager);
 
 BASE_DECLARE_FEATURE(kGlicColdWarmingUsePerformanceManager);
@@ -256,6 +272,10 @@ BASE_DECLARE_FEATURE(kGlicShowNotTellTutorials);
 extern const base::FeatureParam<int> kGlicShowNotTellTutorialsArm;
 
 BASE_DECLARE_FEATURE(kGlicActivityHub);
+
+// Uses the updated copy and title layout for the Glic experimental triggering
+// OS notification. Kill switch: when disabled, the original strings are shown.
+BASE_DECLARE_FEATURE(kGlicExperimentalTriggeringOsNotificationUpdatedStrings);
 }  // namespace features
 
 #endif  // CHROME_BROWSER_GLIC_PUBLIC_FEATURES_H_

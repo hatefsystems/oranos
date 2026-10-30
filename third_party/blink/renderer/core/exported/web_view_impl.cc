@@ -1363,7 +1363,8 @@ void WebViewImpl::DidUpdateBrowserControls() {
     ResizeViewportAnchor::ResizeScope resize_scope(*resize_viewport_anchor_);
 
     visual_viewport.SetBrowserControlsAdjustment(
-        GetBrowserControls().UnreportedSizeAdjustment());
+        GetBrowserControls().UnreportedSizeAdjustment() +
+        GetBrowserControls().UnreportedBottomSizeAdjustment());
   }
 }
 
@@ -3646,7 +3647,12 @@ void WebViewImpl::UpdateColorProviders(
   bool color_providers_did_change =
       page_->UpdateColorProviders(color_provider_colors);
   if (color_providers_did_change) {
-    Page::ForcedColorsChanged();
+    if (::features::IsThemeChangeOptimizationV2Enabled()) {
+      page_->InvalidatePlatformColors();
+      page_->InvalidateColorScheme();
+    } else {
+      Page::ForcedColorsChanged();
+    }
   }
 }
 

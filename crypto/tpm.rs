@@ -20,22 +20,45 @@ pub const TPM_SESSION_SIZE: usize = 9;
 /// in TPM 2.0).
 pub const TPM_MAX_BUFFER_SIZE: usize = 1024;
 
-/// Object attributes for an Attestation Identity Key (AIK).
-/// fixedTPM (0x02) | fixedParent (0x10) | sensitiveDataOrigin (0x20) |
-/// userWithAuth (0x40) | noDA (0x400) | restricted (0x10000) | sign (0x40000)
-/// = 0x00050472.
+/// Bits of TPMA_OBJECT, the object attributes in a TPMT_PUBLIC. See
+/// "TPMA_OBJECT (Object Attributes)" in
+/// https://trustedcomputinggroup.org/wp-content/uploads/Trusted-Platform-Module-2.0-Library-Part-2-Structures_Version-185_pub.pdf.
+#[repr(u32)]
+enum TpmaObject {
+    /// The object can't be duplicated to another TPM.
+    FixedTpm = 1 << 1,
+    /// The object's parent can't change.
+    FixedParent = 1 << 4,
+    /// The TPM generated the sensitive data, not the caller.
+    SensitiveDataOrigin = 1 << 5,
+    /// The authValue can authorize user role actions.
+    UserWithAuth = 1 << 6,
+    /// The object is exempt from dictionary attack protection.
+    NoDa = 1 << 10,
+    /// The key only signs or decrypts TPM-generated structures.
+    Restricted = 1 << 16,
+    /// The key can decrypt.
+    Decrypt = 1 << 17,
+    /// The key can sign (for asymmetric keys) or encrypt (for symmetric keys).
+    SignEncrypt = 1 << 18,
+}
+
+/// Object attributes for an Attestation Identity Key (AIK), 0x00050472.
 ///
 /// noDA is set because the key is created with an empty authValue, so there is
 /// no secret for dictionary attack protection to guard. Without it the key
 /// would additionally be unusable whenever the TPM is in DA lockout: an object
 /// that is not DA exempt fails authorization with TPM_RC_LOCKOUT even when its
 /// authValue is empty (TPM 2.0 Part 1, Dictionary Attack Protection).
-pub const AIK_OBJECT_ATTRIBUTES: u32 = 0x00050472;
+pub const AIK_OBJECT_ATTRIBUTES: u32 = TpmaObject::FixedTpm as u32
+    | TpmaObject::FixedParent as u32
+    | TpmaObject::SensitiveDataOrigin as u32
+    | TpmaObject::UserWithAuth as u32
+    | TpmaObject::NoDa as u32
+    | TpmaObject::Restricted as u32
+    | TpmaObject::SignEncrypt as u32;
 
-/// Object attributes for the ECC Storage Root Key (SRK).
-/// fixedTPM (0x02) | fixedParent (0x10) | sensitiveDataOrigin (0x20) |
-/// userWithAuth (0x40) | noDA (0x400) | restricted (0x10000) | decrypt
-/// (0x20000) = 0x00030472.
+/// Object attributes for the ECC Storage Root Key (SRK), 0x00030472.
 ///
 /// This is the TCG reference template for an ECC storage primary key, and is
 /// also what the Windows Platform Crypto Provider persists at handle
@@ -43,7 +66,13 @@ pub const AIK_OBJECT_ATTRIBUTES: u32 = 0x00050472;
 /// deterministically from the storage seed and its template, so any difference
 /// here produces a different key, and objects wrapped under it would no longer
 /// load under the provider's own SRK.
-pub const ECC_SRK_OBJECT_ATTRIBUTES: u32 = 0x00030472;
+pub const ECC_SRK_OBJECT_ATTRIBUTES: u32 = TpmaObject::FixedTpm as u32
+    | TpmaObject::FixedParent as u32
+    | TpmaObject::SensitiveDataOrigin as u32
+    | TpmaObject::UserWithAuth as u32
+    | TpmaObject::NoDa as u32
+    | TpmaObject::Restricted as u32
+    | TpmaObject::Decrypt as u32;
 
 /// Symmetric key size of the ECC SRK's storage parameters, in bits.
 const ECC_SRK_SYM_KEY_BITS: u16 = 128;
@@ -251,6 +280,8 @@ pub mod ffi {
     #[derive(Debug, PartialEq, Eq)]
     #[repr(u16)]
     enum TpmAlgSymmetric {
+        /// TPM_ALG_NULL means no symmetric algorithm, as used by signing keys.
+        TPM_ALG_NULL = 0x0010,
         /// TPM_ALG_AES is the AES block cipher.
         TPM_ALG_AES = 0x0006,
         /// TPM_ALG_CFB is the cipher feedback mode of operation.
@@ -350,8 +381,8 @@ pub mod ffi {
 
     extern "Rust" {
 
-        /// Builds a TPM2_Create command buffer for an Attestation Identity Key
-        /// (AIK).
+        /// Builds a TPM2_Create command buffer for an ECDSA Attestation
+        /// Identity Key (AIK).
         ///
         /// This function constructs the raw byte representation of a
         /// TPM2_Create command.
@@ -360,10 +391,9 @@ pub mod ffi {
         ///
         /// * `parent_handle` - Handle of the parent key (e.g., Storage Root
         ///   Key).
-        /// * `scheme` - Signing scheme (e.g., TPM_ALG_ECDSA, TPM_ALG_RSASSA, or
-        ///   TPM_ALG_RSAPSS).
-        /// * `hash_alg` - Hash algorithm (e.g., TPM_ALG_SHA256, TPM_ALG_SHA384,
-        ///   or TPM_ALG_SHA512).
+        /// * `hash_alg` - Hash algorithm (TPM_ALG_SHA256, TPM_ALG_SHA384, or
+        ///   TPM_ALG_SHA512). The ECC curve is inferred from `hash_alg`: P-256
+        ///   for SHA-256, P-384 for SHA-384 and P-521 for SHA-512.
         ///
         /// # Returns
         ///
@@ -371,12 +401,8 @@ pub mod ffi {
         ///
         /// # Panics
         ///
-        /// Panics if `scheme` or `hash_alg` is unsupported.
-        fn build_create_aik_command(
-            parent_handle: u32,
-            scheme: TpmAlgSigScheme,
-            hash_alg: TpmAlgHash,
-        ) -> Vec<u8>;
+        /// Panics if `hash_alg` is unsupported.
+        fn build_create_ecdsa_aik_command(parent_handle: u32, hash_alg: TpmAlgHash) -> Vec<u8>;
 
         /// Parses a TPM2_Create response.
         ///
@@ -695,19 +721,16 @@ impl Writer {
     }
 }
 
-/// Builds a TPM2_Create command for an Attestation Identity Key (AIK).
+/// Builds a TPM2_Create command for an ECDSA Attestation Identity Key (AIK).
 ///
 /// * `parent_handle` - Handle of the parent key under which the AIK is created
 ///   (e.g., Storage Root Key).
-/// * `scheme` - Signing scheme (TPM_ALG_RSASSA, TPM_ALG_RSAPSS, or
-///   TPM_ALG_ECDSA).
 /// * `hash_alg` - Hash algorithm (TPM_ALG_SHA256, TPM_ALG_SHA384, or
 ///   TPM_ALG_SHA512).
 ///
-/// Key type and parameters are inferred from the signing scheme:
-/// - RSASSA / RSAPSS implies RSA (2048 bits, default exponent).
-/// - ECDSA implies ECC (curve inferred from hash algorithm: SHA-256 -> P-256,
-///   SHA-384 -> P-384, SHA-512 -> P-521).
+/// The key uses the ECDSA signing scheme (`TPM_ALG_ECDSA`) with the NIST curve
+/// inferred from `hash_alg` (SHA-256 -> P-256, SHA-384 -> P-384, SHA-512 ->
+/// P-521).
 ///
 /// A TPM Create command has the following structure (Table 18 in Part 3):
 ///
@@ -732,37 +755,20 @@ impl Writer {
 /// | TPML_PCR_SELECTION  | creationPCR              |
 ///
 /// See Table 18 in https://trustedcomputinggroup.org/wp-content/uploads/Trusted-Platform-Module-2.0-Library-Part-3-Commands_Version-185_pub.pdf#page=67.
-pub fn build_create_aik_command(
-    parent_handle: u32,
-    scheme: TpmAlgSigScheme,
-    hash_alg: TpmAlgHash,
-) -> Vec<u8> {
-    let (key_type, curve_id) = match scheme {
-        TpmAlgSigScheme::TPM_ALG_RSASSA | TpmAlgSigScheme::TPM_ALG_RSAPSS => {
-            (TpmAlgPublic::TPM_ALG_RSA, None)
-        }
-        TpmAlgSigScheme::TPM_ALG_ECDSA => {
-            let curve = match hash_alg {
-                TpmAlgHash::TPM_ALG_SHA256 => TpmEccCurve::TPM_ECC_NIST_P256,
-                TpmAlgHash::TPM_ALG_SHA384 => TpmEccCurve::TPM_ECC_NIST_P384,
-                TpmAlgHash::TPM_ALG_SHA512 => TpmEccCurve::TPM_ECC_NIST_P521,
-                _ => panic!("unsupported hash_alg for ECC in build_create_aik_command"),
-            };
-            (TpmAlgPublic::TPM_ALG_ECC, Some(curve))
-        }
-        _ => panic!("unsupported scheme in build_create_aik_command"),
+pub fn build_create_ecdsa_aik_command(parent_handle: u32, hash_alg: TpmAlgHash) -> Vec<u8> {
+    let curve = match hash_alg {
+        TpmAlgHash::TPM_ALG_SHA256 => TpmEccCurve::TPM_ECC_NIST_P256,
+        TpmAlgHash::TPM_ALG_SHA384 => TpmEccCurve::TPM_ECC_NIST_P384,
+        TpmAlgHash::TPM_ALG_SHA512 => TpmEccCurve::TPM_ECC_NIST_P521,
+        _ => panic!("unsupported hash_alg for ECC in build_create_ecdsa_aik_command"),
     };
     let in_scheme_size = 4; // 2 bytes scheme + 2 bytes hash_alg
-    let public_parms_size = match key_type {
-        TpmAlgPublic::TPM_ALG_RSA => 2 + in_scheme_size + 2 + 4,
-        TpmAlgPublic::TPM_ALG_ECC => 2 + in_scheme_size + 2 + 2,
-        _ => unreachable!(),
-    };
-    let unique_size = match key_type {
-        TpmAlgPublic::TPM_ALG_RSA => 2,
-        TpmAlgPublic::TPM_ALG_ECC => 4,
-        _ => unreachable!(),
-    };
+    let public_parms_size = 2 // symmetric (TPM_ALG_NULL)
+        + in_scheme_size
+        + 2 // curveID
+        + 2; // kdf (TPM_ALG_NULL)
+    let unique_size = 2 // x size (0)
+        + 2; // y size (0)
     let tpmt_public_size = 2 // type
         + 2 // nameAlg
         + 4 // objectAttributes
@@ -808,32 +814,21 @@ pub fn build_create_aik_command(
 
     // inPublic (TPM2B_PUBLIC)
     writer.write_u16(u16::try_from(tpmt_public_size).unwrap());
-    writer.write_u16(key_type.repr);
+    writer.write_u16(TpmAlgPublic::TPM_ALG_ECC.repr);
     writer.write_u16(hash_alg.repr);
     writer.write_u32(AIK_OBJECT_ATTRIBUTES);
     writer.write_u16(0); // authPolicy (empty TPM2B_DIGEST)
 
-    // parameters (TPMU_PUBLIC_PARMS)
-    writer.write_u16(TpmAlgSigScheme::TPM_ALG_NULL.repr); // symmetric
-    writer.write_u16(scheme.repr);
+    // parameters (TPMS_ECC_PARMS)
+    writer.write_u16(TpmAlgSymmetric::TPM_ALG_NULL.repr); // symmetric
+    writer.write_u16(TpmAlgSigScheme::TPM_ALG_ECDSA.repr); // scheme
     writer.write_u16(hash_alg.repr);
-    match key_type {
-        TpmAlgPublic::TPM_ALG_RSA => {
-            writer.write_u16(2048);
-            writer.write_u32(0); // exponent (default 2^16 + 1)
-                                 // unique (TPM2B_PUBLIC_KEY_RSA)
-            writer.write_u16(0);
-        }
-        TpmAlgPublic::TPM_ALG_ECC => {
-            let curve = curve_id.unwrap();
-            writer.write_u16(curve.repr);
-            writer.write_u16(TpmAlgSigScheme::TPM_ALG_NULL.repr); // kdf scheme
-                                                                  // unique (TPMS_ECC_POINT)
-            writer.write_u16(0); // x
-            writer.write_u16(0); // y
-        }
-        _ => unreachable!(),
-    }
+    writer.write_u16(curve.repr);
+    writer.write_u16(TpmAlgSigScheme::TPM_ALG_NULL.repr); // kdf scheme
+
+    // unique (TPMS_ECC_POINT)
+    writer.write_u16(0); // x
+    writer.write_u16(0); // y
 
     // outsideInfo (TPM2B_DATA)
     writer.write_u16(0);

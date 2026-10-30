@@ -214,26 +214,33 @@ void HTMLSlotElement::Assign(const HeapVector<Member<Node>>& nodes) {
   if (nodes.empty() && manually_assigned_nodes_.empty())
     return;
 
+  // A slottable's manual slot assignment on Node (`ManuallyAssignedSlot()`)
+  // tracks imperative author slot assignment via `HTMLSlotElement.assign()`.
+  // User-agent shadow roots (`<details>`, `<select>`, `<optgroup>`) also use
+  // `Assign()` during `ManuallyAssignSlots()` inside `RecalcAssignment()`,
+  // which must not overwrite or clear an author `<slot>`'s manual assignment
+  // for a node, or dirty another shadow root mid-recalc.
+  const bool is_user_agent_slot = IsInUserAgentShadowRoot();
+
   bool updated = false;
   HeapHashSet<Member<HTMLSlotElement>> changed_slots;
   HeapLinkedHashSet<WeakMember<Node>> added_nodes;
   for (Node* node : nodes) {
     added_nodes.insert(node);
-    if (auto* previous_slot = node->ManuallyAssignedSlot()) {
-      if (previous_slot == this)
-        continue;
-      previous_slot->manually_assigned_nodes_.erase(node);
-      if (previous_slot->SupportsAssignment())
-        changed_slots.insert(previous_slot);
-    }
-    updated = true;
-    node->SetManuallyAssignedSlot(this);
-  }
-
-  HeapLinkedHashSet<WeakMember<Node>> removed_nodes;
-  for (Node* node : manually_assigned_nodes_) {
-    if (!added_nodes.Contains(node)) {
-      removed_nodes.insert(node);
+    if (!is_user_agent_slot) {
+      if (auto* previous_slot = node->ManuallyAssignedSlot()) {
+        if (previous_slot == this) {
+          continue;
+        }
+        previous_slot->manually_assigned_nodes_.erase(node);
+        if (previous_slot->SupportsAssignment()) {
+          changed_slots.insert(previous_slot);
+        }
+      }
+      updated = true;
+      node->SetManuallyAssignedSlot(this);
+    } else if (!manually_assigned_nodes_.Contains(node)) {
+      updated = true;
     }
   }
 
@@ -247,12 +254,16 @@ void HTMLSlotElement::Assign(const HeapVector<Member<Node>>& nodes) {
       }
     }
   }
-  DCHECK(updated || removed_nodes.empty());
 
   ShadowRoot* shadow_root = ContainingShadowRoot();
   if (updated) {
-    for (auto removed_node : removed_nodes)
-      removed_node->SetManuallyAssignedSlot(nullptr);
+    if (!is_user_agent_slot) {
+      for (Node* node : manually_assigned_nodes_) {
+        if (!added_nodes.Contains(node)) {
+          node->SetManuallyAssignedSlot(nullptr);
+        }
+      }
+    }
     manually_assigned_nodes_.Swap(added_nodes);
     // The slot might not be located in a shadow root yet.
     if (shadow_root) {
@@ -306,23 +317,18 @@ void HTMLSlotElement::UpdateFlatTreeNodeDataForAssignedNodes() {
   const HeapVector<Member<Node>> assigned_nodes = assigned_nodes_;
   for (auto& current : assigned_nodes) {
     bool mark_parent_slot_changed = false;
-    if (!current->NeedsStyleRecalc() && !current->GetLayoutObject()) {
-      if (current->IsTextNode() ||
-          !To<Element>(current.Get())->GetComputedStyle()) {
-        if (FlatTreeNodeData* node_data = current->GetFlatTreeNodeData()) {
-          // This invalidation is covering the case where the node did not
-          // change assignment, but between the assignment recalcs:
-          //
-          // 1. The node was removed from the host.
-          // 2. The node was inserted into a different parent.
-          // 3. The node was then re-inserted into the original host.
-          //
-          // In this case the AssignedSlot() and ComputedStyle and were cleared,
-          // which means the node still needs to be marked for style recalc, but
-          // the diffing in RecalcFlatTreeChildren() can not detect this.
-          mark_parent_slot_changed = !node_data->AssignedSlot();
-        }
-      }
+    if (FlatTreeNodeData* node_data = current->GetFlatTreeNodeData()) {
+      // This invalidation is covering the case where the node did not
+      // change assignment, but between the assignment recalcs:
+      //
+      // 1. The node was removed from the host.
+      // 2. The node was inserted into a different parent.
+      // 3. The node was then re-inserted into the original host.
+      //
+      // In this case the AssignedSlot() and ComputedStyle and were cleared,
+      // which means the node still needs to be marked for style recalc, but
+      // the diffing in RecalcFlatTreeChildren() can not detect this.
+      mark_parent_slot_changed = !node_data->AssignedSlot();
     }
     FlatTreeNodeData& flat_tree_node_data = current->EnsureFlatTreeNodeData();
     flat_tree_node_data.SetAssignedSlot(this);
@@ -390,8 +396,12 @@ void HTMLSlotElement::RecalcFlatTreeChildren() {
     }
   }
 
+  bool switched_between_assignment_and_fallback =
+      flat_tree_children_are_fallback_ != assigned_nodes_.empty();
   NotifySlottedNodesOfFlatTreeChange(old_flat_tree_children,
-                                     flat_tree_children_);
+                                     flat_tree_children_,
+                                     switched_between_assignment_and_fallback);
+  flat_tree_children_are_fallback_ = assigned_nodes_.empty();
 }
 
 void HTMLSlotElement::DispatchSlotChangeEvent() {
@@ -602,7 +612,18 @@ void HTMLSlotElement::NotifySlottedNodesOfFlatTreeChangeByDynamicProgramming(
 
 void HTMLSlotElement::NotifySlottedNodesOfFlatTreeChange(
     const HeapVector<Member<Node>>& old_slotted,
-    const HeapVector<Member<Node>>& new_slotted) {
+    const HeapVector<Member<Node>>& new_slotted,
+    bool switched_between_assignment_and_fallback) {
+  // If we previously used fallback content but now use assigned nodes, or
+  // vice versa, then all nodes need to be notified.
+  if (switched_between_assignment_and_fallback) {
+    probe::DidPerformSlotDistribution(this);
+    for (const auto& node : new_slotted) {
+      node->ParentSlotChanged();
+    }
+    return;
+  }
+
   if (old_slotted == new_slotted)
     return;
   probe::DidPerformSlotDistribution(this);

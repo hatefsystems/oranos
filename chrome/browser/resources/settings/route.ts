@@ -2,12 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {assert} from 'chrome://resources/js/assert.js';
+import {assert, assertNotReachedCase} from 'chrome://resources/js/assert.js';
 
 import {loadTimeData} from './i18n_setup.js';
 import {pageVisibility} from './page_visibility.js';
 import type {SettingsRoutes} from './router.js';
 import {Route, Router} from './router.js';
+
+// LINT.IfChange(AiSettingsSection)
+export enum AiSettingsSection {
+  NONE = '',
+  GEMINI = 'gemini',
+  GEMINI_ENTERPRISE = 'geminiEnterprise',
+}
+// LINT.ThenChange(//chrome/browser/glic/public/glic_provider_spec.h:AiSettingsSection)
 
 /**
  * Add all of the child routes that originate from the privacy route,
@@ -154,6 +162,8 @@ function createRoutes(): SettingsRoutes {
   }
 
   const visibility = pageVisibility || {};
+  const isSettingsRefresh2026Enabled =
+      loadTimeData.getString('settingsRefresh2026') !== '';
 
   if (visibility.people !== false) {
     r.PEOPLE = r.BASIC.createSection(
@@ -180,20 +190,26 @@ function createRoutes(): SettingsRoutes {
     if (loadTimeData.getBoolean('enableAiModeSearchSetting')) {
       r.AI_MODE_SEARCH = r.AI.createChild('/ai/aiModeSearch');
     }
-    if (loadTimeData.getBoolean('showHistorySearchControl')) {
-      r.HISTORY_SEARCH = r.AI.createChild('/ai/historySearch');
-    }
     if (loadTimeData.getBoolean('showComposeControl')) {
       r.OFFER_WRITING_HELP = r.AI.createChild('/ai/helpMeWrite');
     }
-    if (loadTimeData.getBoolean('showGlicSettings')) {
-      r.GEMINI = r.AI.createChild('/ai/gemini');
-      if (loadTimeData.getBoolean('actorLoginFederatedLoginSupportEnabled')) {
-        r.GEMINI_LOGIN = r.GEMINI.createChild('/ai/gemini/login');
-      }
-    }
-    if (loadTimeData.getBoolean('showGeicSettings')) {
-      r.GEMINI_ENTERPRISE = r.AI.createChild('/ai/geminienterprise');
+    const aiSettingsSection = loadTimeData.getString(
+        'aiSettingsSection') as AiSettingsSection;
+    switch (aiSettingsSection) {
+      case AiSettingsSection.NONE:
+        break;
+      case AiSettingsSection.GEMINI:
+        r.GEMINI = r.AI.createChild('/ai/gemini');
+        if (loadTimeData.getBoolean(
+                'actorLoginFederatedLoginSupportEnabled')) {
+          r.GEMINI_LOGIN = r.GEMINI.createChild('/ai/gemini/login');
+        }
+        break;
+      case AiSettingsSection.GEMINI_ENTERPRISE:
+        r.GEMINI_ENTERPRISE = r.AI.createChild('/ai/geminienterprise');
+        break;
+      default:
+        assertNotReachedCase(aiSettingsSection);
     }
     if (loadTimeData.getBoolean('showAiSuggestionsControl')) {
       r.AI_SUGGESTIONS = r.AI.createChild('/ai/suggestions');
@@ -207,6 +223,11 @@ function createRoutes(): SettingsRoutes {
     if (loadTimeData.getBoolean('showDictationControl')) {
       r.DICTATION = r.AI.createChild('/ai/dictation');
     }
+    // <if expr="_google_chrome">
+    if (loadTimeData.getBoolean('showOnDeviceAiAdvancedSettings')) {
+      r.ON_DEVICE_AI = r.AI.createChild('/ai/onDeviceAi');
+    }
+    // </if>
   }
 
   if (visibility.appearance !== false) {
@@ -246,14 +267,14 @@ function createRoutes(): SettingsRoutes {
   }
 
   // <if expr="not is_chromeos">
-  if (visibility.defaultBrowser !== false) {
+  if (!isSettingsRefresh2026Enabled && visibility.defaultBrowser !== false) {
     r.DEFAULT_BROWSER = r.BASIC.createSection(
         '/defaultBrowser', 'defaultBrowser',
         loadTimeData.getString('defaultBrowser'));
   }
   // </if>
 
-  if (visibility.onStartup !== false) {
+  if (!isSettingsRefresh2026Enabled && visibility.onStartup !== false) {
     r.ON_STARTUP = r.BASIC.createSection(
         '/onStartup', 'onStartup', loadTimeData.getString('onStartup'));
   }
@@ -270,7 +291,7 @@ function createRoutes(): SettingsRoutes {
     // </if>
   }
 
-  if (visibility.downloads !== false) {
+  if (!isSettingsRefresh2026Enabled && visibility.downloads !== false) {
     r.DOWNLOADS = r.ADVANCED.createSection(
         '/downloads', 'downloads',
         loadTimeData.getString('downloadsPageTitle'));
@@ -285,14 +306,26 @@ function createRoutes(): SettingsRoutes {
     // </if>
   }
 
+  if (isSettingsRefresh2026Enabled && visibility.general !== false) {
+    // TODO(b/574664004): Update "General" string.
+    r.GENERAL = r.ADVANCED.createSection('/general', 'general', 'General');
+    if (visibility.reset !== false) {
+      r.RESET_DIALOG = r.GENERAL.createChild('/resetProfileSettings');
+      r.RESET_DIALOG.isNavigableDialog = true;
+      r.TRIGGERED_RESET_DIALOG =
+          r.GENERAL.createChild('/triggeredResetProfileSettings');
+      r.TRIGGERED_RESET_DIALOG.isNavigableDialog = true;
+    }
+  }
+
   // <if expr="not is_chromeos">
-  if (visibility.system !== false) {
+  if (!isSettingsRefresh2026Enabled && visibility.system !== false) {
     r.SYSTEM = r.ADVANCED.createSection(
         '/system', 'system', loadTimeData.getString('systemPageTitle'));
   }
   // </if>
 
-  if (visibility.reset !== false) {
+  if (!isSettingsRefresh2026Enabled && visibility.reset !== false) {
     r.RESET = r.ADVANCED.createSection(
         '/reset', 'reset', loadTimeData.getString('resetPageTitle'));
     r.RESET_DIALOG = r.RESET.createChild('/resetProfileSettings');

@@ -478,7 +478,6 @@ found in the LICENSE file.
 
     <!-- Autofill "virtual card number enrollment" bottom sheet dimensions. -->
     <dimen name="autofill_bottom_sheet_illustration_min_height">93dp</dimen>
-    <dimen name="autofill_bottom_sheet_logo_min_height">32dp</dimen>
     <dimen name="autofill_bottom_sheet_spacing_large">22dp</dimen>
     <dimen name="autofill_bottom_sheet_spacing_small">12dp</dimen>
 
@@ -580,6 +579,7 @@ found in the LICENSE file.
 
     <!-- On startup settings. -->
     <dimen name="on_startup_page_item_vertical_padding">8dp</dimen>
-    <dimen name="on_startup_action_buttons_padding_top">8dp</dimen>
+    <dimen name="on_startup_action_buttons_vertical_padding">8dp</dimen>
+    <dimen name="on_startup_action_buttons_spacing">24dp</dimen>
     <dimen name="on_startup_url_dialog_padding_bottom">8dp</dimen>
 </resources>

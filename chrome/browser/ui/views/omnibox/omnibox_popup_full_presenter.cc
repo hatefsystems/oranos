@@ -501,6 +501,17 @@ void OmniboxPopupFullPresenter::OnWidgetActivationChanged(views::Widget* widget,
   }
 }
 
+void OmniboxPopupFullPresenter::OnWidgetBoundsChanged(
+    views::Widget* widget,
+    const gfx::Rect& new_bounds) {
+  // Only the browser widget. The popup widget is observed too, and
+  // `SynchronizePopupBounds()` changes its bounds.
+  if (widget != GetBrowserWidget() || !IsShown()) {
+    return;
+  }
+  SynchronizePopupBounds();
+}
+
 void OmniboxPopupFullPresenter::BlurIfBrowserOrPopupInactive() {
   if (!IsBrowserOrPopupActive()) {
     BlurForWindowDeactivation();
@@ -531,6 +542,7 @@ void OmniboxPopupFullPresenter::BlurForWindowDeactivation() {
   // `RequestFocus()`.
   focus_manager->SetStoredFocusView(
       delegate().GetLocationBarFocusRestoreView());
+  delegate().SetRestoreFocusOnWindowReactivation(true);
 #else
   // TODO(b/567944511): Restore omnibox focus when the window is reactivated
   // without clicking into it (e.g. Alt+Tab) or by clicking top chrome, to

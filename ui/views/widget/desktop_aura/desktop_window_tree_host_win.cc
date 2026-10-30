@@ -909,7 +909,8 @@ void DesktopWindowTreeHostWin::ReleaseSystemKeyEventCapture() {
 }
 
 bool DesktopWindowTreeHostWin::IsKeyLocked(ui::DomCode dom_code) {
-  return keyboard_hook_ && keyboard_hook_->IsKeyLocked(dom_code);
+  return WindowTreeHost::IsKeyLocked(dom_code) ||
+         (keyboard_hook_ && keyboard_hook_->IsKeyLocked(dom_code));
 }
 
 base::flat_map<std::string, std::string>
@@ -1293,6 +1294,18 @@ bool DesktopWindowTreeHostWin::HandleInitialFocus(
 }
 
 void DesktopWindowTreeHostWin::HandleDisplayChange() {
+  // Called from HWNDMessageHandler::OnDisplayChange(), which then calls
+  // SendFrameChanged(). When kSkipRedundantSendFrameChanged and
+  // kSkipRedundantMaximizedFrameChange are disabled, that always reaches
+  // CheckForMonitorChange() via HandleClientSizeChanged(). When either is
+  // enabled, the frame change or the client size notification may be skipped,
+  // so call CheckForMonitorChange() here. It updates the compositor's display
+  // color spaces if the nearest display changed.
+  if (base::FeatureList::IsEnabled(features::kSkipRedundantSendFrameChanged) ||
+      base::FeatureList::IsEnabled(
+          features::kSkipRedundantMaximizedFrameChange)) {
+    CheckForMonitorChange();
+  }
   if (Widget* widget = GetWidget(); widget && widget->widget_delegate()) {
     widget->widget_delegate()->OnDisplayChanged();
   }

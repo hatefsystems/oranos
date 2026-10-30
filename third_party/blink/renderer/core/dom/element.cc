@@ -689,7 +689,6 @@ void InvalidateForCanvasClipChange(LayoutObject* layout_object) {
 }
 
 inline bool ShouldBlockInlineScriptAttributeSet(
-    ExecutionContext* context,
     Element* target,
     const EventListener* listener,
     Element::AttributeModificationReason reason) {
@@ -700,12 +699,22 @@ inline bool ShouldBlockInlineScriptAttributeSet(
   bool modified_by_author =
       reason == Element::AttributeModificationReason::kDirectly ||
       reason == Element::AttributeModificationReason::kByParser;
-  ContentSecurityPolicy* csp =
-      context ? context->GetContentSecurityPolicy() : nullptr;
+
+  // A document created without a window (e.g. a document created by DOMParser,
+  // or an owner document of template contents) has an empty CSP list, even
+  // though the document's ExecutionContext may have a CSP.
+  LocalDOMWindow* window = target->GetDocument().domWindow();
+  if (!window) {
+    return false;
+  }
+
+  // Check the CSP list of the element's node document, which is held by the
+  // document's window.
+  ContentSecurityPolicy* csp = window->GetContentSecurityPolicy();
   return listener && modified_by_author && csp &&
          !csp->AllowInline(ContentSecurityPolicy::InlineType::kScriptAttribute,
                            target, listener->ScriptBody(), String(),
-                           context->Url().GetString(),
+                           window->Url().GetString(),
                            TextPosition::BelowRangePosition());
 }
 
@@ -7245,7 +7254,7 @@ void Element::SetTargetedSnapAreaIdsForSnapContainers() {
       box = box->ContainingScrollContainer();
       continue;
     }
-    box = box->ContainingBlock();
+    box = box->ContainingBox();
   }
 }
 
@@ -7257,7 +7266,7 @@ void Element::ClearTargetedSnapAreaIdsForSnapContainers() {
         scrollable_area->SetTargetedSnapAreaId(std::nullopt);
       }
     }
-    box = box->ContainingBlock();
+    box = box->ContainingBox();
   }
 }
 
@@ -8490,7 +8499,8 @@ void Element::RemoveAttributeInternal(wtf_size_t index,
     DetachAttrNodeFromElementWithValue(attr_node, value_being_removed);
   }
 
-  // WillModifyAttribute() may pause in the debugger and allow script to mutate
+  // WillModifyAttribute() may run script (e.g. by pausing in the debugger or
+  // lazily initializing a WindowProxy during UpdateName()) and mutate
   // attributes, invalidating `index`.
   if (index >= mutable_attributes.size() ||
       mutable_attributes[index].GetName() != name) {
@@ -8519,7 +8529,15 @@ void Element::AppendAttributeInternal(const QualifiedName& name,
   }
   attribute_or_class_bloom_ |= FilterForAttribute(name);
   UpdateSubtreeBloomFilterAfterInsert();
-  EnsureUniqueElementData().Attributes().Append(name, value);
+  // WillModifyAttribute() may run script (e.g. by pausing in the debugger or
+  // lazily initializing a WindowProxy during UpdateName()) and add the
+  // attribute re-entrantly before we append it here.
+  if (wtf_size_t index = FindAttributeIndex(name); index != kNotFound)
+      [[unlikely]] {
+    EnsureUniqueElementData().Attributes().at(index).SetValue(value);
+  } else {
+    EnsureUniqueElementData().Attributes().Append(name, value);
+  }
   if (reason !=
       AttributeModificationReason::kBySynchronizationOfLazyAttribute) {
     DidAddAttribute(name, value);
@@ -8828,7 +8846,7 @@ void Element::Focus(const FocusParams& params) {
   if (should_consume_user_activation) {
     // Fenced frames should consume user activation when attempting to pull
     // focus across a fenced boundary into itself.
-    // TODO(crbug.com/848778) Right now the browser can't verify that the
+    // TODO(crbug.com/40091540) Right now the browser can't verify that the
     // renderer properly consumed user activation. When user activation code is
     // migrated to the browser, move this logic to the browser as well.
     LocalFrame::ConsumeTransientUserActivation(GetDocument().GetFrame());
@@ -10220,8 +10238,12 @@ DisplayLockContext* Element::GetDisplayLockContextFromRareData() const {
 }
 
 DisplayLockContext& Element::EnsureDisplayLockContext() {
+  if (DisplayLockContext* context = GetDisplayLockContext()) {
+    return *context;
+  }
+  auto* context = MakeGarbageCollected<DisplayLockContext>(this);
   SetHasDisplayLockContext();
-  return EnsureRareData().EnsureDisplayLockContext(this).RefreshNodeAndUnwrap(
+  return EnsureRareData().SetDisplayLockContext(*context).RefreshNodeAndUnwrap(
       *this);
 }
 
@@ -12495,13 +12517,13 @@ void Element::DidMoveToNewDocument(Document& old_document) {
     // this element's attributes, we shouldn't make UniqueElementData, and this
     // element should point to the shareable one.
 
-    if (const AtomicString& id_attr = GetIdAttribute()) {
+    if (AtomicString id_attr = GetIdAttribute()) {
       if (!id_attr.ContainsNoAsciiUpper()) {
         EnsureUniqueElementData();
         SetIdAttribute(id_attr);
       }
     }
-    if (const AtomicString& class_attr = GetClassAttribute()) {
+    if (AtomicString class_attr = GetClassAttribute()) {
       if (!class_attr.ContainsNoAsciiUpper()) {
         EnsureUniqueElementData();
         // Going through setAttribute() to synchronize the attribute is only
@@ -14117,36 +14139,45 @@ ALWAYS_INLINE void Element::SetAttributeInternal(
       GetElementData()->Attributes().at(index);
   QualifiedName existing_attribute_name = existing_attribute.GetName();
 
+  // `new_value` may be a reference into `ElementData::Attributes()`, which can
+  // be reallocated if `WillModifyAttribute()` pauses in the debugger and script
+  // mutates attributes. Copy it here (rather than taking `new_value` by value
+  // in `SetAttributeInternal`, which would add refcount churn to the
+  // `AppendAttributeInternal` fast path).
   if (new_value == existing_attribute.Value()) {
     if (reason !=
         AttributeModificationReason::kBySynchronizationOfLazyAttribute) {
-      WillModifyAttribute(existing_attribute_name, new_value, new_value);
-      DidModifyAttribute(existing_attribute_name, new_value, new_value, reason);
+      AtomicString value_copy = new_value;
+      WillModifyAttribute(existing_attribute_name, value_copy, value_copy);
+      DidModifyAttribute(existing_attribute_name, value_copy, value_copy,
+                         reason);
     }
   } else {
     AtomicString existing_attribute_value = existing_attribute.Value();
+    AtomicString value_copy = new_value;
     if (reason !=
         AttributeModificationReason::kBySynchronizationOfLazyAttribute) {
       WillModifyAttribute(existing_attribute_name, existing_attribute_value,
-                          new_value);
+                          value_copy);
     }
     MutableAttributeCollection mutable_attributes =
         EnsureUniqueElementData().Attributes();
-    // WillModifyAttribute() may pause in the debugger and allow script to
-    // mutate attributes, invalidating `index`.
+    // WillModifyAttribute() may run script (e.g. by pausing in the debugger or
+    // lazily initializing a WindowProxy during UpdateName()) and mutate
+    // attributes, invalidating `index`.
     if (index >= mutable_attributes.size() ||
         mutable_attributes[index].GetName() != existing_attribute_name) {
       index = mutable_attributes.FindIndex(existing_attribute_name);
     }
     if (index != kNotFound) {
-      mutable_attributes[index].SetValue(new_value);
+      mutable_attributes[index].SetValue(value_copy);
     } else {
-      mutable_attributes.Append(existing_attribute_name, new_value);
+      mutable_attributes.Append(existing_attribute_name, value_copy);
     }
     if (reason !=
         AttributeModificationReason::kBySynchronizationOfLazyAttribute) {
       DidModifyAttribute(existing_attribute_name, existing_attribute_value,
-                         new_value, reason);
+                         value_copy, reason);
     }
   }
 }
@@ -14528,7 +14559,7 @@ void Element::SetElementAttributeEventListenerFromScriptBody(
   ExecutionContext* context = GetExecutionContext();
   EventListener* listener = JSEventHandlerForContentAttribute::Create(
       context, attribute_name, script_body, type);
-  if (!ShouldBlockInlineScriptAttributeSet(context, this, listener, reason)) {
+  if (!ShouldBlockInlineScriptAttributeSet(this, listener, reason)) {
     SetAttributeEventListener(event_type_name, listener);
   }
 }
@@ -14542,7 +14573,7 @@ void Element::SetDocumentAttributeEventListenerFromScriptBody(
   ExecutionContext* context = GetExecutionContext();
   EventListener* listener = JSEventHandlerForContentAttribute::Create(
       context, attribute_name, script_body, type);
-  if (!ShouldBlockInlineScriptAttributeSet(context, this, listener, reason)) {
+  if (!ShouldBlockInlineScriptAttributeSet(this, listener, reason)) {
     GetDocument().SetAttributeEventListener(event_type_name, listener);
   }
 }
@@ -14556,7 +14587,7 @@ void Element::SetWindowAttributeEventListenerFromScriptBody(
   ExecutionContext* context = GetExecutionContext();
   EventListener* listener = JSEventHandlerForContentAttribute::Create(
       context, attribute_name, script_body, type);
-  if (!ShouldBlockInlineScriptAttributeSet(context, this, listener, reason)) {
+  if (!ShouldBlockInlineScriptAttributeSet(this, listener, reason)) {
     GetDocument().SetWindowAttributeEventListener(event_type_name, listener);
   }
 }

@@ -9,13 +9,11 @@
 #import <vector>
 
 #import "base/functional/callback_helpers.h"
-#import "base/ios/block_types.h"
 #import "base/memory/raw_ptr.h"
 #import "base/memory/weak_ptr.h"
 #import "base/scoped_observation.h"
 #import "components/keyed_service/core/keyed_service.h"
 #import "components/pref_registry/pref_registry_syncable.h"
-#import "components/signin/ios/browser/account_consistency_service.h"
 #import "components/signin/ios/browser/signin_enabled_datasource.h"
 #import "components/signin/public/base/signin_metrics.h"
 #import "components/signin/public/identity_manager/identity_manager.h"
@@ -35,6 +33,10 @@ class PrefService;
 // AuthenticationService handles sign-in/sign-out operations, including various
 // related state (prefs) and observing the SigninAllowed and BrowserSignin
 // policies.
+// This class respects the `kRestrictAccountsToPatterns` policy and only deals
+// with accounts on the device matching `kRestrictAccountsToPatterns`
+// (automatically signing out the primary account if it stops matching the
+// policy).
 class AuthenticationService : public KeyedService,
                               public signin::IdentityManager::Observer,
                               public ChromeAccountManagerService::Observer,
@@ -229,6 +231,7 @@ class AuthenticationService : public KeyedService,
   // signin::IdentityManager::Observer implementation.
   void OnPrimaryAccountChanged(
       const signin::PrimaryAccountChangeEvent& event_details) override;
+  void OnExtendedAccountInfoUpdated(const AccountInfo& info) override;
 
   // ChromeAccountManagerService::Observer implementation.
   void OnIdentitiesInProfileChanged() override;
@@ -258,6 +261,10 @@ class AuthenticationService : public KeyedService,
   // Returns whether the service’s profile is personal (that is: a profile that
   // does not contains any managed account).
   bool IsPersonalProfile();
+
+  // Grants device signals consent if the profile or primary account is
+  // managed, clears it otherwise.
+  void SyncDeviceSignalsConsentWithManagementState();
 
   // Returns the active identities for MDM.
   NSArray<id<SystemIdentity>>* ActiveIdentities();

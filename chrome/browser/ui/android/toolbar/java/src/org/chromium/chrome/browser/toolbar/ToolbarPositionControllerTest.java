@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.toolbar;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
@@ -76,6 +77,7 @@ import org.chromium.chrome.browser.toolbar.ToolbarPositionController.ToolbarPosi
 import org.chromium.chrome.browser.toolbar.settings.AddressBarPreference;
 import org.chromium.chrome.browser.toolbar.top.ToolbarLayout;
 import org.chromium.chrome.browser.toolbar.top.ToolbarPhone;
+import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeController;
 import org.chromium.chrome.browser.ui.edge_to_edge.TopInsetProvider;
 import org.chromium.chrome.browser.url_constants.UrlConstantResolver;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
@@ -91,6 +93,9 @@ import org.chromium.ui.insets.InsetObserver;
 import org.chromium.url.GURL;
 import org.chromium.url.JUnitTestGURLs;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** Unit tests for {@link ToolbarPositionController}. */
@@ -102,9 +107,12 @@ public class ToolbarPositionControllerTest {
     @Mock Tab mTab;
 
     private static final int TOOLBAR_HEIGHT = 56;
+    private static final int BAR_HEIGHT = 40;
+    private static final int BAR_HEIGHT_WITH_BOTTOM_TOOLBAR = 30;
     private static final int CONTROL_CONTAINER_ID = 12356;
 
     private BrowserControlsStateProvider.Observer mBrowserControlsObserver;
+    private int mBottomHeightChangeCount;
 
     private final BrowserControlsSizer mBrowserControlsSizer =
             new BrowserControlsSizer() {
@@ -119,6 +127,10 @@ public class ToolbarPositionControllerTest {
                 @Override
                 public void setBottomControlsHeight(
                         int bottomControlsHeight, int bottomControlsMinHeight) {
+                    if (mBottomControlsHeight != bottomControlsHeight
+                            || mBottomControlsMinHeight != bottomControlsMinHeight) {
+                        mBottomHeightChangeCount++;
+                    }
                     mBottomControlsHeight = bottomControlsHeight;
                     mBottomControlsMinHeight = bottomControlsMinHeight;
                 }
@@ -290,6 +302,7 @@ public class ToolbarPositionControllerTest {
     @Mock private ControlContainer mControlContainer;
     @Mock private BottomSheetController mBottomSheetController;
     @Mock private TopInsetProvider mTopInsetProvider;
+    @Mock private EdgeToEdgeController mEdgeToEdgeController;
     @Mock private Profile mProfile;
     @Mock private UserPrefs.Natives mUserPrefsNatives;
     @Mock private PrefService mPrefs;
@@ -332,6 +345,8 @@ public class ToolbarPositionControllerTest {
     private SettableNonNullObservableSupplier<Profile> mProfileSupplier;
     private final SettableMonotonicObservableSupplier<Tab> mActivityTabSupplier =
             ObservableSuppliers.createMonotonic();
+    private final SettableMonotonicObservableSupplier<EdgeToEdgeController>
+            mEdgeToEdgeControllerSupplier = ObservableSuppliers.createMonotonic();
     private HistogramWatcher mStartupExpectation;
     private int mTopAnchorViewId = CONTROL_CONTAINER_ID;
     private int mHairlineHeight;
@@ -421,6 +436,7 @@ public class ToolbarPositionControllerTest {
                         mControlContainerTranslationSupplier,
                         mControlContainerHeightSupplier,
                         mTopInsetProvider,
+                        mEdgeToEdgeControllerSupplier,
                         new Handler(Looper.getMainLooper()),
                         mContext,
                         mToolbarPosition,
@@ -1168,6 +1184,58 @@ public class ToolbarPositionControllerTest {
     }
 
     @Test
+    @Config(sdk = 30)
+    @EnableFeatures(ChromeFeatureList.EDGE_TO_EDGE_TOP_INSET)
+    public void testTopInsetAdjustment_EdgeToEdgeRefactorEnabled() {
+        verify(mTopInsetProvider, never()).addObserver(any());
+        mActivityTabSupplier.set(mock(Tab.class));
+        mEdgeToEdgeControllerSupplier.set(mEdgeToEdgeController);
+
+        ArgumentCaptor<TopInsetProvider.Observer> observerCaptor =
+                ArgumentCaptor.forClass(TopInsetProvider.Observer.class);
+        verify(mEdgeToEdgeController).addObserver(observerCaptor.capture());
+        TopInsetProvider.Observer observer = observerCaptor.getValue();
+
+        int topInset = 50;
+        observer.onToEdgeChange(topInset, /* consumeTopInset= */ true, LayoutType.BROWSING);
+        assertEquals(topInset, mToolbarLayout.getEdgeToEdgeTopPadding());
+        assertEquals(topInset, mToolbarLayout.getPaddingTop());
+
+        observer.onToEdgeChange(0, /* consumeTopInset= */ false, LayoutType.BROWSING);
+        assertEquals(0, mToolbarLayout.getEdgeToEdgeTopPadding());
+        assertEquals(0, mToolbarLayout.getPaddingTop());
+
+        mController.destroy();
+        verify(mEdgeToEdgeController).removeObserver(observer);
+    }
+
+    @Test
+    @Config(sdk = 30)
+    @DisableFeatures(ChromeFeatureList.EDGE_TO_EDGE_TOP_INSET)
+    public void testTopInsetAdjustment_EdgeToEdgeRefactorDisabled() {
+        mActivityTabSupplier.set(mock(Tab.class));
+        mEdgeToEdgeControllerSupplier.set(mEdgeToEdgeController);
+        verify(mEdgeToEdgeController, never()).addObserver(any());
+
+        ArgumentCaptor<TopInsetProvider.Observer> observerCaptor =
+                ArgumentCaptor.forClass(TopInsetProvider.Observer.class);
+        verify(mTopInsetProvider).addObserver(observerCaptor.capture());
+        TopInsetProvider.Observer observer = observerCaptor.getValue();
+
+        int topInset = 50;
+        observer.onToEdgeChange(topInset, /* consumeTopInset= */ true, LayoutType.BROWSING);
+        assertEquals(topInset, mToolbarLayout.getEdgeToEdgeTopPadding());
+        assertEquals(topInset, mToolbarLayout.getPaddingTop());
+
+        observer.onToEdgeChange(0, /* consumeTopInset= */ false, LayoutType.BROWSING);
+        assertEquals(0, mToolbarLayout.getEdgeToEdgeTopPadding());
+        assertEquals(0, mToolbarLayout.getPaddingTop());
+
+        mController.destroy();
+        verify(mTopInsetProvider).removeObserver(observer);
+    }
+
+    @Test
     public void testControlContainerHeightAdjustments() {
         setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
         mIsFormFieldFocused.onNodeAttributeUpdated(true, false);
@@ -1532,5 +1600,90 @@ public class ToolbarPositionControllerTest {
         // Emulate the reactive stacker-driven anchor update (see assertControlsAtTop()).
         mController.updateProgressBarAnchor();
         assertEquals(789, mProgressBarLayoutParams.getAnchorId());
+    }
+
+    @Test
+    public void testAnimatedPositionChange_observerHeightChangeFoldedIntoControlsPosition() {
+        List<Integer> heightsSeenByObserver = addPositionDependentBottomLayer();
+
+        // Animate to bottom: the observer's resize must not be pushed on its own, which would
+        // interrupt the animation, but must be included in setControlsPosition().
+        mBottomHeightChangeCount = 0;
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
+        assertEquals(1, mBottomHeightChangeCount);
+        assertEquals(List.of(BAR_HEIGHT), heightsSeenByObserver);
+        assertEquals(ControlsPosition.BOTTOM, mBrowserControlsSizer.getControlsPosition());
+        assertEquals(
+                TOOLBAR_HEIGHT + BAR_HEIGHT_WITH_BOTTOM_TOOLBAR,
+                mBrowserControlsSizer.getBottomControlsHeight());
+
+        // Animate to top.
+        mBottomHeightChangeCount = 0;
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ true);
+        assertEquals(1, mBottomHeightChangeCount);
+        assertEquals(
+                List.of(BAR_HEIGHT, TOOLBAR_HEIGHT + BAR_HEIGHT_WITH_BOTTOM_TOOLBAR),
+                heightsSeenByObserver);
+        assertEquals(ControlsPosition.TOP, mBrowserControlsSizer.getControlsPosition());
+        assertEquals(BAR_HEIGHT, mBrowserControlsSizer.getBottomControlsHeight());
+    }
+
+    @Test
+    public void testSnapPositionChange_observerHeightChangeNotDeferred() {
+        mIsNtpShowing.set(true);
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
+        List<Integer> heightsSeenByObserver = addPositionDependentBottomLayer();
+
+        // Snap to bottom: non-animated transitions keep pushing observer resizes immediately.
+        mIsNtpShowing.set(false);
+        assertEquals(List.of(BAR_HEIGHT_WITH_BOTTOM_TOOLBAR), heightsSeenByObserver);
+        assertEquals(ControlsPosition.BOTTOM, mBrowserControlsSizer.getControlsPosition());
+        assertEquals(
+                TOOLBAR_HEIGHT + BAR_HEIGHT_WITH_BOTTOM_TOOLBAR,
+                mBrowserControlsSizer.getBottomControlsHeight());
+    }
+
+    /**
+     * Adds a bottom layer that, like the bottom bar, shrinks synchronously when the toolbar moves
+     * to the bottom. Returns the bottom controls heights the sizer had right after each resize.
+     */
+    private List<Integer> addPositionDependentBottomLayer() {
+        AtomicInteger layerHeight = new AtomicInteger(BAR_HEIGHT);
+        mBottomControlsStacker.addLayer(
+                new BottomControlsLayer() {
+                    @Override
+                    public int getType() {
+                        return LayerType.BOTTOM_APP_BAR;
+                    }
+
+                    @Override
+                    public int getScrollBehavior() {
+                        return LayerScrollBehavior.DEFAULT_SCROLL_OFF;
+                    }
+
+                    @Override
+                    public int getHeight() {
+                        return layerHeight.get();
+                    }
+
+                    @Override
+                    public int getLayerVisibility() {
+                        return LayerVisibility.VISIBLE;
+                    }
+                });
+        mBottomControlsStacker.requestLayerUpdate(false);
+        assertEquals(BAR_HEIGHT, mBrowserControlsSizer.getBottomControlsHeight());
+
+        List<Integer> heightsSeenByObserver = new ArrayList<>();
+        mToolbarPosition.addSyncObserver(
+                position -> {
+                    layerHeight.set(
+                            position == ControlsPosition.BOTTOM
+                                    ? BAR_HEIGHT_WITH_BOTTOM_TOOLBAR
+                                    : BAR_HEIGHT);
+                    mBottomControlsStacker.requestLayerUpdate(false);
+                    heightsSeenByObserver.add(mBrowserControlsSizer.getBottomControlsHeight());
+                });
+        return heightsSeenByObserver;
     }
 }

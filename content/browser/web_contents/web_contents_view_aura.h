@@ -133,6 +133,10 @@ class CONTENT_EXPORT WebContentsViewAura
 
   friend class WebContentsViewAuraTest;
   FRIEND_TEST_ALL_PREFIXES(WebContentsViewAuraTest, StartDraggingBlockedByPolicy);
+  FRIEND_TEST_ALL_PREFIXES(WebContentsViewAuraTest,
+                           StartDraggingUsesUserBrowserContext);
+  FRIEND_TEST_ALL_PREFIXES(WebContentsViewAuraTest,
+                           DragUpdatedUsesUserBrowserContext);
   FRIEND_TEST_ALL_PREFIXES(WebContentsViewAuraTest, EnableDisableOverscroll);
   FRIEND_TEST_ALL_PREFIXES(WebContentsViewAuraTest, RenderViewHostChanged);
   FRIEND_TEST_ALL_PREFIXES(WebContentsViewAuraTest, DragDropFiles);
@@ -197,6 +201,8 @@ class CONTENT_EXPORT WebContentsViewAura
                            ClampTouchLocationToBrowserObservedPoint);
   FRIEND_TEST_ALL_PREFIXES(WebContentsViewAuraTest,
                            TouchDragRequiresTouchOnWebContents);
+  FRIEND_TEST_ALL_PREFIXES(WebContentsViewAuraTest,
+                           MouseDragRequiresPressOnWebContents);
   FRIEND_TEST_ALL_PREFIXES(WebContentsViewAuraTest,
                            StartDraggingMouseRequiresLeftButton);
   FRIEND_TEST_ALL_PREFIXES(WebContentsViewAuraTest,

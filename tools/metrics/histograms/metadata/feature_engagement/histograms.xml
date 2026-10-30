@@ -65,12 +65,8 @@ chromium-metrics-reviews@google.com.
                the Android bottom bar education flow."/>
   <variant name="IPH_AndroidBottomBarEducation"
       summary="Education onboarding and IPHs for the Android bottom bar."/>
-  <variant name="IPH_AndroidBottomBarGlic"
-      summary="Describes the GLIC button added in the bottom bar."/>
-  <variant name="IPH_AndroidBottomBarNewTab"
-      summary="Describes the new tab button moved down in the bottom bar."/>
-  <variant name="IPH_AndroidBottomBarPromoDialog"
-      summary="Describes the promo dialog shown to introduce the bottom bar."/>
+  <variant name="IPH_AndroidBottomBarEducationTooltips"
+      summary="Education tooltips for the Android bottom bar."/>
   <variant name="IPH_AndroidTabDeclutter"
       summary="Shows how to access tabs which have been archived."/>
   <variant name="IPH_AndroidTipsOptInPromo"
@@ -370,6 +366,9 @@ chromium-metrics-reviews@google.com.
       summary="educate users that they can close all Incognito windows by
                tapping the Incognito indicator"/>
   <variant name="IPH_IncognitoWindow" summary="incognito window"/>
+  <variant name="IPH_IndigoContextMenuToast"
+      summary="toast educating users after a transformation that Try it on is
+               available in the right-click context menu"/>
   <variant name="IPH_InstanceSwitcher" summary="instance switcher"/>
   <variant name="IPH_IntentChip" summary="opening a webpage in an app"/>
   <variant name="IPH_InterruptiveIphCooldownGroup"
@@ -771,12 +770,6 @@ chromium-metrics-reviews@google.com.
       summary="side search automatic triggering"/>
   <variant name="IPH_SideSearchPageActionLabel"
       summary="side search page action label triggering"/>
-  <variant name="IPH_SignInBenefits"
-      summary="IPH informing signed-in users of benefits after the
-               sync-to-signin migration."/>
-  <variant name="IPH_SignInBenefitsNewSignin"
-      summary="IPH informing signed-in users of benefits after the
-               sync-to-signin migration."/>
   <variant name="IPH_SiteControls"
       summary="educating users that site controls have moved to the app menu"/>
   <variant name="IPH_SmartTabSharingDefaultOnFeature"

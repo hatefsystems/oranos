@@ -120,6 +120,9 @@ BASE_DECLARE_FEATURE(kApiProxyOverrideRulesPrivate);
 // runtime.getPlatformInfo() API.
 BASE_DECLARE_FEATURE(kApiRuntimeGetPlatformInfoNaClArch);
 
+// Controls the availability of the runtime.getDocumentId() API.
+BASE_DECLARE_FEATURE(kApiRuntimeGetDocumentId);
+
 // Controls the availability of runtime.sendNativeMessage and
 // runtime.connectNative on Desktop Android.
 BASE_DECLARE_FEATURE(kApiDesktopAndroidNativeMessaging);
@@ -203,7 +206,8 @@ BASE_DECLARE_FEATURE(kExtensionAutoRejectIncognitoConnectability);
 // to per-URL IsPolicyBlockedHost checks and allowing attachment when
 // screenshots are disabled. Note that disabling this feature has security
 // implications.
-// See https://developer.chrome.com/blog/debugger-enterprise-policy-restrictions.
+// See
+// https://developer.chrome.com/blog/debugger-enterprise-policy-restrictions.
 BASE_DECLARE_FEATURE(kExtensionDebuggerStrictPolicyRestrictions);
 
 // Allow e.g. .css files to use default_locale messages in WAR files via GUID.
@@ -264,6 +268,16 @@ BASE_DECLARE_FEATURE(kExperimentalOmniboxLabs);
 // extensions can be disabled at ESB opt-in time or when an extension is moved
 // out of the allowlist.
 BASE_DECLARE_FEATURE(kSafeBrowsingCrxAllowlistAutoDisable);
+
+// When enabled, `WebRequestProxyingURLLoaderFactory` moves `current_response_`
+// instead of deep-cloning it when forwarding the final `OnReceiveResponse()` to
+// `target_client_`.
+BASE_DECLARE_FEATURE(kWebRequestProxyMoveResponse);
+
+// When enabled, `WebRequestProxyingURLLoaderFactory` binds
+// `TrustedHeaderClient` and cloned `URLLoaderFactory` receivers to
+// `navigation_response_task_runner_`.
+BASE_DECLARE_FEATURE(kWebRequestProxyNavigationResponseTaskRunner);
 
 // Controls whether the component webstore hosted app is loaded.
 BASE_DECLARE_FEATURE(kWebstoreHostedApp);
@@ -330,6 +344,15 @@ BASE_DECLARE_FEATURE(kExtensionBrowserNamespaceOnWebPages);
 // memory leaks from stale cache entries and false-positive corruption reports.
 BASE_DECLARE_FEATURE(kExtensionContentVerificationUsesExtensionRoot);
 
+// If enabled, content verification reports a dedicated failure reason
+// (ContentVerifyJob::MISSING_EXTENSION_MANIFEST) when an extension with
+// unsigned hashes has neither computed_hashes.json nor manifest.json on disk
+// (e.g. after a browser rollback restored a user data snapshot without the
+// Extensions directory), instead of the generic MISSING_ALL_HASHES. This lets
+// the embedder repair such extensions without touching the handling of
+// extensions that merely lack computed_hashes.json.
+BASE_DECLARE_FEATURE(kExtensionContentVerificationReportsMissingManifest);
+
 // Enables the shouldShowPromotion API to determine which promotion to show for
 // Chrome Enterprise on CWS.
 BASE_DECLARE_FEATURE(kEnableShouldShowPromotion);
@@ -384,6 +407,18 @@ BASE_DECLARE_FEATURE(kUseSha256ForExtensionHashes);
 // must be explicitly listed to be web accessible, and the generated background
 // page is never web accessible.
 BASE_DECLARE_FEATURE(kRestrictGeneratedPathsInWebAccessibleResources);
+
+// If enabled (the default), `ExtensionMessagePort` only registers a frame as a
+// message receiver for an extension if the frame's process may act for that
+// extension: a process in `ProcessMap` for the extension, or a process that has
+// run a content script or user script from the extension. The extension's own
+// pages shown in its `<webview>` (e.g. a Chrome App's webview-accessible
+// resources) are also registered, as long as the browser confirms that their
+// process committed the extension's origin. If disabled, every live frame is
+// registered. Disabling this has security implications.
+// TODO(crbug.com/578977501): Remove this flag once the change has shipped to
+// stable without issues.
+BASE_DECLARE_FEATURE(kRestrictMessagingReceiverFramesToExtensionProcesses);
 
 }  // namespace extensions_features
 

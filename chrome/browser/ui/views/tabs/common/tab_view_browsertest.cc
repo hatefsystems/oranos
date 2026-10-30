@@ -27,6 +27,7 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_style.h"
 #include "chrome/browser/ui/tabs/vertical_tab_strip_state.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/animations/tab_strip_animations.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
@@ -59,6 +60,7 @@
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/compositor/layer.h"
+#include "ui/compositor/layer_test_api.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/gfx/animation/animation_test_api.h"
@@ -135,8 +137,35 @@ class NewTabTitleObserver : public TabStripModelObserver {
   base::CallbackListSubscription text_changed_subscription_;
 };
 
-class TabViewTest : public VerticalTabsBrowserTestMixin<InProcessBrowserTest> {
+class TestContextMenuController : public views::ContextMenuController {
  public:
+  TestContextMenuController() = default;
+  ~TestContextMenuController() override = default;
+
+  void ShowContextMenuForViewImpl(
+      views::View* source,
+      const gfx::Point& point,
+      ui::mojom::MenuSourceType source_type) override {
+    opened_ = true;
+  }
+
+  bool opened() const { return opened_; }
+
+ private:
+  bool opened_ = false;
+};
+
+class TabViewTestBase
+    : public VerticalTabsBrowserTestMixin<InProcessBrowserTest> {
+ public:
+  const std::vector<base::test::FeatureRefAndParams> GetEnabledFeatures()
+      override {
+    auto enabled = VerticalTabsBrowserTestMixin<
+        InProcessBrowserTest>::GetEnabledFeatures();
+    enabled.push_back({tabs::kTabStripUnification, {}});
+    return enabled;
+  }
+
   void SetUp() override {
 #if defined(USE_MOCK_ACTIVATION_CONTROLLER)
     activation_controller_ =
@@ -196,11 +225,13 @@ class TabViewTest : public VerticalTabsBrowserTestMixin<InProcessBrowserTest> {
 
   void AppendTab() {
     VerticalTabsBrowserTestMixin<InProcessBrowserTest>::AppendTab();
+    RunScheduledLayouts();
     ResetTabHoverStates();
   }
 
   void AppendPinnedTab() {
     VerticalTabsBrowserTestMixin<InProcessBrowserTest>::AppendPinnedTab();
+    RunScheduledLayouts();
     ResetTabHoverStates();
   }
 
@@ -212,7 +243,43 @@ class TabViewTest : public VerticalTabsBrowserTestMixin<InProcessBrowserTest> {
 #endif
 };
 
-IN_PROC_BROWSER_TEST_F(TabViewTest, IconDataChanged) {
+class TabViewTest : public TabViewTestBase,
+                    public testing::WithParamInterface<TabStripOrientation> {
+ public:
+  void SetUpOnMainThread() override {
+    TabViewTestBase::SetUpOnMainThread();
+    if (GetParam() == TabStripOrientation::kHorizontal) {
+      ExitVerticalTabsMode();
+      ResetTabHoverStates();
+    }
+  }
+
+  ui::KeyboardCode PreviousKey() const {
+    return GetParam() == TabStripOrientation::kVertical ? ui::VKEY_UP
+                                                        : ui::VKEY_LEFT;
+  }
+
+  ui::KeyboardCode NextKey() const {
+    return GetParam() == TabStripOrientation::kVertical ? ui::VKEY_DOWN
+                                                        : ui::VKEY_RIGHT;
+  }
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    TabViewTest,
+    testing::Values(TabStripOrientation::kVertical,
+                    TabStripOrientation::kHorizontal),
+    [](const testing::TestParamInfo<TabStripOrientation>& info) {
+      switch (info.param) {
+        case TabStripOrientation::kVertical:
+          return "Vertical";
+        case TabStripOrientation::kHorizontal:
+          return "Horizontal";
+      }
+    });
+
+IN_PROC_BROWSER_TEST_P(TabViewTest, IconDataChanged) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   auto* icon = BrowserElementsViews::From(browser())->GetViewAs<TabIcon>(
@@ -237,6 +304,7 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, IconDataChanged) {
       base::DoNothing());
   run_loop.Run();
   EXPECT_TRUE(icon->GetShowingLoadingAnimation());
+  ASSERT_TRUE(content::WaitForLoadStop(web_contents));
 
   // After setting the tab as blocked, expect the attention indicator to not be
   // showing because the tab is active.
@@ -267,7 +335,7 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, IconDataChanged) {
       [&]() { return icon->GetShowingDiscardIndicator(); }));
 }
 
-IN_PROC_BROWSER_TEST_F(TabViewTest, TitleDataChanged) {
+IN_PROC_BROWSER_TEST_P(TabViewTest, TitleDataChanged) {
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL initial_url = embedded_test_server()->GetURL("/title2.html");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), initial_url));
@@ -286,7 +354,7 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, TitleDataChanged) {
   EXPECT_EQ(u"Title Of More Awesomeness", title->GetText());
 }
 
-IN_PROC_BROWSER_TEST_F(TabViewTest, TitleLoading) {
+IN_PROC_BROWSER_TEST_P(TabViewTest, TitleLoading) {
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL initial_url = embedded_test_server()->GetURL("/link_new_page.html");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), initial_url));
@@ -318,7 +386,7 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, TitleLoading) {
   run_loop.Run();
 }
 
-IN_PROC_BROWSER_TEST_F(TabViewTest, AlertIndicatorDataChanged) {
+IN_PROC_BROWSER_TEST_P(TabViewTest, AlertIndicatorDataChanged) {
   TabCollectionNode* tab_node = unpinned_collection_node()->children()[0].get();
   TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
   auto* alert_indicator =
@@ -373,7 +441,7 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, AlertIndicatorDataChanged) {
             alert_indicator->showing_alert_state());
 }
 
-IN_PROC_BROWSER_TEST_F(TabViewTest, AlertIndicatorMuteEnabled) {
+IN_PROC_BROWSER_TEST_P(TabViewTest, AlertIndicatorMuteEnabled) {
   TabCollectionNode* tab_node = unpinned_collection_node()->children()[0].get();
   TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
   auto* alert_indicator =
@@ -395,204 +463,7 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, AlertIndicatorMuteEnabled) {
   ASSERT_FALSE(alert_indicator->GetEnabled());
 }
 
-class TabViewTabMutingEnabledTest : public TabViewTest {
- public:
-  const std::vector<base::test::FeatureRefAndParams> GetEnabledFeatures()
-      override {
-    return {{media::kEnableTabMuting, {}}};
-  }
-};
-
-IN_PROC_BROWSER_TEST_F(TabViewTabMutingEnabledTest, AlertIndicatorMuteEnabled) {
-  TabCollectionNode* tab_node = unpinned_collection_node()->children()[0].get();
-  TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
-  auto* alert_indicator =
-      BrowserElementsViews::From(browser())->GetViewAs<AlertIndicatorButton>(
-          kTabAlertIndicatorButtonElementId);
-
-  content::WebContents* web_contents =
-      tab_strip_model()->GetActiveWebContents();
-  base::ScopedClosureRunner scoped_closure_runner = web_contents->MarkAudible();
-  tab_strip_model()->NotifyTabChanged(tab_strip_model()->GetActiveTab(),
-                                      TabChangeType::kAll);
-
-  // Normally tab width would be a function of the size of the vertical tab
-  // strip and whether the tab is in a split/group. To make this test not depend
-  // on the layouts of those classes, manually set the bounds of the tab.
-  auto set_tab_width = [&](int width) {
-    tab_view->SetBounds(tab_view->x(), tab_view->y(), width,
-                        tab_view->height());
-  };
-  constexpr int kEnabledWidth = 128;
-  constexpr int kDisabledWidth = 48;
-
-  // Initially the audio playing indicator should be visible and enabled.
-  set_tab_width(kEnabledWidth);
-  ASSERT_TRUE(alert_indicator->GetVisible());
-  ASSERT_TRUE(alert_indicator->GetEnabled());
-
-  // Add a second tab. The alert indicator should still be enabled.
-  AppendTab();
-  EXPECT_TRUE(alert_indicator->GetVisible());
-  EXPECT_TRUE(alert_indicator->GetEnabled());
-
-  // Resize the original tab so that there is not enough width outside of the
-  // alert indicator to activate it. The alert indicator should be disabled.
-  set_tab_width(kDisabledWidth);
-  EXPECT_TRUE(alert_indicator->GetVisible());
-  EXPECT_FALSE(alert_indicator->GetEnabled());
-
-  // Activate the original tab. The alert indicator should be enabled again.
-  tab_strip_model()->ActivateTabAt(0);
-  EXPECT_TRUE(alert_indicator->GetVisible());
-  EXPECT_TRUE(alert_indicator->GetEnabled());
-}
-
-IN_PROC_BROWSER_TEST_F(TabViewTabMutingEnabledTest, AlertIndicatorMuteToggle) {
-  base::HistogramTester histogram_tester;
-  TabCollectionNode* tab_node = unpinned_collection_node()->children()[0].get();
-  TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
-  auto* alert_indicator =
-      BrowserElementsViews::From(browser())->GetViewAs<AlertIndicatorButton>(
-          kTabAlertIndicatorButtonElementId);
-
-  content::WebContents* web_contents =
-      tab_strip_model()->GetActiveWebContents();
-  base::ScopedClosureRunner scoped_closure_runner = web_contents->MarkAudible();
-  tab_strip_model()->NotifyTabChanged(tab_strip_model()->GetActiveTab(),
-                                      TabChangeType::kAll);
-
-  // Audio should be playing initially.
-  WaitForLayout(tab_view);
-  ASSERT_TRUE(alert_indicator->GetVisible());
-  ASSERT_EQ(tabs::TabAlert::kAudioPlaying,
-            alert_indicator->alert_state_for_testing());
-  ASSERT_FALSE(web_contents->IsAudioMuted());
-  ASSERT_EQ(0,
-            histogram_tester.GetBucketCount("Media.Audio.TabAudioMuted", true));
-  ASSERT_EQ(
-      0, histogram_tester.GetBucketCount("Media.Audio.TabAudioMuted", false));
-
-  // After clicking the alert indicator, audio should be muted.
-  ASSERT_TRUE(alert_indicator->GetEnabled());
-  alert_indicator->button_controller()->NotifyClick();
-  WaitForLayout(tab_view);
-  EXPECT_TRUE(alert_indicator->GetVisible());
-  EXPECT_EQ(tabs::TabAlert::kAudioMuting,
-            alert_indicator->alert_state_for_testing());
-  EXPECT_TRUE(web_contents->IsAudioMuted());
-  histogram_tester.ExpectBucketCount("Media.Audio.TabAudioMuted", true, 1);
-  histogram_tester.ExpectBucketCount("Media.Audio.TabAudioMuted", false, 0);
-
-  // After clicking the alert indicator again, audio should no longer be muted.
-  ASSERT_TRUE(alert_indicator->GetEnabled());
-  alert_indicator->button_controller()->NotifyClick();
-  WaitForLayout(tab_view);
-  EXPECT_TRUE(alert_indicator->GetVisible());
-  EXPECT_EQ(tabs::TabAlert::kAudioPlaying,
-            alert_indicator->alert_state_for_testing());
-  EXPECT_FALSE(web_contents->IsAudioMuted());
-  histogram_tester.ExpectBucketCount("Media.Audio.TabAudioMuted", true, 1);
-  histogram_tester.ExpectBucketCount("Media.Audio.TabAudioMuted", false, 1);
-}
-
-IN_PROC_BROWSER_TEST_F(TabViewTest, CloseButtonVisibilityActiveTab) {
-  TabCollectionNode* tab_node = unpinned_collection_node()->children()[0].get();
-  TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
-  TabCloseButton* close_button = tab_view->close_button_for_testing();
-
-  // Expect the close button to be showing initially.
-  EXPECT_TRUE(close_button->GetVisible());
-
-  // After adding a new tab, the old tab is no longer activated so the close
-  // button should no longer be showing.
-  AppendTab();
-  ASSERT_TRUE(
-      base::test::RunUntil([&]() { return !close_button->GetVisible(); }));
-}
-
-IN_PROC_BROWSER_TEST_F(TabViewTest, CloseButtonVisibilityHover) {
-  TabCollectionNode* tab_node = unpinned_collection_node()->children()[0].get();
-  TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
-  TabCloseButton* close_button = tab_view->close_button_for_testing();
-
-  // Deactivate the tab and explicitly reset hovered state so mouse cursor
-  // placement doesn't keep the close button visible.
-  AppendTab();
-  tab_view->UpdateHovered(false);
-  ASSERT_TRUE(
-      base::test::RunUntil([&]() { return !close_button->GetVisible(); }));
-
-  // After the mouse enters the tab, the close button should be showing.
-  tab_view->UpdateHovered(true);
-  WaitForLayout(tab_view);
-  EXPECT_TRUE(close_button->GetVisible());
-
-  // After the mouse exits the tab, the close button should be hidden.
-  tab_view->UpdateHovered(false);
-  WaitForLayout(tab_view);
-  EXPECT_FALSE(close_button->GetVisible());
-}
-
-IN_PROC_BROWSER_TEST_F(TabViewTest, CloseButtonVisibilityCollapsed) {
-  TabCollectionNode* tab_node = unpinned_collection_node()->children()[0].get();
-  TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
-  TabCloseButton* close_button = tab_view->close_button_for_testing();
-
-  // Deactivate the tab.
-  AppendTab();
-  ASSERT_TRUE(
-      base::test::RunUntil([&]() { return !close_button->GetVisible(); }));
-
-  // Collapse the tab strip.
-  tabs::VerticalTabStripStateController::From(browser())->RequestCollapse(true);
-  ASSERT_TRUE(base::test::RunUntil([&]() {
-    return !BrowserAnimationController::From(browser())->IsAnimating(
-        TabStripAnimations::kVerticalTabStrip);
-  }));
-
-  // After collapsing the tab strip, the close button should be hidden because
-  // the tab is not hovered.
-  ASSERT_TRUE(
-      base::test::RunUntil([&]() { return !close_button->GetVisible(); }));
-
-  // After the mouse enters the tab, the close button should still be hidden
-  // because the tab is not active.
-  tab_view->UpdateHovered(true);
-  WaitForLayout(tab_view);
-  EXPECT_FALSE(close_button->GetVisible());
-
-  // After the mouse exits the tab, the close button should be hidden.
-  tab_view->UpdateHovered(false);
-  WaitForLayout(tab_view);
-  EXPECT_FALSE(close_button->GetVisible());
-}
-
-IN_PROC_BROWSER_TEST_F(TabViewTest, CloseButtonVisibilityActiveCollapsed) {
-  TabCollectionNode* tab_node = unpinned_collection_node()->children()[0].get();
-  TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
-  TabCloseButton* close_button = tab_view->close_button_for_testing();
-
-  // Collapse the tab strip.
-  tabs::VerticalTabStripStateController::From(browser())->RequestCollapse(true);
-  ASSERT_TRUE(base::test::RunUntil([&]() {
-    return !BrowserAnimationController::From(browser())->IsAnimating(
-        TabStripAnimations::kVerticalTabStrip);
-  }));
-
-  // Now that the tab is collapsed the close button should be hidden.
-  ASSERT_TRUE(
-      base::test::RunUntil([&]() { return !close_button->GetVisible(); }));
-
-  // Hovering the active tab while collapsed should show the close button.
-  // TODO(crbug.com/492603554): Investigate why using EventGenerator here
-  // flakes.
-  tab_view->UpdateHovered(true);
-  WaitForLayout(tab_view);
-  EXPECT_TRUE(close_button->GetVisible());
-}
-
-IN_PROC_BROWSER_TEST_F(TabViewTest, CloseButtonPressed) {
+IN_PROC_BROWSER_TEST_P(TabViewTest, CloseButtonPressed) {
   // Add a second tab.
   AppendTab();
 
@@ -600,7 +471,8 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, CloseButtonPressed) {
   TabCollectionNode* tab_node = unpinned_collection_node()->children()[1].get();
   TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
   TabCloseButton* close_button = tab_view->close_button_for_testing();
-  ASSERT_TRUE(close_button->GetVisible());
+  ASSERT_TRUE(
+      base::test::RunUntil([&]() { return close_button->GetVisible(); }));
 
   // Expect there to be two tabs initially.
   ASSERT_EQ(2, tab_strip_model()->count());
@@ -610,7 +482,7 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, CloseButtonPressed) {
   EXPECT_EQ(1, tab_strip_model()->count());
 }
 
-IN_PROC_BROWSER_TEST_F(TabViewTest, RenderInactiveWhenClosing) {
+IN_PROC_BROWSER_TEST_P(TabViewTest, RenderInactiveWhenClosing) {
   // Add a second tab.
   AppendTab();
   ASSERT_EQ(2, tab_strip_model()->count());
@@ -632,7 +504,7 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, RenderInactiveWhenClosing) {
   EXPECT_TRUE(tab_view->IsHoverAnimationActive());
 }
 
-IN_PROC_BROWSER_TEST_F(TabViewTest, PinnedTabsHideCloseButton) {
+IN_PROC_BROWSER_TEST_P(TabViewTest, PinnedTabsHideCloseButton) {
   AppendPinnedTab();
 
   // The initial tab is the first child of the pinned collection.
@@ -643,32 +515,10 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, PinnedTabsHideCloseButton) {
   EXPECT_TRUE(tab->GetViewByElementId(kTabIconElementId)->GetVisible());
   EXPECT_FALSE(
       tab->GetViewByElementId(kTabAlertIndicatorButtonElementId)->GetVisible());
+  EXPECT_FALSE(tab->close_button_for_testing()->GetVisible());
 }
 
-IN_PROC_BROWSER_TEST_F(TabViewTest, PinnedTabsRenderBorder) {
-  AppendPinnedTab();
-
-  // The initial tab is the first child of the pinned collection.
-  TabView* pinned_tab = views::AsViewClass<TabView>(
-      pinned_collection_node()->children()[0].get()->view());
-
-  EXPECT_TRUE(pinned_tab->GetBorder());
-
-  // Unpin the tab.
-  tab_strip_model()->SetTabPinned(0, false);
-
-  ASSERT_TRUE(base::test::RunUntil(
-      [&]() { return unpinned_collection_node()->children().size() == 2u; }));
-
-  // The first child of the unpinned collection is the tab that has been
-  // unpinned.
-  TabView* unpinned_tab = views::AsViewClass<TabView>(
-      unpinned_collection_node()->children()[0].get()->view());
-
-  EXPECT_FALSE(unpinned_tab->GetBorder());
-}
-
-IN_PROC_BROWSER_TEST_F(TabViewTest, LogsTabCloseMetrics) {
+IN_PROC_BROWSER_TEST_P(TabViewTest, LogsTabCloseMetrics) {
   base::UserActionTester user_action_tester;
 
   AppendTab();
@@ -676,14 +526,15 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, LogsTabCloseMetrics) {
       tab_strip_model()->GetActiveTab()->GetHandle());
   TabCloseButton* close_button =
       views::AsViewClass<TabView>(tab_node->view())->close_button_for_testing();
-  ASSERT_TRUE(close_button->GetVisible());
+  ASSERT_TRUE(
+      base::test::RunUntil([&]() { return close_button->GetVisible(); }));
 
   close_button->button_controller()->NotifyClick();
 
   EXPECT_EQ(user_action_tester.GetActionCount("CloseTab_NoAlertIndicator"), 1);
 }
 
-IN_PROC_BROWSER_TEST_F(TabViewTest, LogsTabCloseMetrics_AudioIndicator) {
+IN_PROC_BROWSER_TEST_P(TabViewTest, LogsTabCloseMetrics_AudioIndicator) {
   base::UserActionTester user_action_tester;
 
   AppendTab();
@@ -702,7 +553,7 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, LogsTabCloseMetrics_AudioIndicator) {
   EXPECT_EQ(user_action_tester.GetActionCount("CloseTab_AudioIndicator"), 1);
 }
 
-IN_PROC_BROWSER_TEST_F(TabViewTest, LogsTabCloseMetrics_RecordingIndicator) {
+IN_PROC_BROWSER_TEST_P(TabViewTest, LogsTabCloseMetrics_RecordingIndicator) {
   base::UserActionTester user_action_tester;
 
   AppendTab();
@@ -735,7 +586,7 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, LogsTabCloseMetrics_RecordingIndicator) {
             1);
 }
 
-IN_PROC_BROWSER_TEST_F(TabViewTest, LogsTabCloseMetrics_SplitView) {
+IN_PROC_BROWSER_TEST_P(TabViewTest, LogsTabCloseMetrics_SplitView) {
   base::UserActionTester user_action_tester;
 
   AppendSplitTab();
@@ -745,6 +596,7 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, LogsTabCloseMetrics_SplitView) {
           ->GetNodeForHandle(tab_strip_model()->GetActiveTab()->GetHandle());
   TabCloseButton* close_button =
       views::AsViewClass<TabView>(tab_node->view())->close_button_for_testing();
+  WaitForLayout(tab_node->view());
   ASSERT_TRUE(close_button->GetVisible());
 
   close_button->button_controller()->NotifyClick();
@@ -772,7 +624,7 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, LogsTabCloseMetrics_SplitView) {
   EXPECT_EQ(user_action_tester.GetActionCount("CloseTab_EndTabInSplit"), 1);
 }
 
-IN_PROC_BROWSER_TEST_F(TabViewTest,
+IN_PROC_BROWSER_TEST_P(TabViewTest,
                        SplitTabsAnchorHoverCardToParentSplitViewContainer) {
   AppendSplitTab();
 
@@ -796,7 +648,7 @@ IN_PROC_BROWSER_TEST_F(TabViewTest,
   ASSERT_EQ(tab_2_view->GetAnchor().GetIfView(), split_tab_view);
 }
 
-IN_PROC_BROWSER_TEST_F(TabViewTest,
+IN_PROC_BROWSER_TEST_P(TabViewTest,
                        HoverCardControllerSetsCorrectAnchorTarget) {
   AppendSplitTab();
   // Get the view for the non split tab, and both tabs in the split.
@@ -837,113 +689,7 @@ IN_PROC_BROWSER_TEST_F(TabViewTest,
   EXPECT_EQ(nullptr, hover_card_controller()->target_tab());
 }
 
-class TabViewDataSharingEnabledTest : public TabViewTest {
- public:
-  const std::vector<base::test::FeatureRefAndParams> GetEnabledFeatures()
-      override {
-    return {{data_sharing::features::kDataSharingFeature, {}}};
-  }
-
- private:
-  // Disable animations so that tabs can be immediately clicked after being
-  // added to a group.
-  const gfx::AnimationTestApi::RenderModeResetter disable_rich_animations_ =
-      gfx::AnimationTestApi::SetRichAnimationRenderMode(
-          gfx::Animation::RichAnimationRenderMode::FORCE_DISABLED);
-};
-
-IN_PROC_BROWSER_TEST_F(TabViewDataSharingEnabledTest, LogsTabSwitchMetrics) {
-  base::UserActionTester user_action_tester;
-  base::HistogramTester histogram_tester;
-
-  // Add the initial tab to a group, then add a new tab.
-  tab_strip_model()->AddToNewGroup({0});
-  AppendTab();
-
-  // Get the view for the initial tab that is in a group.
-  tabs::TabInterface* tab = tab_strip_model()->GetTabAtIndex(0);
-  TabCollectionNode* tab_node =
-      unpinned_collection_node()
-          ->GetChildNodeOfType(TabCollectionNode::Type::GROUP)
-          ->GetNodeForHandle(tab->GetHandle());
-  TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
-
-  // Ensure that the group is a saved tab group.
-  tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::TabGroupSyncServiceFactory::GetForProfile(GetProfile());
-  tab_group_service->MakeTabGroupSharedForTesting(
-      tab->GetGroup().value(), syncer::CollaborationId("collaboration_id"));
-
-  ASSERT_EQ(1, tab_strip_model()->active_index());
-  ASSERT_EQ(
-      0, histogram_tester.GetBucketCount("TabStrip.Tab.Views.ActivationAction",
-                                         TabActivationTypes::kTab));
-  ASSERT_EQ(0, user_action_tester.GetActionCount("TabGroups_SwitchGroupedTab"));
-  ASSERT_EQ(0, user_action_tester.GetActionCount(
-                   "TabGroups.Shared.SwitchGroupedTab"));
-  ASSERT_EQ(0, user_action_tester.GetActionCount("SwitchTab_Click"));
-
-  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
-  ui::test::EventGenerator event_generator(
-      views::GetRootWindow(browser_view->GetWidget()),
-      browser_view->GetNativeWindow());
-  event_generator.MoveMouseTo(tab_view->GetBoundsInScreen().CenterPoint());
-  event_generator.ClickLeftButton();
-
-  EXPECT_EQ(0, tab_strip_model()->active_index());
-  histogram_tester.ExpectBucketCount("TabStrip.Tab.Views.ActivationAction",
-                                     TabActivationTypes::kTab, 1);
-  EXPECT_EQ(1, user_action_tester.GetActionCount("TabGroups_SwitchGroupedTab"));
-  EXPECT_EQ(1, user_action_tester.GetActionCount(
-                   "TabGroups.Shared.SwitchGroupedTab"));
-  EXPECT_EQ(1, user_action_tester.GetActionCount("SwitchTab_Click"));
-}
-
-IN_PROC_BROWSER_TEST_F(TabViewTest, AlertIndicatorDecorateOnCollapse) {
-  tabs::VerticalTabStripStateController::From(browser())->RequestCollapse(true);
-
-  // Wait for the collapse animation to finish and ensure the width reaches
-  // kCollapsedWidth.
-  VerticalTabStripRegionView* const region_view =
-      BrowserView::GetBrowserViewForBrowser(browser())
-          ->vertical_tab_strip_region_view_for_testing();
-  ASSERT_TRUE(base::test::RunUntil([&]() {
-    return !BrowserAnimationController::From(browser())->IsAnimating(
-               TabStripAnimations::kVerticalTabStrip) &&
-           region_view->width() <= tabs::kVerticalTabStripCollapsedWidth;
-  }));
-
-  TabCollectionNode* tab_node = unpinned_collection_node()->children()[0].get();
-  TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
-
-  // Ensure the tab is active and hovered so that the close button is visible.
-  tab_strip_model()->ActivateTabAt(0);
-  // TODO(crbug.com/492603554): Investigate why using EventGenerator here
-  // flakes.
-  tab_view->UpdateHovered(true);
-
-  auto* alert_indicator =
-      tab_view->GetViewByElementId(kTabAlertIndicatorButtonElementId);
-
-  // Set alert state to audio playing.
-  content::WebContents* web_contents =
-      tab_strip_model()->GetActiveWebContents();
-  base::ScopedClosureRunner scoped_closure_runner = web_contents->MarkAudible();
-  tab_strip_model()->NotifyTabChanged(tab_strip_model()->GetTabAtIndex(0),
-                                      TabChangeType::kAll);
-  WaitForLayout(tab_view);
-
-  // In collapsed mode, the active and hovered tab shows the close button as the
-  // first visible child. The alert indicator is the second visible child, so it
-  // should be hidden from normal rendering and instead trigger the
-  // decorate_on_collapse logic.
-  const gfx::Rect tab_bounds = tab_view->GetLocalBounds();
-  const gfx::Rect expected_bounds(tab_bounds.width() / 2,
-                                  tab_bounds.height() / 2, 0, 0);
-  EXPECT_EQ(expected_bounds, alert_indicator->bounds());
-}
-
-IN_PROC_BROWSER_TEST_F(TabViewTest, MultiSelectUserActions) {
+IN_PROC_BROWSER_TEST_P(TabViewTest, MultiSelectUserActions) {
   base::UserActionTester user_action_tester;
   AppendTab();
   AppendTab();
@@ -1003,7 +749,524 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, MultiSelectUserActions) {
   tab_view_3->OnMouseReleased(release_shift_ctrl);
 }
 
-IN_PROC_BROWSER_TEST_F(TabViewTest, KeyboardExtendTabSelection_Down) {
+IN_PROC_BROWSER_TEST_P(TabViewTest, KeyboardExtendTabSelection_Boundary) {
+  AppendTab();
+  AppendTab();
+  tab_strip_model()->ActivateTabAt(0);
+
+  views::View* tab_view_0 = GetTabView(0);
+  views::View* tab_view_2 = GetTabView(2);
+  ASSERT_TRUE(tab_view_0);
+  ASSERT_TRUE(tab_view_2);
+
+  // Leading boundary check: Shift + Previous on the first tab is consumed
+  // without wrapping around to the last tab.
+  tab_view_0->GetFocusManager()->SetFocusedView(tab_view_0);
+  ui::KeyEvent shift_prev(ui::EventType::kKeyPressed, PreviousKey(),
+                          ui::EF_SHIFT_DOWN);
+  EXPECT_TRUE(tab_view_0->OnKeyPressed(shift_prev));
+  EXPECT_TRUE(tab_strip_model()->IsTabSelected(0));
+  EXPECT_FALSE(tab_strip_model()->IsTabSelected(1));
+  EXPECT_FALSE(tab_strip_model()->IsTabSelected(2));
+  EXPECT_TRUE(tab_view_0->HasFocus());
+
+  // Trailing boundary check: Shift + Next on the last tab is consumed without
+  // wrapping around to the first tab.
+  tab_strip_model()->ActivateTabAt(2);
+  tab_view_2->GetFocusManager()->SetFocusedView(tab_view_2);
+  ui::KeyEvent shift_next(ui::EventType::kKeyPressed, NextKey(),
+                          ui::EF_SHIFT_DOWN);
+  EXPECT_TRUE(tab_view_2->OnKeyPressed(shift_next));
+  EXPECT_FALSE(tab_strip_model()->IsTabSelected(0));
+  EXPECT_FALSE(tab_strip_model()->IsTabSelected(1));
+  EXPECT_TRUE(tab_strip_model()->IsTabSelected(2));
+  EXPECT_TRUE(tab_view_2->HasFocus());
+}
+
+IN_PROC_BROWSER_TEST_P(TabViewTest,
+                       KeyboardExtendTabSelection_AfterFocusTraversal) {
+  AppendTab();
+  AppendTab();
+  AppendTab();
+  AppendTab();
+  // Select and anchor at tab 0.
+  tab_strip_model()->ActivateTabAt(0);
+  ASSERT_TRUE(tab_strip_model()->IsTabSelected(0));
+  ASSERT_FALSE(tab_strip_model()->IsTabSelected(2));
+
+  views::View* tab_view_2 = GetTabView(2);
+  views::View* tab_view_3 = GetTabView(3);
+  ASSERT_TRUE(tab_view_2);
+  ASSERT_TRUE(tab_view_3);
+
+  // Simulate plain arrow-key focus traversal to tab 2 without updating
+  // selection.
+  tab_view_2->GetFocusManager()->SetFocusedView(tab_view_2);
+  ASSERT_TRUE(tab_view_2->HasFocus());
+  ASSERT_TRUE(tab_strip_model()->IsTabSelected(0));
+  ASSERT_FALSE(tab_strip_model()->IsTabSelected(2));
+
+  // Pressing Shift + Next on unfocused tab 2 should re-anchor at tab 2 and
+  // select tabs 2 and 3 rather than extending from the old anchor (tab 0).
+  ui::KeyEvent shift_next(ui::EventType::kKeyPressed, NextKey(),
+                          ui::EF_SHIFT_DOWN);
+  EXPECT_TRUE(tab_view_2->OnKeyPressed(shift_next));
+  EXPECT_FALSE(tab_strip_model()->IsTabSelected(0));
+  EXPECT_FALSE(tab_strip_model()->IsTabSelected(1));
+  EXPECT_TRUE(tab_strip_model()->IsTabSelected(2));
+  EXPECT_TRUE(tab_strip_model()->IsTabSelected(3));
+  EXPECT_FALSE(tab_strip_model()->IsTabSelected(4));
+  EXPECT_TRUE(tab_view_3->HasFocus());
+}
+
+IN_PROC_BROWSER_TEST_P(TabViewTest,
+                       KeyboardExtendTabSelection_CollapsedGroupAndPinned) {
+  AppendTab();
+  AppendTab();
+  AppendTab();
+  // Tab 0 is pinned; Tab 1 is unpinned; Tabs 2 and 3 are in a collapsed group.
+  tab_strip_model()->SetTabPinned(0, true);
+  tab_groups::TabGroupId group_id = tab_strip_model()->AddToNewGroup({2, 3});
+  const TabGroup* group =
+      tab_strip_model()->group_model()->GetTabGroup(group_id);
+  ASSERT_TRUE(group);
+  root_node()->GetController()->ToggleTabGroupCollapsedState(
+      group, ToggleTabGroupCollapsedStateOrigin::kMenuAction);
+  ASSERT_TRUE(root_node()->GetController()->IsGroupCollapsed(group_id));
+
+  views::View* tab_view_0 = GetTabView(0);
+  views::View* tab_view_1 = GetTabView(1);
+  views::View* tab_view_2 = GetTabView(2);
+  ASSERT_TRUE(tab_view_0);
+  ASSERT_TRUE(tab_view_1);
+  ASSERT_TRUE(tab_view_2);
+
+  // Activate and focus pinned tab 0, then extend across the pinned/unpinned
+  // boundary to tab 1.
+  tab_strip_model()->ActivateTabAt(0);
+  tab_view_0->GetFocusManager()->SetFocusedView(tab_view_0);
+  ui::KeyEvent shift_next(ui::EventType::kKeyPressed, NextKey(),
+                          ui::EF_SHIFT_DOWN);
+  EXPECT_TRUE(tab_view_0->OnKeyPressed(shift_next));
+  EXPECT_TRUE(tab_strip_model()->IsTabSelected(0));
+  EXPECT_TRUE(tab_strip_model()->IsTabSelected(1));
+  EXPECT_TRUE(tab_view_1->HasFocus());
+
+  // Extend from tab 1 into tab 2 (inside the collapsed group). The group
+  // should auto-expand so focus lands on a visible tab view.
+  EXPECT_TRUE(tab_view_1->OnKeyPressed(shift_next));
+  EXPECT_FALSE(root_node()->GetController()->IsGroupCollapsed(group_id));
+  EXPECT_TRUE(tab_strip_model()->IsTabSelected(0));
+  EXPECT_TRUE(tab_strip_model()->IsTabSelected(1));
+  EXPECT_TRUE(tab_strip_model()->IsTabSelected(2));
+  EXPECT_TRUE(tab_view_2->HasFocus());
+}
+
+IN_PROC_BROWSER_TEST_P(TabViewTest,
+                       KeyboardExtendTabSelection_PreservesPaneFocus) {
+  AppendTab();
+  tab_strip_model()->ActivateTabAt(0);
+
+  TabStripRegionView* region_view =
+      BrowserView::GetBrowserViewForBrowser(browser())->tab_strip_view();
+  views::View* tab_view_0 = GetTabView(0);
+  views::View* tab_view_1 = GetTabView(1);
+  ASSERT_TRUE(tab_view_0);
+  ASSERT_TRUE(tab_view_1);
+
+  region_view->SetPaneFocus(tab_view_0);
+  ASSERT_TRUE(tab_view_0->HasFocus());
+  ASSERT_TRUE(region_view->pane_has_focus());
+
+  ui::KeyEvent shift_next(ui::EventType::kKeyPressed, NextKey(),
+                          ui::EF_SHIFT_DOWN);
+  EXPECT_TRUE(tab_view_0->OnKeyPressed(shift_next));
+  EXPECT_TRUE(tab_strip_model()->IsTabSelected(0));
+  EXPECT_TRUE(tab_strip_model()->IsTabSelected(1));
+  EXPECT_TRUE(tab_view_1->HasFocus());
+  EXPECT_TRUE(region_view->pane_has_focus());
+}
+
+#if BUILDFLAG(IS_MAC)
+IN_PROC_BROWSER_TEST_P(TabViewTest, ContextMenuFromControlReturnMac) {
+  views::View* tab_view = GetTabView(0);
+  ASSERT_TRUE(tab_view);
+
+  TestContextMenuController menu_controller;
+  tab_view->set_context_menu_controller(&menu_controller);
+
+  EXPECT_TRUE(tab_view->OnKeyPressed(ui::KeyEvent(
+      ui::EventType::kKeyPressed, ui::VKEY_RETURN, ui::EF_CONTROL_DOWN)));
+  EXPECT_TRUE(menu_controller.opened());
+}
+#endif
+
+class TabViewDataSharingEnabledTest : public TabViewTest {
+ public:
+  const std::vector<base::test::FeatureRefAndParams> GetEnabledFeatures()
+      override {
+    auto enabled = TabViewTest::GetEnabledFeatures();
+    enabled.push_back({data_sharing::features::kDataSharingFeature, {}});
+    return enabled;
+  }
+
+ private:
+  // Disable animations so that tabs can be immediately clicked after being
+  // added to a group.
+  const gfx::AnimationTestApi::RenderModeResetter disable_rich_animations_ =
+      gfx::AnimationTestApi::SetRichAnimationRenderMode(
+          gfx::Animation::RichAnimationRenderMode::FORCE_DISABLED);
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    TabViewDataSharingEnabledTest,
+    testing::Values(TabStripOrientation::kVertical,
+                    TabStripOrientation::kHorizontal),
+    [](const testing::TestParamInfo<TabStripOrientation>& info) {
+      switch (info.param) {
+        case TabStripOrientation::kVertical:
+          return "Vertical";
+        case TabStripOrientation::kHorizontal:
+          return "Horizontal";
+      }
+    });
+
+IN_PROC_BROWSER_TEST_P(TabViewDataSharingEnabledTest, LogsTabSwitchMetrics) {
+  base::UserActionTester user_action_tester;
+  base::HistogramTester histogram_tester;
+
+  // Add the initial tab to a group, then add a new tab.
+  tab_strip_model()->AddToNewGroup({0});
+  AppendTab();
+
+  // Get the view for the initial tab that is in a group.
+  tabs::TabInterface* tab = tab_strip_model()->GetTabAtIndex(0);
+  TabCollectionNode* tab_node =
+      unpinned_collection_node()
+          ->GetChildNodeOfType(TabCollectionNode::Type::GROUP)
+          ->GetNodeForHandle(tab->GetHandle());
+  TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
+
+  // Ensure that the group is a saved tab group.
+  tab_groups::TabGroupSyncService* tab_group_service =
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(GetProfile());
+  tab_group_service->MakeTabGroupSharedForTesting(
+      tab->GetGroup().value(), syncer::CollaborationId("collaboration_id"));
+
+  ASSERT_EQ(1, tab_strip_model()->active_index());
+  ASSERT_EQ(
+      0, histogram_tester.GetBucketCount("TabStrip.Tab.Views.ActivationAction",
+                                         TabActivationTypes::kTab));
+  ASSERT_EQ(0, user_action_tester.GetActionCount("TabGroups_SwitchGroupedTab"));
+  ASSERT_EQ(0, user_action_tester.GetActionCount(
+                   "TabGroups.Shared.SwitchGroupedTab"));
+  ASSERT_EQ(0, user_action_tester.GetActionCount("SwitchTab_Click"));
+
+  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
+  ui::test::EventGenerator event_generator(
+      views::GetRootWindow(browser_view->GetWidget()),
+      browser_view->GetNativeWindow());
+  event_generator.MoveMouseTo(tab_view->GetBoundsInScreen().CenterPoint());
+  event_generator.ClickLeftButton();
+
+  EXPECT_EQ(0, tab_strip_model()->active_index());
+  histogram_tester.ExpectBucketCount("TabStrip.Tab.Views.ActivationAction",
+                                     TabActivationTypes::kTab, 1);
+  EXPECT_EQ(1, user_action_tester.GetActionCount("TabGroups_SwitchGroupedTab"));
+  EXPECT_EQ(1, user_action_tester.GetActionCount(
+                   "TabGroups.Shared.SwitchGroupedTab"));
+  EXPECT_EQ(1, user_action_tester.GetActionCount("SwitchTab_Click"));
+}
+
+class TabViewTabMutingEnabledTest : public TabViewTest {
+ public:
+  const std::vector<base::test::FeatureRefAndParams> GetEnabledFeatures()
+      override {
+    auto enabled = TabViewTest::GetEnabledFeatures();
+    enabled.push_back({media::kEnableTabMuting, {}});
+    return enabled;
+  }
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    TabViewTabMutingEnabledTest,
+    testing::Values(TabStripOrientation::kVertical,
+                    TabStripOrientation::kHorizontal),
+    [](const testing::TestParamInfo<TabStripOrientation>& info) {
+      switch (info.param) {
+        case TabStripOrientation::kVertical:
+          return "Vertical";
+        case TabStripOrientation::kHorizontal:
+          return "Horizontal";
+      }
+    });
+
+IN_PROC_BROWSER_TEST_P(TabViewTabMutingEnabledTest, AlertIndicatorMuteEnabled) {
+  TabCollectionNode* tab_node = unpinned_collection_node()->children()[0].get();
+  TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
+  auto* alert_indicator =
+      BrowserElementsViews::From(browser())->GetViewAs<AlertIndicatorButton>(
+          kTabAlertIndicatorButtonElementId);
+
+  content::WebContents* web_contents =
+      tab_strip_model()->GetActiveWebContents();
+  base::ScopedClosureRunner scoped_closure_runner = web_contents->MarkAudible();
+  tab_strip_model()->NotifyTabChanged(tab_strip_model()->GetActiveTab(),
+                                      TabChangeType::kAll);
+
+  // Normally tab width would be a function of the size of the tab strip and
+  // whether the tab is in a split/group. To make this test not depend on the
+  // layouts of those classes, manually set the bounds of the tab.
+  auto set_tab_width = [&](int width) {
+    tab_view->InvalidateLayout();
+    tab_view->SetBounds(tab_view->x(), tab_view->y(), width,
+                        tab_view->height());
+  };
+  constexpr int kEnabledWidth = 128;
+  const int kDisabledWidth =
+      GetParam() == TabStripOrientation::kVertical ? 48 : 72;
+
+  // Initially the audio playing indicator should be visible and enabled.
+  set_tab_width(kEnabledWidth);
+  ASSERT_TRUE(alert_indicator->GetVisible());
+  ASSERT_TRUE(alert_indicator->GetEnabled());
+
+  // Add a second tab. The alert indicator should still be enabled.
+  AppendTab();
+  set_tab_width(kEnabledWidth);
+  EXPECT_TRUE(alert_indicator->GetVisible());
+  EXPECT_TRUE(alert_indicator->GetEnabled());
+
+  // Resize the original tab so that there is not enough width outside of the
+  // alert indicator to activate it. The alert indicator should be disabled.
+  set_tab_width(kDisabledWidth);
+  EXPECT_TRUE(alert_indicator->GetVisible());
+  EXPECT_FALSE(alert_indicator->GetEnabled());
+
+  // Activate the original tab. The alert indicator should be enabled again.
+  tab_strip_model()->ActivateTabAt(0);
+  set_tab_width(kDisabledWidth);
+  EXPECT_TRUE(alert_indicator->GetVisible());
+  EXPECT_TRUE(alert_indicator->GetEnabled());
+}
+
+IN_PROC_BROWSER_TEST_P(TabViewTabMutingEnabledTest, AlertIndicatorMuteToggle) {
+  base::HistogramTester histogram_tester;
+  TabCollectionNode* tab_node = unpinned_collection_node()->children()[0].get();
+  TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
+  auto* alert_indicator =
+      BrowserElementsViews::From(browser())->GetViewAs<AlertIndicatorButton>(
+          kTabAlertIndicatorButtonElementId);
+
+  content::WebContents* web_contents =
+      tab_strip_model()->GetActiveWebContents();
+  base::ScopedClosureRunner scoped_closure_runner = web_contents->MarkAudible();
+  tab_strip_model()->NotifyTabChanged(tab_strip_model()->GetActiveTab(),
+                                      TabChangeType::kAll);
+
+  // Audio should be playing initially.
+  WaitForLayout(tab_view);
+  ASSERT_TRUE(alert_indicator->GetVisible());
+  ASSERT_EQ(tabs::TabAlert::kAudioPlaying,
+            alert_indicator->alert_state_for_testing());
+  ASSERT_FALSE(web_contents->IsAudioMuted());
+  ASSERT_EQ(0,
+            histogram_tester.GetBucketCount("Media.Audio.TabAudioMuted", true));
+  ASSERT_EQ(
+      0, histogram_tester.GetBucketCount("Media.Audio.TabAudioMuted", false));
+
+  // After clicking the alert indicator, audio should be muted.
+  ASSERT_TRUE(alert_indicator->GetEnabled());
+  alert_indicator->button_controller()->NotifyClick();
+  WaitForLayout(tab_view);
+  EXPECT_TRUE(alert_indicator->GetVisible());
+  EXPECT_EQ(tabs::TabAlert::kAudioMuting,
+            alert_indicator->alert_state_for_testing());
+  EXPECT_TRUE(web_contents->IsAudioMuted());
+  histogram_tester.ExpectBucketCount("Media.Audio.TabAudioMuted", true, 1);
+  histogram_tester.ExpectBucketCount("Media.Audio.TabAudioMuted", false, 0);
+
+  // After clicking the alert indicator again, audio should no longer be muted.
+  ASSERT_TRUE(alert_indicator->GetEnabled());
+  alert_indicator->button_controller()->NotifyClick();
+  WaitForLayout(tab_view);
+  EXPECT_TRUE(alert_indicator->GetVisible());
+  EXPECT_EQ(tabs::TabAlert::kAudioPlaying,
+            alert_indicator->alert_state_for_testing());
+  EXPECT_FALSE(web_contents->IsAudioMuted());
+  histogram_tester.ExpectBucketCount("Media.Audio.TabAudioMuted", true, 1);
+  histogram_tester.ExpectBucketCount("Media.Audio.TabAudioMuted", false, 1);
+}
+
+class VerticalTabViewTest : public TabViewTestBase {};
+
+IN_PROC_BROWSER_TEST_F(VerticalTabViewTest, CloseButtonVisibilityActiveTab) {
+  TabCollectionNode* tab_node = unpinned_collection_node()->children()[0].get();
+  TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
+  TabCloseButton* close_button = tab_view->close_button_for_testing();
+
+  // Expect the close button to be showing initially.
+  EXPECT_TRUE(close_button->GetVisible());
+
+  // After adding a new tab, the old tab is no longer activated so the close
+  // button should no longer be showing.
+  AppendTab();
+  ASSERT_TRUE(
+      base::test::RunUntil([&]() { return !close_button->GetVisible(); }));
+}
+
+IN_PROC_BROWSER_TEST_F(VerticalTabViewTest, CloseButtonVisibilityHover) {
+  TabCollectionNode* tab_node = unpinned_collection_node()->children()[0].get();
+  TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
+  TabCloseButton* close_button = tab_view->close_button_for_testing();
+
+  // Deactivate the tab and explicitly reset hovered state so mouse cursor
+  // placement doesn't keep the close button visible.
+  AppendTab();
+  tab_view->UpdateHovered(false);
+  ASSERT_TRUE(
+      base::test::RunUntil([&]() { return !close_button->GetVisible(); }));
+
+  // After the mouse enters the tab, the close button should be showing.
+  tab_view->UpdateHovered(true);
+  WaitForLayout(tab_view);
+  EXPECT_TRUE(close_button->GetVisible());
+
+  // After the mouse exits the tab, the close button should be hidden.
+  tab_view->UpdateHovered(false);
+  WaitForLayout(tab_view);
+  EXPECT_FALSE(close_button->GetVisible());
+}
+
+IN_PROC_BROWSER_TEST_F(VerticalTabViewTest, CloseButtonVisibilityCollapsed) {
+  TabCollectionNode* tab_node = unpinned_collection_node()->children()[0].get();
+  TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
+  TabCloseButton* close_button = tab_view->close_button_for_testing();
+
+  // Deactivate the tab.
+  AppendTab();
+  ASSERT_TRUE(
+      base::test::RunUntil([&]() { return !close_button->GetVisible(); }));
+
+  // Collapse the tab strip.
+  tabs::VerticalTabStripStateController::From(browser())->RequestCollapse(true);
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return !BrowserAnimationController::From(browser())->IsAnimating(
+        TabStripAnimations::kVerticalTabStrip);
+  }));
+
+  // After collapsing the tab strip, the close button should be hidden because
+  // the tab is not hovered.
+  ASSERT_TRUE(
+      base::test::RunUntil([&]() { return !close_button->GetVisible(); }));
+
+  // After the mouse enters the tab, the close button should still be hidden
+  // because the tab is not active.
+  tab_view->UpdateHovered(true);
+  WaitForLayout(tab_view);
+  EXPECT_FALSE(close_button->GetVisible());
+
+  // After the mouse exits the tab, the close button should be hidden.
+  tab_view->UpdateHovered(false);
+  WaitForLayout(tab_view);
+  EXPECT_FALSE(close_button->GetVisible());
+}
+
+IN_PROC_BROWSER_TEST_F(VerticalTabViewTest,
+                       CloseButtonVisibilityActiveCollapsed) {
+  TabCollectionNode* tab_node = unpinned_collection_node()->children()[0].get();
+  TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
+  TabCloseButton* close_button = tab_view->close_button_for_testing();
+
+  // Collapse the tab strip.
+  tabs::VerticalTabStripStateController::From(browser())->RequestCollapse(true);
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return !BrowserAnimationController::From(browser())->IsAnimating(
+        TabStripAnimations::kVerticalTabStrip);
+  }));
+
+  // Now that the tab is collapsed the close button should be hidden.
+  ASSERT_TRUE(
+      base::test::RunUntil([&]() { return !close_button->GetVisible(); }));
+
+  // Hovering the active tab while collapsed should show the close button.
+  // TODO(crbug.com/492603554): Investigate why using EventGenerator here
+  // flakes.
+  tab_view->UpdateHovered(true);
+  WaitForLayout(tab_view);
+  EXPECT_TRUE(close_button->GetVisible());
+}
+
+IN_PROC_BROWSER_TEST_F(VerticalTabViewTest, PinnedTabsRenderBorder) {
+  AppendPinnedTab();
+
+  // The initial tab is the first child of the pinned collection.
+  TabView* pinned_tab = views::AsViewClass<TabView>(
+      pinned_collection_node()->children()[0].get()->view());
+
+  EXPECT_TRUE(pinned_tab->GetBorder());
+
+  // Unpin the tab.
+  tab_strip_model()->SetTabPinned(0, false);
+
+  ASSERT_TRUE(base::test::RunUntil(
+      [&]() { return unpinned_collection_node()->children().size() == 2u; }));
+
+  // The first child of the unpinned collection is the tab that has been
+  // unpinned.
+  TabView* unpinned_tab = views::AsViewClass<TabView>(
+      unpinned_collection_node()->children()[0].get()->view());
+
+  EXPECT_FALSE(unpinned_tab->GetBorder());
+}
+
+IN_PROC_BROWSER_TEST_F(VerticalTabViewTest, AlertIndicatorDecorateOnCollapse) {
+  tabs::VerticalTabStripStateController::From(browser())->RequestCollapse(true);
+
+  // Wait for the collapse animation to finish and ensure the width reaches
+  // kCollapsedWidth.
+  VerticalTabStripRegionView* const region_view =
+      BrowserView::GetBrowserViewForBrowser(browser())
+          ->vertical_tab_strip_region_view_for_testing();
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return !BrowserAnimationController::From(browser())->IsAnimating(
+               TabStripAnimations::kVerticalTabStrip) &&
+           region_view->width() <= tabs::kVerticalTabStripCollapsedWidth;
+  }));
+
+  TabCollectionNode* tab_node = unpinned_collection_node()->children()[0].get();
+  TabView* tab_view = views::AsViewClass<TabView>(tab_node->view());
+
+  // Ensure the tab is active and hovered so that the close button is visible.
+  tab_strip_model()->ActivateTabAt(0);
+  // TODO(crbug.com/492603554): Investigate why using EventGenerator here
+  // flakes.
+  tab_view->UpdateHovered(true);
+
+  auto* alert_indicator =
+      tab_view->GetViewByElementId(kTabAlertIndicatorButtonElementId);
+
+  // Set alert state to audio playing.
+  content::WebContents* web_contents =
+      tab_strip_model()->GetActiveWebContents();
+  base::ScopedClosureRunner scoped_closure_runner = web_contents->MarkAudible();
+  tab_strip_model()->NotifyTabChanged(tab_strip_model()->GetTabAtIndex(0),
+                                      TabChangeType::kAll);
+  WaitForLayout(tab_view);
+
+  // In collapsed mode, the active and hovered tab shows the close button as the
+  // first visible child. The alert indicator is the second visible child, so it
+  // should be hidden from normal rendering and instead trigger the
+  // decorate_on_collapse logic.
+  const gfx::Rect tab_bounds = tab_view->GetLocalBounds();
+  const gfx::Rect expected_bounds(tab_bounds.width() / 2,
+                                  tab_bounds.height() / 2, 0, 0);
+  EXPECT_EQ(expected_bounds, alert_indicator->bounds());
+}
+
+IN_PROC_BROWSER_TEST_F(VerticalTabViewTest, KeyboardExtendTabSelection_Down) {
   base::UserActionTester user_action_tester;
   AppendTab();
   AppendTab();
@@ -1038,7 +1301,7 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, KeyboardExtendTabSelection_Down) {
       2, user_action_tester.GetActionCount("TabMultiSelect_ExtendSelectionTo"));
 }
 
-IN_PROC_BROWSER_TEST_F(TabViewTest, KeyboardContractTabSelection_Up) {
+IN_PROC_BROWSER_TEST_F(VerticalTabViewTest, KeyboardContractTabSelection_Up) {
   base::UserActionTester user_action_tester;
   AppendTab();
   AppendTab();
@@ -1071,145 +1334,7 @@ IN_PROC_BROWSER_TEST_F(TabViewTest, KeyboardContractTabSelection_Up) {
       2, user_action_tester.GetActionCount("TabMultiSelect_ExtendSelectionTo"));
 }
 
-IN_PROC_BROWSER_TEST_F(TabViewTest, KeyboardExtendTabSelection_Boundary) {
-  AppendTab();
-  AppendTab();
-  tab_strip_model()->ActivateTabAt(0);
-
-  views::View* tab_view_0 = GetTabView(0);
-  views::View* tab_view_2 = GetTabView(2);
-  ASSERT_TRUE(tab_view_0);
-  ASSERT_TRUE(tab_view_2);
-
-  // Top boundary check: Shift + Up on the topmost tab is consumed without
-  // wrapping around to the bottom tab.
-  tab_view_0->GetFocusManager()->SetFocusedView(tab_view_0);
-  ui::KeyEvent shift_up(ui::EventType::kKeyPressed, ui::VKEY_UP,
-                        ui::EF_SHIFT_DOWN);
-  EXPECT_TRUE(tab_view_0->OnKeyPressed(shift_up));
-  EXPECT_TRUE(tab_strip_model()->IsTabSelected(0));
-  EXPECT_FALSE(tab_strip_model()->IsTabSelected(1));
-  EXPECT_FALSE(tab_strip_model()->IsTabSelected(2));
-  EXPECT_TRUE(tab_view_0->HasFocus());
-
-  // Bottom boundary check: Shift + Down on the bottom tab is consumed without
-  // wrapping around to the top tab.
-  tab_strip_model()->ActivateTabAt(2);
-  tab_view_2->GetFocusManager()->SetFocusedView(tab_view_2);
-  ui::KeyEvent shift_down(ui::EventType::kKeyPressed, ui::VKEY_DOWN,
-                          ui::EF_SHIFT_DOWN);
-  EXPECT_TRUE(tab_view_2->OnKeyPressed(shift_down));
-  EXPECT_FALSE(tab_strip_model()->IsTabSelected(0));
-  EXPECT_FALSE(tab_strip_model()->IsTabSelected(1));
-  EXPECT_TRUE(tab_strip_model()->IsTabSelected(2));
-  EXPECT_TRUE(tab_view_2->HasFocus());
-}
-
-IN_PROC_BROWSER_TEST_F(TabViewTest,
-                       KeyboardExtendTabSelection_AfterFocusTraversal) {
-  AppendTab();
-  AppendTab();
-  AppendTab();
-  AppendTab();
-  // Select and anchor at tab 0.
-  tab_strip_model()->ActivateTabAt(0);
-  ASSERT_TRUE(tab_strip_model()->IsTabSelected(0));
-  ASSERT_FALSE(tab_strip_model()->IsTabSelected(2));
-
-  views::View* tab_view_2 = GetTabView(2);
-  views::View* tab_view_3 = GetTabView(3);
-  ASSERT_TRUE(tab_view_2);
-  ASSERT_TRUE(tab_view_3);
-
-  // Simulate plain arrow-key focus traversal to tab 2 without updating
-  // selection.
-  tab_view_2->GetFocusManager()->SetFocusedView(tab_view_2);
-  ASSERT_TRUE(tab_view_2->HasFocus());
-  ASSERT_TRUE(tab_strip_model()->IsTabSelected(0));
-  ASSERT_FALSE(tab_strip_model()->IsTabSelected(2));
-
-  // Pressing Shift + Down on unfocused tab 2 should re-anchor at tab 2 and
-  // select tabs 2 and 3 rather than extending from the old anchor (tab 0).
-  ui::KeyEvent shift_down(ui::EventType::kKeyPressed, ui::VKEY_DOWN,
-                          ui::EF_SHIFT_DOWN);
-  EXPECT_TRUE(tab_view_2->OnKeyPressed(shift_down));
-  EXPECT_FALSE(tab_strip_model()->IsTabSelected(0));
-  EXPECT_FALSE(tab_strip_model()->IsTabSelected(1));
-  EXPECT_TRUE(tab_strip_model()->IsTabSelected(2));
-  EXPECT_TRUE(tab_strip_model()->IsTabSelected(3));
-  EXPECT_FALSE(tab_strip_model()->IsTabSelected(4));
-  EXPECT_TRUE(tab_view_3->HasFocus());
-}
-
-IN_PROC_BROWSER_TEST_F(TabViewTest,
-                       KeyboardExtendTabSelection_CollapsedGroupAndPinned) {
-  AppendTab();
-  AppendTab();
-  AppendTab();
-  // Tab 0 is pinned; Tab 1 is unpinned; Tabs 2 and 3 are in a collapsed group.
-  tab_strip_model()->SetTabPinned(0, true);
-  tab_groups::TabGroupId group_id = tab_strip_model()->AddToNewGroup({2, 3});
-  const TabGroup* group =
-      tab_strip_model()->group_model()->GetTabGroup(group_id);
-  ASSERT_TRUE(group);
-  root_node()->GetController()->ToggleTabGroupCollapsedState(
-      group, ToggleTabGroupCollapsedStateOrigin::kMenuAction);
-  ASSERT_TRUE(root_node()->GetController()->IsGroupCollapsed(group_id));
-
-  views::View* tab_view_0 = GetTabView(0);
-  views::View* tab_view_1 = GetTabView(1);
-  views::View* tab_view_2 = GetTabView(2);
-  ASSERT_TRUE(tab_view_0);
-  ASSERT_TRUE(tab_view_1);
-  ASSERT_TRUE(tab_view_2);
-
-  // Activate and focus pinned tab 0, then extend downwards across the
-  // pinned/unpinned boundary to tab 1.
-  tab_strip_model()->ActivateTabAt(0);
-  tab_view_0->GetFocusManager()->SetFocusedView(tab_view_0);
-  ui::KeyEvent shift_down(ui::EventType::kKeyPressed, ui::VKEY_DOWN,
-                          ui::EF_SHIFT_DOWN);
-  EXPECT_TRUE(tab_view_0->OnKeyPressed(shift_down));
-  EXPECT_TRUE(tab_strip_model()->IsTabSelected(0));
-  EXPECT_TRUE(tab_strip_model()->IsTabSelected(1));
-  EXPECT_TRUE(tab_view_1->HasFocus());
-
-  // Extend downwards from tab 1 into tab 2 (inside the collapsed group). The
-  // group should auto-expand so focus lands on a visible tab view.
-  EXPECT_TRUE(tab_view_1->OnKeyPressed(shift_down));
-  EXPECT_FALSE(root_node()->GetController()->IsGroupCollapsed(group_id));
-  EXPECT_TRUE(tab_strip_model()->IsTabSelected(0));
-  EXPECT_TRUE(tab_strip_model()->IsTabSelected(1));
-  EXPECT_TRUE(tab_strip_model()->IsTabSelected(2));
-  EXPECT_TRUE(tab_view_2->HasFocus());
-}
-
-IN_PROC_BROWSER_TEST_F(TabViewTest,
-                       KeyboardExtendTabSelection_PreservesPaneFocus) {
-  AppendTab();
-  tab_strip_model()->ActivateTabAt(0);
-
-  TabStripRegionView* region_view =
-      BrowserView::GetBrowserViewForBrowser(browser())->tab_strip_view();
-  views::View* tab_view_0 = GetTabView(0);
-  views::View* tab_view_1 = GetTabView(1);
-  ASSERT_TRUE(tab_view_0);
-  ASSERT_TRUE(tab_view_1);
-
-  region_view->RequestFocus();
-  ASSERT_TRUE(tab_view_0->HasFocus());
-  ASSERT_TRUE(region_view->pane_has_focus());
-
-  ui::KeyEvent shift_down(ui::EventType::kKeyPressed, ui::VKEY_DOWN,
-                          ui::EF_SHIFT_DOWN);
-  EXPECT_TRUE(tab_view_0->OnKeyPressed(shift_down));
-  EXPECT_TRUE(tab_strip_model()->IsTabSelected(0));
-  EXPECT_TRUE(tab_strip_model()->IsTabSelected(1));
-  EXPECT_TRUE(tab_view_1->HasFocus());
-  EXPECT_TRUE(region_view->pane_has_focus());
-}
-
-IN_PROC_BROWSER_TEST_F(TabViewTest,
+IN_PROC_BROWSER_TEST_F(VerticalTabViewTest,
                        PinnedSplitTabUnsplitUpdatesLayerRoundedCorners) {
   const gfx::AnimationTestApi::RenderModeResetter enable_rich_animations =
       gfx::AnimationTestApi::SetRichAnimationRenderMode(
@@ -1251,18 +1376,10 @@ IN_PROC_BROWSER_TEST_F(TabViewTest,
   EXPECT_EQ(remaining_tab->layer(), nullptr);
 }
 
-class HorizontalTabViewTest : public TabViewTest {
+class HorizontalTabViewTest : public TabViewTestBase {
  public:
-  const std::vector<base::test::FeatureRefAndParams> GetEnabledFeatures()
-      override {
-    auto enabled = VerticalTabsBrowserTestMixin<
-        InProcessBrowserTest>::GetEnabledFeatures();
-    enabled.push_back({tabs::kTabStripUnification, {}});
-    return enabled;
-  }
-
   void SetUpOnMainThread() override {
-    TabViewTest::SetUpOnMainThread();
+    TabViewTestBase::SetUpOnMainThread();
     ExitVerticalTabsMode();
     ResetTabHoverStates();
   }
@@ -1526,13 +1643,42 @@ IN_PROC_BROWSER_TEST_F(HorizontalTabViewTest,
   EXPECT_EQ(remaining_tab->layer(), nullptr);
 }
 
+IN_PROC_BROWSER_TEST_F(HorizontalTabViewTest,
+                       SplitTabLeftAndRightFollowViewModelOrder) {
+  AppendTab();
+  // Activate tab 1 and add tab 0 to a new split with it so that tab 0 is
+  // inserted into the split before tab 1 in the view model.
+  tab_strip_model()->ActivateTabAt(1);
+  const split_tabs::SplitTabId split_id = tab_strip_model()->AddToNewSplit(
+      {0}, {}, split_tabs::SplitTabCreatedSource::kTabContextMenu);
+
+  TabView* first_tab = GetTabView(0);
+  TabView* second_tab = GetTabView(1);
+  ASSERT_TRUE(first_tab);
+  ASSERT_TRUE(second_tab);
+
+  EXPECT_TRUE(first_tab->tab_styling()->delegate()->IsLeftSplitTab());
+  EXPECT_FALSE(first_tab->tab_styling()->delegate()->IsRightSplitTab());
+  EXPECT_FALSE(second_tab->tab_styling()->delegate()->IsLeftSplitTab());
+  EXPECT_TRUE(second_tab->tab_styling()->delegate()->IsRightSplitTab());
+
+  // Reversing the tabs in the split updates the view model order without
+  // reordering views::View::children().
+  tab_strip_model()->ReverseTabsInSplit(split_id);
+  EXPECT_EQ(GetTabView(0), second_tab);
+  EXPECT_EQ(GetTabView(1), first_tab);
+
+  EXPECT_TRUE(second_tab->tab_styling()->delegate()->IsLeftSplitTab());
+  EXPECT_FALSE(second_tab->tab_styling()->delegate()->IsRightSplitTab());
+  EXPECT_FALSE(first_tab->tab_styling()->delegate()->IsLeftSplitTab());
+  EXPECT_TRUE(first_tab->tab_styling()->delegate()->IsRightSplitTab());
+}
+
 class HorizontalTabViewPinnedStylingEnabledTest : public HorizontalTabViewTest {
  public:
   const std::vector<base::test::FeatureRefAndParams> GetEnabledFeatures()
       override {
-    auto enabled = VerticalTabsBrowserTestMixin<
-        InProcessBrowserTest>::GetEnabledFeatures();
-    enabled.push_back({tabs::kTabStripUnification, {}});
+    auto enabled = HorizontalTabViewTest::GetEnabledFeatures();
     enabled.push_back({tabs::kNewHorizontalPinnedTabStyling, {}});
     return enabled;
   }
@@ -1684,4 +1830,122 @@ IN_PROC_BROWSER_TEST_F(HorizontalTabViewPinnedStylingDisabledTest,
   SkPath active_path =
       tab0->tab_styling()->GetPath(TabStyle::PathType::kActiveTab, 1.0f, {});
   EXPECT_FALSE(active_path.isRRect(nullptr));
+}
+
+class HorizontalTabViewDeclutterTest
+    : public HorizontalTabViewPinnedStylingDisabledTest {
+ public:
+  const std::vector<base::test::FeatureRefAndParams> GetEnabledFeatures()
+      override {
+    auto enabled =
+        HorizontalTabViewPinnedStylingDisabledTest::GetEnabledFeatures();
+    enabled.push_back({features::kTabStripDeclutter, {}});
+    return enabled;
+  }
+
+  void AppendUnpinnedTabSynchronously() {
+    std::unique_ptr<content::WebContents> contents =
+        content::WebContents::Create(
+            content::WebContents::CreateParams(browser()->GetProfile()));
+    tab_strip_model()->InsertWebContentsAt(tab_strip_model()->count(),
+                                           std::move(contents), ADD_ACTIVE);
+    ResetTabHoverStates();
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(HorizontalTabViewDeclutterTest,
+                       HorizontalSeparators_DeclutterThresholdRepaintsTabs) {
+  AppendPinnedTab();
+  AppendPinnedTab();
+
+  while (tab_strip_model()->count() <
+         TabStyle::kTabStripDeclutterMinTabsForSeparatorHide - 1) {
+    AppendUnpinnedTabSynchronously();
+  }
+  RunScheduledLayouts();
+
+  TabView* tab0 = GetTabView(0);
+  TabView* tab1 = GetTabView(1);
+  TabView* tab2 = GetTabView(2);
+  ASSERT_TRUE(tab0);
+  ASSERT_TRUE(tab1);
+  ASSERT_TRUE(tab2);
+  ASSERT_FALSE(tab0->IsActive());
+  ASSERT_FALSE(tab1->IsActive());
+  ASSERT_FALSE(tab2->IsActive());
+
+  views::View* pinned_container = pinned_collection_node()->view();
+  views::View* unpinned_container = unpinned_collection_node()->view();
+  ASSERT_TRUE(pinned_container);
+  ASSERT_TRUE(unpinned_container);
+  ASSERT_TRUE(pinned_container->layer());
+  ASSERT_TRUE(unpinned_container->layer());
+  ui::LayerTestApi pinned_layer_test_api(pinned_container->layer());
+  ui::LayerTestApi unpinned_layer_test_api(unpinned_container->layer());
+
+  // Just below the declutter threshold (19 tabs), inactive pinned and unpinned
+  // tabs render separators.
+  EXPECT_EQ(tab0->tab_styling()->GetSeparatorOpacitiesForTesting().right, 1.0f);
+  EXPECT_EQ(tab2->tab_styling()->GetSeparatorOpacitiesForTesting().right, 1.0f);
+
+  pinned_container->layer()->SendDamagedRects();
+  unpinned_container->layer()->SendDamagedRects();
+  ASSERT_TRUE(pinned_layer_test_api.damaged_region().IsEmpty());
+  ASSERT_TRUE(unpinned_layer_test_api.damaged_region().IsEmpty());
+
+  // Adding an unpinned tab to reach the declutter threshold (20 tabs) hides
+  // separators and must synchronously schedule a repaint on both layer-backed
+  // containers before layout runs and without requiring mouse hover.
+  AppendUnpinnedTabSynchronously();
+
+  EXPECT_EQ(tab0->tab_styling()->GetSeparatorOpacitiesForTesting().right, 0.0f);
+  EXPECT_EQ(tab2->tab_styling()->GetSeparatorOpacitiesForTesting().right, 0.0f);
+  EXPECT_TRUE(pinned_layer_test_api.damaged_region().Contains(tab0->bounds()));
+  EXPECT_TRUE(pinned_layer_test_api.damaged_region().Contains(tab1->bounds()));
+  EXPECT_TRUE(
+      unpinned_layer_test_api.damaged_region().Contains(tab2->bounds()));
+  RunScheduledLayouts();
+
+  // Adding and closing a tab while staying at or above the threshold (20 <->
+  // 21) should not schedule full-container repaints on either container.
+  pinned_container->layer()->SendDamagedRects();
+  unpinned_container->layer()->SendDamagedRects();
+  ASSERT_TRUE(pinned_layer_test_api.damaged_region().IsEmpty());
+  ASSERT_TRUE(unpinned_layer_test_api.damaged_region().IsEmpty());
+
+  AppendUnpinnedTabSynchronously();
+  EXPECT_TRUE(pinned_layer_test_api.damaged_region().IsEmpty());
+  EXPECT_FALSE(
+      unpinned_layer_test_api.damaged_region().Contains(tab2->bounds()));
+  RunScheduledLayouts();
+
+  pinned_container->layer()->SendDamagedRects();
+  unpinned_container->layer()->SendDamagedRects();
+  ASSERT_TRUE(pinned_layer_test_api.damaged_region().IsEmpty());
+  ASSERT_TRUE(unpinned_layer_test_api.damaged_region().IsEmpty());
+
+  tab_strip_model()->CloseWebContentsAt(tab_strip_model()->count() - 1,
+                                        TabCloseTypes::CLOSE_NONE);
+  EXPECT_TRUE(pinned_layer_test_api.damaged_region().IsEmpty());
+  EXPECT_FALSE(
+      unpinned_layer_test_api.damaged_region().Contains(tab2->bounds()));
+  RunScheduledLayouts();
+
+  // Closing an unpinned tab to drop below the declutter threshold (20 -> 19)
+  // restores separators and must synchronously schedule a repaint on both
+  // containers.
+  pinned_container->layer()->SendDamagedRects();
+  unpinned_container->layer()->SendDamagedRects();
+  ASSERT_TRUE(pinned_layer_test_api.damaged_region().IsEmpty());
+  ASSERT_TRUE(unpinned_layer_test_api.damaged_region().IsEmpty());
+
+  tab_strip_model()->CloseWebContentsAt(tab_strip_model()->count() - 1,
+                                        TabCloseTypes::CLOSE_NONE);
+
+  EXPECT_EQ(tab0->tab_styling()->GetSeparatorOpacitiesForTesting().right, 1.0f);
+  EXPECT_EQ(tab2->tab_styling()->GetSeparatorOpacitiesForTesting().right, 1.0f);
+  EXPECT_TRUE(pinned_layer_test_api.damaged_region().Contains(tab0->bounds()));
+  EXPECT_TRUE(pinned_layer_test_api.damaged_region().Contains(tab1->bounds()));
+  EXPECT_TRUE(
+      unpinned_layer_test_api.damaged_region().Contains(tab2->bounds()));
 }

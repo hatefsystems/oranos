@@ -76,13 +76,11 @@ std::vector<base::CallbackListSubscription> SubscribeToAnimations(
                   OrganizerPanelAnimations::kOrganizerPanel);
               auto* const browser_view =
                   BrowserView::GetBrowserViewForBrowser(browser);
-              if (motion == OrganizerPanelAnimations::kShow) {
-                views::ElementTrackerViews::GetInstance()->NotifyCustomEvent(
-                    kShowAnimationComplete, browser_view);
-              } else if (motion == OrganizerPanelAnimations::kHide) {
-                views::ElementTrackerViews::GetInstance()->NotifyCustomEvent(
-                    kHideAnimationComplete, browser_view);
-              }
+              views::ElementTrackerViews::GetInstance()->NotifyCustomEvent(
+                  OrganizerPanelAnimations::IsShow(motion)
+                      ? kShowAnimationComplete
+                      : kHideAnimationComplete,
+                  browser_view);
             }
           })));
 
@@ -415,6 +413,23 @@ IN_PROC_BROWSER_TEST_F(OrganizerPanelUiTest, TrayClosesOnFocusLost) {
                   WaitForPanelClose(), CheckControllerState(false));
 }
 
+IN_PROC_BROWSER_TEST_F(OrganizerPanelUiTest, ClickAboveSearchFieldUnfocuses) {
+  const DeepQuery kAppQuery{"organizer-panel-app"};
+  RunTestSequence(
+      SetVerticalTabsEnabled(false), OpenOrganizerPanel(), WaitForPanelLoad(),
+      CheckJsResultAt(kWebContentsId, kAppQuery,
+                      "el => el.$.searchField.isSearchFocused()", true),
+      MoveMouseTo(kOrganizerPanelControlsElementId), ClickMouse(),
+      CheckJsResultAt(kWebContentsId, kAppQuery,
+                      "el => el.$.searchField.isSearchFocused()", false),
+      CheckView(kBrowserViewElementId,
+                [](BrowserView* browser_view) {
+                  return browser_view->GetFocusManager()->GetFocusedView() !=
+                         nullptr;
+                }),
+      CloseOrganizerPanel());
+}
+
 IN_PROC_BROWSER_TEST_F(OrganizerPanelUiTest, TrayRestoresFocusOnClose) {
   RunTestSequence(SetVerticalTabsEnabled(false),
                   // Focus the web contents.
@@ -629,7 +644,7 @@ IN_PROC_BROWSER_TEST_F(OrganizerPanelAnimationUiTest,
                   }),
       PressButton(kTabSearchButtonElementId), Do([this]() {
         animation_test_api_->IncrementTime(
-            base::Milliseconds(browser_animations::kFlyoutShowMs / 2));
+            base::Milliseconds(browser_animations::kShortExpandShowMs / 2));
       }),
       WaitForShow(kOrganizerPanelElementId),
       WithElement(kTabStripRegionElementId,

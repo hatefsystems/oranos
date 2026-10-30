@@ -22,7 +22,7 @@ import type {BigBuffer} from '//resources/mojo/mojo/public/mojom/base/big_buffer
 import type {UnguessableToken} from '//resources/mojo/mojo/public/mojom/base/unguessable_token.mojom-webui.js';
 import type {Url} from '//resources/mojo/url/mojom/url.mojom-webui.js';
 
-import {ComposeboxFile, ComposeboxFileValidationError, ComposeboxInputModel, ContextType, ContextualSearchInputStateDeletionType, FILE_VALIDATION_ERRORS_MAP, getLoadTimeBoolean, isContextUploadStatusTerminal, isValidTabId, ProcessFilesError, recordBoolean, recordContextAdditionMethod, recordContextualElementClickedMetric, recordEnumerationValue, recordInputTypeShown, recordModelModeSelection, recordModelModeShown, recordRichImageSuggestClicked, recordSingleTabMenuItemAction, recordToolModeSelection, recordToolModeShown, recordUserAction, SingleTabMenuItemAction, SingleTabType, TabSuggestionsState} from './common.js';
+import {ComposeboxFile, ComposeboxFileValidationError, ComposeboxInputModel, ContextType, ContextualSearchInputStateDeletionType, FILE_VALIDATION_ERRORS_MAP, getLoadTimeBoolean, isContextUploadStatusTerminal, isValidTabId, ProcessFilesError, recordBoolean, recordContextAdditionMethod, recordContextualElementClickedMetric, recordEnumerationValue, recordInputTypeShown, recordModelModeSelection, recordModelModeShown, recordRichImageSuggestClicked, recordSingleTabMenuItemAction, recordToolModeSelection, recordToolModeShown, recordUserAction, SingleTabMenuItemAction, SingleTabType, SubmitButtonIconType, TabSuggestionsState, VoiceSearchAction} from './common.js';
 import type {BrowserFileUpload, ComposeboxFuseboxActionRequest, ComposeboxState, ContextualUpload, DriveUpload, TabUpload} from './common.js';
 import type {PageHandlerRemote} from './composebox.mojom-webui.js';
 import {AimButtonMode} from './composebox_aim_button.js';
@@ -38,16 +38,6 @@ import type {ComposeboxVoiceSearchElement, VoicePermissionPromptState} from './c
 import {ContextualEntrypointAndMenuElement} from './contextual_entrypoint_and_menu.js';
 import type {ContextualEntrypointButtonElement} from './contextual_entrypoint_button.js';
 import {WindowProxy} from './window_proxy.js';
-
-export enum VoiceSearchAction {
-  ACTIVATE = 0,
-  QUERY_SUBMITTED = 1,
-}
-
-export enum SubmitButtonIconType {
-  FORWARD = 'forward',
-  UPWARD = 'upward',
-}
 
 const PERMISSION_PROMPT_CSS_CLASS = 'permission-prompt-showing';
 
@@ -193,6 +183,7 @@ export const ComposeboxEmbedderMixin =
             tabSuggestionsState: {type: Number},
             aimThreadRestoredTabs: {type: Array},
             tabDeselectionEnabled: {type: Boolean},
+            tabStateUnificationEnabled: {type: Boolean},
             transcript: {type: String},
             hasVoiceSearchError: {type: Boolean},
             voiceSearchCoherenceEnabled: {type: Boolean},
@@ -203,6 +194,10 @@ export const ComposeboxEmbedderMixin =
               type: Boolean,
             },
             energyEffectAnimationEnabled: {
+              reflect: true,
+              type: Boolean,
+            },
+            willFulfillInAim: {
               reflect: true,
               type: Boolean,
             },
@@ -239,6 +234,8 @@ export const ComposeboxEmbedderMixin =
             getLoadTimeBoolean('composeboxContextMenuTooltipsEnabled', false);
         accessor tabDeselectionEnabled: boolean = getLoadTimeBoolean(
             'composeboxContextMenuEnableTabDeselection', false);
+        accessor tabStateUnificationEnabled: boolean =
+            getLoadTimeBoolean('composeboxTabStateUnificationEnabled', true);
         contextMenuDescriptionEnabled: boolean =
             getLoadTimeBoolean('composeboxShowContextMenuDescription', false);
         accessor showContextMenuDescription: boolean =
@@ -258,6 +255,8 @@ export const ComposeboxEmbedderMixin =
             loadTimeData.getBoolean('tabFaviconChipsToCoinsEnabled');
         accessor energyEffectEnabled: boolean = false;
         accessor energyEffectAnimationEnabled: boolean = false;
+        accessor willFulfillInAim: boolean =
+            !getLoadTimeBoolean('dynamicAimFulfillmentEnabled', false);
 
         browserTabContextAdded: boolean = false;
         pendingAutomaticActiveTabUrl: string = '';
@@ -384,6 +383,7 @@ export const ComposeboxEmbedderMixin =
         accessor tabSuggestions: TabInfo[] = [];
         accessor tabSuggestionsState: TabSuggestionsState =
             TabSuggestionsState.NOT_STARTED;
+        private pendingTabSuggestionNeedsRefresh_: boolean = false;
         accessor transcript: string = '';
         private fuseboxChipHint_: string|null = null;
         private selectAllOnStateUpdate_: boolean = false;
@@ -614,6 +614,7 @@ export const ComposeboxEmbedderMixin =
           }
 
           if (changedPrivateProperties.has('inputState') && this.inputState) {
+            this.willFulfillInAim = this.inputState.willFulfillInAim;
             this.hasAllowedInputs =
                 (this.inputState.allowedModels.length > 0 ||
                  this.inputState.allowedTools.length > 0 ||
@@ -800,6 +801,7 @@ export const ComposeboxEmbedderMixin =
         // rather than inside composebox: Omnibox Everywhere.
         // Receives events from the inner voice search component.
         onVoicePermissionChanged(e: CustomEvent<VoicePermissionPromptState>) {
+          e.preventDefault();
           const voiceSearchElement =
               this.shadowRoot?.querySelector<ComposeboxVoiceSearchElement>(
                   '#voiceSearch');
@@ -3090,77 +3092,89 @@ export const ComposeboxEmbedderMixin =
          * cache to minimize Mojo overhead.
          */
         async refreshTabSuggestions(forceRefresh: boolean = false) {
-          if (this.tabSuggestionsState === TabSuggestionsState.LOADING ||
-              (this.tabSuggestionsState === TabSuggestionsState.LOADED &&
-               !forceRefresh)) {
+          // If a refresh is already in flight, wait for it unless a forced
+          // refresh is requested, in which case queue another loop iteration.
+          if (this.tabSuggestionsState === TabSuggestionsState.LOADING) {
+            if (forceRefresh) {
+              this.pendingTabSuggestionNeedsRefresh_ = true;
+            }
+            return;
+          }
+          if (this.tabSuggestionsState === TabSuggestionsState.LOADED &&
+              !forceRefresh) {
             return;
           }
           this.tabSuggestionsState = TabSuggestionsState.LOADING;
+          this.pendingTabSuggestionNeedsRefresh_ = true;
           try {
-            const {tabs} = await this.getSearchboxHandler().getRecentTabs();
-            this.recentTabId = tabs[0]?.tabId ?? null;
+            while (this.pendingTabSuggestionNeedsRefresh_) {
+              this.pendingTabSuggestionNeedsRefresh_ = false;
+              const {tabs} = await this.getSearchboxHandler().getRecentTabs();
+              this.recentTabId = tabs[0]?.tabId ?? null;
 
-            const openTabsMap = new Map(tabs.map(t => [t.tabId, t]));
+              const openTabsMap = new Map(tabs.map(t => [t.tabId, t]));
 
-            // Gather UUIDs in a temporary array to prevent modifying
-            // `this.attachedContext` mid-iteration, since `deleteFile()`
-            // replaces the Map reference.
-            const uuidsToDelete: UnguessableToken[] = [];
+              // Gather UUIDs in a temporary array to prevent modifying
+              // `this.attachedContext` mid-iteration, since `deleteFile()`
+              // replaces the Map reference.
+              const uuidsToDelete: UnguessableToken[] = [];
 
-            this.attachedContext.forEach((file, uuid) => {
-              if (file.tabId) {
-                const freshTab = openTabsMap.get(file.tabId);
-                if (!freshTab || (file.url && file.url !== freshTab.url)) {
-                  uuidsToDelete.push(uuid);
-                }
-              }
-            });
-            uuidsToDelete.forEach(uuid => {
-              this.deleteFile(uuid, /*fromUserAction=*/ false);
-            });
-
-            if (this.tabDeselectionEnabled) {
-              const closedOrNavigatedRestoredTabs =
-                  this.aimThreadRestoredTabs.filter(tab => {
-                    const currentTab = openTabsMap.get(tab.tabId);
-                    return !currentTab || currentTab.url !== tab.url;
-                  });
-              closedOrNavigatedRestoredTabs.forEach(tab => {
-                if (isValidTabId(tab.tabId)) {
-                  this.getSearchboxHandler().deleteTabContext(tab.tabId);
+              this.attachedContext.forEach((file, uuid) => {
+                if (file.tabId) {
+                  const freshTab = openTabsMap.get(file.tabId);
+                  if (!freshTab || (file.url && file.url !== freshTab.url)) {
+                    uuidsToDelete.push(uuid);
+                  }
                 }
               });
-              this.aimThreadRestoredTabs =
-                  this.aimThreadRestoredTabs.filter(tab => {
-                    const currentTab = openTabsMap.get(tab.tabId);
-                    return currentTab && currentTab.url === tab.url;
-                  });
-            }
+              uuidsToDelete.forEach(uuid => {
+                this.deleteFile(uuid, /*fromUserAction=*/ false);
+              });
 
-            const restored = this.contextManagementInComposeboxEnabled ?
-                (this.aimThreadRestoredTabs || []) :
-                [];
+              if (this.tabDeselectionEnabled) {
+                const closedOrNavigatedRestoredTabs =
+                    this.aimThreadRestoredTabs.filter(tab => {
+                      const currentTab = openTabsMap.get(tab.tabId);
+                      return !currentTab || currentTab.url !== tab.url;
+                    });
+                closedOrNavigatedRestoredTabs.forEach(tab => {
+                  if (isValidTabId(tab.tabId)) {
+                    this.getSearchboxHandler().deleteTabContext(tab.tabId);
+                  }
+                });
+                this.aimThreadRestoredTabs =
+                    this.aimThreadRestoredTabs.filter(tab => {
+                      const currentTab = openTabsMap.get(tab.tabId);
+                      return currentTab && currentTab.url === tab.url;
+                    });
+              }
 
-            const processedRecentTabs = dedupeTabs(restored, tabs);
+              const restored = this.contextManagementInComposeboxEnabled ?
+                  (this.aimThreadRestoredTabs || []) :
+                  [];
 
-            this.tabSuggestions = this.getSortedTabSuggestions_([
-              ...processedRecentTabs,
-              ...restored,
-            ]);
-            this.tabSuggestionsState = TabSuggestionsState.LOADED;
+              const processedRecentTabs = dedupeTabs(restored, tabs);
 
-            if (this.inputState) {
-              const {allowedInputTypes, disabledInputTypes} = this.inputState;
-              if (allowedInputTypes.includes(InputType.kBrowserTab) &&
-                  !disabledInputTypes.includes(InputType.kBrowserTab)) {
-                const filteredSuggestions = this.tabSuggestions;
+              this.tabSuggestions = this.getSortedTabSuggestions_([
+                ...processedRecentTabs,
+                ...restored,
+              ]);
 
-                if (filteredSuggestions.length > 0) {
-                  recordInputTypeShown(
-                      InputType.kBrowserTab, this.composeboxSource, 'AimPopup');
+              if (this.inputState) {
+                const {allowedInputTypes, disabledInputTypes} = this.inputState;
+                if (allowedInputTypes.includes(InputType.kBrowserTab) &&
+                    !disabledInputTypes.includes(InputType.kBrowserTab)) {
+                  const filteredSuggestions = this.tabSuggestions;
+
+                  if (filteredSuggestions.length > 0) {
+                    recordInputTypeShown(
+                        InputType.kBrowserTab, this.composeboxSource,
+                        'AimPopup');
+                  }
                 }
               }
             }
+            this.tabSuggestionsState = TabSuggestionsState.LOADED;
           } finally {
             if (this.tabSuggestionsState === TabSuggestionsState.LOADING) {
               this.tabSuggestionsState = TabSuggestionsState.NOT_STARTED;
@@ -3482,6 +3496,7 @@ export interface ComposeboxEmbedderMixinInterface extends I18nMixinLitInterface,
   tabSuggestions: TabInfo[];
   tabSuggestionsState: TabSuggestionsState;
   tabDeselectionEnabled: boolean;
+  tabStateUnificationEnabled: boolean;
   transcript: string;
   composeboxNoFlickerSuggestionsFix: boolean;
   unselectMatchOnTabExit: boolean;
@@ -3497,6 +3512,7 @@ export interface ComposeboxEmbedderMixinInterface extends I18nMixinLitInterface,
   voiceSearchCoherenceEnabled: boolean;
   energyEffectEnabled: boolean;
   energyEffectAnimationEnabled: boolean;
+  willFulfillInAim: boolean;
   updateComplete: Promise<boolean>;
   pendingAutomaticActiveTabUrl: string;
   pendingAutomaticActiveTabTitle: string;

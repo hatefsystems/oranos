@@ -6,7 +6,7 @@
 
 #include "base/check.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/tabs/features.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/tabs/organizer/organizer_panel_utils.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/webui/favicon_source.h"
@@ -23,6 +23,9 @@
 #include "chrome/grit/organizer_panel_resources.h"
 #include "chrome/grit/organizer_panel_resources_map.h"
 #include "components/favicon_base/favicon_url_parser.h"
+#include "components/signin/public/base/consent_level.h"
+#include "components/signin/public/base/signin_buildflags.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/url_data_source.h"
@@ -58,11 +61,12 @@ OrganizerPanelUI::OrganizerPanelUI(content::WebUI* web_ui)
       {"noResults", IDS_ORGANIZER_PANEL_NO_RESULTS},
       {"oneTab", IDS_TAB_SEARCH_ONE_TAB},
       {"options", IDS_ORGANIZER_PANEL_OPTIONS},
-      {"recentlyClosed", IDS_TAB_SEARCH_RECENTLY_CLOSED},
+      {"recentlyClosed", IDS_ORGANIZER_PANEL_RECENTLY_CLOSED},
       {"recentlyVisited", IDS_ORGANIZER_PANEL_RECENTLY_VISITED},
       {"searchTabs", IDS_TAB_SEARCH_SEARCH_TABS},
       {"showAll", IDS_ORGANIZER_PANEL_SHOW_ALL},
       {"showSome", IDS_ORGANIZER_PANEL_SHOW_SOME},
+      {"signInOnPhone", IDS_SEND_TAB_TO_SELF_SIGN_IN_ON_PHONE},
       {"splitView", IDS_ORGANIZER_PANEL_SPLIT_VIEW},
       {"tabCount", IDS_TAB_SEARCH_TAB_COUNT},
       {"tabGroupMoreOptions", IDS_TAB_GROUP_MORE_OPTIONS},
@@ -71,11 +75,20 @@ OrganizerPanelUI::OrganizerPanelUI(content::WebUI* web_ui)
       {"title", IDS_ORGANIZER_PANEL},
   };
   source->AddLocalizedStrings(kStrings);
-  source->AddBoolean(
-      "cjkWordBoundaryEnabled",
-      base::FeatureList::IsEnabled(tabs::kTabSearchCjkWordBoundary));
   source->AddBoolean("foreignTabsEnabled",
                      organizer_panel::IsOrganizerPanelForeignTabsEnabled());
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile);
+  source->AddBoolean("isUserSignedIn",
+                     identity_manager && identity_manager->HasPrimaryAccount(
+                                             signin::ConsentLevel::kSignin));
+  source->AddBoolean("diceSupportEnabled",
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+                     true
+#else
+                     false
+#endif
+  );
   source->AddBoolean("isIncognitoMode", profile->IsIncognitoProfile());
 
   ui::Accelerator accelerator(ui::VKEY_A,

@@ -7,7 +7,7 @@
 #include "third_party/blink/renderer/core/layout/box_fragment_builder.h"
 #include "third_party/blink/renderer/core/layout/flex/flex_line.h"
 #include "third_party/blink/renderer/core/layout/gap/cross_gap.h"
-#include "third_party/blink/renderer/core/layout/gap/gap_geometry.h"
+#include "third_party/blink/renderer/core/layout/gap/flex_gap_geometry.h"
 #include "third_party/blink/renderer/core/layout/gap/main_gap.h"
 
 namespace blink {
@@ -24,8 +24,7 @@ FlexGapAccumulator::FlexGapAccumulator(
     : gap_between_items_(gap_between_items),
       effective_gap_between_lines_(effective_gap_between_lines),
       is_column_(is_column),
-      gap_geometry_(
-          MakeGarbageCollected<GapGeometry>(GapGeometry::ContainerType::kFlex)),
+      gap_geometry_(MakeGarbageCollected<FlexGapGeometry>()),
       border_scrollbar_padding_block_start_(
           border_scrollbar_padding_block_start),
       border_scrollbar_padding_inline_start_(
@@ -252,7 +251,7 @@ void FlexGapAccumulator::RecordFragmentedFlexCrossGapDecorationIndex(
     wtf_size_t line_start = 0;
     for (const FlexLine& line : flex_lines) {
       const wtf_size_t line_gap_count =
-          line.item_indices.empty() ? 0u : line.item_indices.size() - 1;
+          line.item_count == 0 ? 0u : line.item_count - 1;
       fragmented_flex_line_gap_ranges_.emplace_back(
           GapGeometry::GapIndexRange{line_start, line_gap_count});
       line_start += line_gap_count;
@@ -399,7 +398,7 @@ void FlexGapAccumulator::CalculateColumnFlexLineRowGapStart(
   // `previous_gap_count` using the number of items in the previous flex line.
   if (!previous_gap_data) {
     const wtf_size_t num_items_in_previous_line =
-        flex_lines[global_line_index - 1].item_indices.size();
+        flex_lines[global_line_index - 1].item_count;
     previous_start =
         row_gap_break_token_data_[global_line_index - 1].first_row_gap_index;
     if (num_items_in_previous_line > 1) {

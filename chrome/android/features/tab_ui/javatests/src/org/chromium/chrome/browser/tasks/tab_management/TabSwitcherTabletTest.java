@@ -67,10 +67,10 @@ import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
 import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.ChromeTriggers;
 import org.chromium.chrome.test.transit.hub.TabSwitcherStation;
 import org.chromium.chrome.test.transit.ntp.IncognitoNewTabPageStation;
 import org.chromium.chrome.test.transit.page.WebPageStation;
-import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.chrome.test.util.TabStripUtils;
 import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
@@ -121,7 +121,7 @@ public class TabSwitcherTabletTest {
                                     null,
                                     0);
                         });
-                LayoutTestUtils.waitForLayout(layoutManager, LayoutType.BROWSING);
+                LayoutTestUtils.waitForBrowsingLayout(cta);
             } else {
                 if (selector.getCurrentModel().isIncognito()) {
                     clickIncognitoToggleButton();
@@ -129,7 +129,7 @@ public class TabSwitcherTabletTest {
                 exitSwitcherWithTabClick(0);
             }
         } else {
-            LayoutTestUtils.waitForLayout(layoutManager, LayoutType.BROWSING);
+            LayoutTestUtils.waitForBrowsingLayout(cta);
         }
     }
 
@@ -213,10 +213,7 @@ public class TabSwitcherTabletTest {
         checkTabSwitcherViewHolderVisibility(false);
 
         // Close all tabs.
-        ChromeTabUtils.closeAllTabs(
-                InstrumentationRegistry.getInstrumentation(), cta.getTabModelSelectorSupplier());
-
-        LayoutTestUtils.waitForLayout(cta.getLayoutManager(), LayoutType.HUB);
+        ChromeTriggers.closeAllTabsProgrammatically(mPage);
 
         // Assert the grid tab switcher is shown automatically, since there is no next tab.
         checkTabSwitcherViewHolderVisibility(true);
@@ -304,7 +301,7 @@ public class TabSwitcherTabletTest {
         // Close the last tab.
         tabSwitcher.closeTabAtIndex(0, TabSwitcherStation.class);
 
-        LayoutTestUtils.waitForLayout(cta.getLayoutManager(), LayoutType.HUB);
+        LayoutTestUtils.waitForHubLayout(cta);
 
         // Check whether empty view show up.
         @IdRes int tabSwitcherAncestorId = TabUiTestHelper.getTabSwitcherAncestorId(cta);
@@ -370,8 +367,7 @@ public class TabSwitcherTabletTest {
 
     private void exitSwitcherWithTabClick(int index) {
         TabUiTestHelper.clickNthCardFromTabSwitcher(mActivityTestRule.getActivity(), index);
-        LayoutTestUtils.waitForLayout(
-                mActivityTestRule.getActivity().getLayoutManager(), LayoutType.BROWSING);
+        LayoutTestUtils.waitForBrowsingLayout(mActivityTestRule.getActivity());
     }
 
     private void ensureHubLayout() {

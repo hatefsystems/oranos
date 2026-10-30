@@ -130,7 +130,9 @@ bool WaylandToplevelWindow::CreateXdgToplevel() {
 void WaylandToplevelWindow::DispatchHostWindowDragMovement(
     int hittest,
     const gfx::Point& pointer_location_in_px) {
-  DCHECK(xdg_toplevel_);
+  if (!xdg_toplevel_) {
+    return;
+  }
 
   if (hittest == HTCAPTION) {
     xdg_toplevel_->SurfaceMove(connection());
@@ -667,7 +669,9 @@ void WaylandToplevelWindow::HandleToplevelConfigureWithOrigin(
                                                   : GetBoundsInDIP();
   }
 
-  bounds_dip = AdjustBoundsToConstraintsDIP(bounds_dip);
+  if (ShouldSetBounds(window_state)) {
+    bounds_dip = AdjustBoundsToConstraintsDIP(bounds_dip);
+  }
   pending_configure_state_.bounds_dip = bounds_dip;
   pending_configure_state_.size_px =
       delegate()->ConvertRectToPixels(bounds_dip).size();

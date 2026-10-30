@@ -935,6 +935,11 @@ SyncService::UserActionableError SyncServiceImpl::GetUserActionableError()
                ? UserActionableError::kNeedsTrustedVaultKeyForEverything
                : UserActionableError::kNeedsTrustedVaultKeyForPasswords;
   }
+#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
+  if (passkeys_locked_ && GetActiveDataTypes().Has(WEBAUTHN_CREDENTIAL)) {
+    return UserActionableError::kPasskeysLocked;
+  }
+#endif  // !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
   if (user_settings_->IsTrustedVaultRecoverabilityDegraded()) {
     return user_settings_->IsEncryptEverythingEnabled()
                ? UserActionableError::
@@ -2222,6 +2227,16 @@ void SyncServiceImpl::SetInvalidationsForSessionsEnabled(bool enabled) {
   UpdateDataTypesForInvalidations();
 }
 #endif  // BUILDFLAG(IS_ANDROID)
+
+void SyncServiceImpl::SetPasskeysLocked(bool passkeys_locked) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (passkeys_locked_ == passkeys_locked) {
+    return;
+  }
+  passkeys_locked_ = passkeys_locked;
+  DVLOG(2) << "Notify observers on SetPasskeysLocked";
+  NotifyObservers();
+}
 
 void SyncServiceImpl::SendExplicitPassphraseToPlatformClient() {
   RunOrQueueTaskOnEngineInitialized(base::BindOnce(

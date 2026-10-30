@@ -66,16 +66,6 @@ class PLATFORM_EXPORT CanvasResource : public gpu::ClientImage {
 
   static void DropRefOnOwningThread(scoped_refptr<CanvasResource> resource);
 
-  // The bounds for this resource.
-  gfx::Size Size() const { return GetSharedImage()->size(); }
-  base::ByteSize EstimatedSizeInBytes() const {
-    return GetSharedImage()->EstimatedSizeInBytes();
-  }
-
-  // Returns a TransferableResource representation of this resource to share it
-  // with the compositor.
-  viz::TransferableResource PrepareTransferableResource();
-
   // Issues a wait for this sync token on the context used by this resource for
   // rendering.
   virtual void WaitSyncToken(const gpu::SyncToken&) = 0;
@@ -102,12 +92,7 @@ class PLATFORM_EXPORT CanvasResource : public gpu::ClientImage {
 
   const gpu::SyncToken& sync_token() const { return GetSyncToken(); }
 
- protected:
   explicit CanvasResource(scoped_refptr<gpu::ClientSharedImage> shared_image);
-
-  static void ReleaseFrameResources(scoped_refptr<CanvasResource>&& resource,
-                                    const gpu::SyncToken& sync_token,
-                                    bool lost_resource);
 
   virtual const gfx::HDRMetadata& GetHdrMetadata() const = 0;
   virtual viz::TransferableResource::ResourceSource
@@ -118,7 +103,6 @@ class PLATFORM_EXPORT CanvasResource : public gpu::ClientImage {
   const base::PlatformThreadRef owning_thread_ref_;
   const scoped_refptr<base::SingleThreadTaskRunner> owning_thread_task_runner_;
 
- private:
   friend class Canvas2DResourceProviderTest;
   friend class WebGPUMailboxTexture;
   friend class ExportedCanvasResource;
@@ -203,13 +187,11 @@ class PLATFORM_EXPORT CanvasResourceSharedImage final : public CanvasResource {
   // Should be called only if the resource is using software raster.
   void UploadSoftwareRenderingResults(SkSurface* sk_surface);
 
- private:
   bool UsesAcceleratedRaster() const final { return is_accelerated_; }
 
   ~CanvasResourceSharedImage() override;
 
   SkImageInfo CreateSkImageInfo() const;
-  SkAlphaType GetAlphaType() const { return alpha_type_; }
   gpu::raster::RasterInterface* RasterInterface() const;
 
   // These members are either only accessed on the owning thread, or are only
@@ -226,53 +208,11 @@ class PLATFORM_EXPORT CanvasResourceSharedImage final : public CanvasResource {
   // Accessed on any thread.
   bool is_accelerated_ = false;
   bool is_initialized_ = false;
-  const SkAlphaType alpha_type_;
   gfx::HDRMetadata hdr_metadata_;
   base::WeakPtr<Client> client_;
 };
 
-// Resource type for a given opaque external resource described on construction
-// via a TransferableResource. This CanvasResource should only be used with
-// context that support GL.
-class PLATFORM_EXPORT ExternalCanvasResource final : public CanvasResource {
- public:
-  ExternalCanvasResource(
-      scoped_refptr<gpu::ClientSharedImage> client_si,
-      const gpu::SyncToken& sync_token,
-      viz::TransferableResource::ResourceSource resource_source,
-      const gfx::HDRMetadata& hdr_metadata,
-      viz::ReleaseCallback out_callback,
-      base::WeakPtr<WebGraphicsContext3DProviderWrapper>);
 
-  bool CreatesAcceleratedTransferableResources() const override { return true; }
-  void NotifyResourceLost() override { resource_is_lost_ = true; }
-  void WaitSyncToken(const gpu::SyncToken&) override;
-
-  scoped_refptr<StaticBitmapImage> Bitmap() override;
-  const gfx::HDRMetadata& GetHdrMetadata() const override {
-    return hdr_metadata_;
-  }
-
- private:
-  viz::TransferableResource::ResourceSource GetTransferableResourceSource()
-      const final {
-    return resource_source_;
-  }
-  bool UsesAcceleratedRaster() const final { return true; }
-
-  ~ExternalCanvasResource() override;
-
-  const base::WeakPtr<WebGraphicsContext3DProviderWrapper>
-      context_provider_wrapper_;
-  viz::TransferableResource::ResourceSource resource_source_;
-  const gfx::HDRMetadata hdr_metadata_;
-  viz::ReleaseCallback release_callback_;
-  bool resource_is_lost_ = false;
-  const SkAlphaType alpha_type_;
-
-  // SyncToken to wait on at destruction.
-  gpu::SyncToken destruction_sync_token_;
-};
 
 }  // namespace blink
 

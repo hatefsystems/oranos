@@ -6,10 +6,12 @@
 #define CHROME_BROWSER_ENTERPRISE_CONNECTORS_REPORTING_EXTENSION_ACTOR_TRACKER_H_
 
 #include <optional>
+#include <string_view>
 
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "extensions/common/extension_id.h"
+#include "ui/base/mojom/window_open_disposition.mojom-forward.h"
 
 namespace content {
 class BrowserContext;
@@ -32,12 +34,10 @@ class ExtensionActorTracker
   // `browser_context`.
   static bool IsEnabled(content::BrowserContext* browser_context);
 
-  // Marks `web_contents` as acted on by `extension_id`. When
-  // `is_initial_navigation` is true, attribution is preserved across the first
-  // cross-document primary main-frame commit.
+  // Marks `web_contents` as acted on by `extension_id` via `command`.
   static void SetActiveActor(content::WebContents* web_contents,
                              const extensions::ExtensionId& extension_id,
-                             bool is_initial_navigation = false);
+                             std::string_view command);
 
   // Clears active extension actor attribution on `web_contents`.
   static void ClearActiveActor(content::WebContents* web_contents);
@@ -54,7 +54,7 @@ class ExtensionActorTracker
                            content::RenderFrameHost* source_render_frame_host,
                            const GURL& url,
                            const content::Referrer& referrer,
-                           WindowOpenDisposition disposition,
+                           ui::mojom::WindowOpenDisposition disposition,
                            ui::PageTransition transition,
                            bool started_from_context_menu,
                            bool renderer_initiated) override;
@@ -63,6 +63,11 @@ class ExtensionActorTracker
   friend class content::WebContentsUserData<ExtensionActorTracker>;
 
   explicit ExtensionActorTracker(content::WebContents* web_contents);
+
+  static void SetActiveActorInternal(
+      content::WebContents* web_contents,
+      const extensions::ExtensionId& extension_id,
+      bool is_initial_navigation);
 
   std::optional<extensions::ExtensionId> active_actor_id_;
   bool is_initial_navigation_ = false;

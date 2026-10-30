@@ -9,8 +9,8 @@ import static org.mockito.Mockito.when;
 
 import androidx.test.filters.MediumTest;
 
-import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -20,9 +20,9 @@ import org.mockito.junit.MockitoRule;
 import org.mockito.quality.Strictness;
 
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
-import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.UserActionTester;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
@@ -37,54 +37,45 @@ import org.chromium.components.signin.test.util.TestAccounts;
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
-@DoNotBatch(
-        reason = "Tests sign-in checks done at Chrome start-up or when accounts change on device.")
+@Batch(Batch.PER_CLASS)
 public class SigninCheckerTest {
     @Rule
     public final MockitoRule mMockitoRule = MockitoJUnit.rule().strictness(Strictness.STRICT_STUBS);
 
-    @Rule public final SigninTestRule mSigninTestRule = new SigninTestRule();
+    @Rule(order = 0)
+    public final SigninTestRule mSigninTestRule = SigninTestRule.createWithCleanups();
 
-    @Rule
+    @Rule(order = 1)
     public final FreshCtaTransitTestRule mActivityTestRule =
             ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Mock private ExternalAuthUtils mExternalAuthUtilsMock;
 
-    @After
-    public void tearDown() {
-        if (mSigninTestRule.getPrimaryAccount() != null) {
-            mSigninTestRule.forceSignOut();
-        }
+    @Before
+    public void setUp() {
+        mActivityTestRule.startOnBlankPage();
+        ThreadUtils.runOnUiThreadBlocking(() -> getSigninChecker().resetForTesting());
     }
 
-    private void initSigninChecker() {
-        ThreadUtils.runOnUiThreadBlocking(
-                () ->
+    private SigninChecker getSigninChecker() {
+        SigninManagerImpl signinManager =
+                (SigninManagerImpl)
                         IdentityServicesProvider.get()
-                                .getSigninManager(mActivityTestRule.getProfile(false)));
+                                .getSigninManager(mActivityTestRule.getProfile(false));
+        assert signinManager != null;
+        SigninChecker checker = signinManager.getSigninCheckerForTesting();
+        assert checker != null;
+        return checker;
     }
 
     private int getNumOfChildAccountChecksDone() {
         return ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    SigninManagerImpl signinManager =
-                            (SigninManagerImpl)
-                                    IdentityServicesProvider.get()
-                                            .getSigninManager(mActivityTestRule.getProfile(false));
-                    assert signinManager != null;
-                    SigninChecker checker = signinManager.getSigninCheckerForTesting();
-                    assert checker != null;
-                    return checker.getNumOfChildAccountChecksDoneForTests();
-                });
+                () -> getSigninChecker().getNumOfChildAccountChecksDoneForTests());
     }
 
     @Test
     @MediumTest
     public void signinWhenChildAccountIsTheOnlyAccount() {
-        mActivityTestRule.startOnBlankPage();
-        initSigninChecker();
-
         mSigninTestRule.addAccount(TestAccounts.CHILD_ACCOUNT);
 
         CriteriaHelper.pollUiThread(
@@ -97,8 +88,6 @@ public class SigninCheckerTest {
     @Test
     @MediumTest
     public void noSigninWhenChildAccountIsTheOnlyAccountButSigninIsNotAllowed() {
-        mActivityTestRule.startOnBlankPage();
-        initSigninChecker();
         UserActionTester actionTester = new UserActionTester();
         when(mExternalAuthUtilsMock.isGooglePlayServicesMissing(any())).thenReturn(true);
         ExternalAuthUtils.setInstanceForTesting(mExternalAuthUtilsMock);
@@ -120,12 +109,9 @@ public class SigninCheckerTest {
         // here for completeness.
         mSigninTestRule.addAccount(TestAccounts.ACCOUNT1);
         mSigninTestRule.addAccount(TestAccounts.CHILD_ACCOUNT);
-
-        mActivityTestRule.startOnBlankPage();
-        initSigninChecker();
         UserActionTester actionTester = new UserActionTester();
 
-        Assert.assertEquals(1, getNumOfChildAccountChecksDone());
+        Assert.assertEquals(2, getNumOfChildAccountChecksDone());
         Assert.assertNull(mSigninTestRule.getPrimaryAccount());
         Assert.assertFalse(
                 actionTester.getActions().contains("Signin_Signin_WipeDataOnChildAccountSignin2"));
@@ -134,8 +120,6 @@ public class SigninCheckerTest {
     @Test
     @MediumTest
     public void signinWhenChildAccountIsFirstAccount() {
-        mActivityTestRule.startOnBlankPage();
-        initSigninChecker();
         mSigninTestRule.addAccount(TestAccounts.CHILD_ACCOUNT);
         mSigninTestRule.addAccount(TestAccounts.ACCOUNT1);
 

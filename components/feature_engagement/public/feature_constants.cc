@@ -151,6 +151,9 @@ BASE_FEATURE(kIPHGlicTrustFirstOnboardingShortcutSnoozePromoFeature,
 BASE_FEATURE(kIPHGlicTryItFeature,
              "IPH_GlicTryIt",
              base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kIPHIndigoContextMenuToastFeature,
+             "IPH_IndigoContextMenuToast",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kIPHMemorySaverModeFeature,
              "IPH_HighEfficiencyMode",
              base::FEATURE_ENABLED_BY_DEFAULT);
@@ -373,14 +376,8 @@ BASE_FEATURE(kIPHAndroidBottomBarAddressBar,
 BASE_FEATURE(kIPHAndroidBottomBarEducation,
              "IPH_AndroidBottomBarEducation",
              base::FEATURE_DISABLED_BY_DEFAULT);
-BASE_FEATURE(kIPHAndroidBottomBarGlic,
-             "IPH_AndroidBottomBarGlic",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-BASE_FEATURE(kIPHAndroidBottomBarNewTab,
-             "IPH_AndroidBottomBarNewTab",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-BASE_FEATURE(kIPHAndroidBottomBarPromoDialog,
-             "IPH_AndroidBottomBarPromoDialog",
+BASE_FEATURE(kIPHAndroidBottomBarEducationTooltips,
+             "IPH_AndroidBottomBarEducationTooltips",
              base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kIPHAndroidTabDeclutter,
              "IPH_AndroidTabDeclutter",
@@ -1122,14 +1119,6 @@ BASE_FEATURE(kIPHDesktopPWAsLinkCapturingLaunchAppInTab,
         // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-BASE_FEATURE(kIPHSignInBenefitsFeature,
-             "IPH_SignInBenefits",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kIPHSignInBenefitsNewSigninFeature,
-             "IPH_SignInBenefitsNewSignin",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 BASE_FEATURE(kIPHSupervisedUserProfileSigninFeature,
              "IPH_SupervisedUserProfileSignin",
              base::FEATURE_ENABLED_BY_DEFAULT);

@@ -91,9 +91,9 @@
 #include "net/base/url_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/lens_server_proto/aim_communication.pb.h"
+#include "ui/base/mojom/window_open_disposition.mojom.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/ui_base_switches.h"
-#include "ui/base/window_open_disposition.h"
 #include "ui/webui/resources/cr_components/composebox/composebox.mojom.h"
 
 namespace {
@@ -407,7 +407,8 @@ IN_PROC_BROWSER_TEST_F(ContextualTasksUIBrowserTest,
   GURL url("https://www.google.com/search?q=test");
   content::OpenURLParams params =
       content::OpenURLParams::CreateBrowserInitiated(
-          url, WindowOpenDisposition::kCurrentTab, ui::PAGE_TRANSITION_LINK);
+          url, ui::mojom::WindowOpenDisposition::kCurrentTab,
+          ui::PAGE_TRANSITION_LINK);
   controller_->TransferNavigationToEmbeddedPage(params);
   run_loop.Run();
 }
@@ -934,11 +935,7 @@ IN_PROC_BROWSER_TEST_F(ContextualTasksNoMockBrowserTest,
       web_contents->GetWebUI()->GetController());
   ASSERT_TRUE(side_panel_ui);
 
-  auto* coordinator =
-      contextual_tasks::ContextualTasksSidePanelCoordinator::Get(
-          browser()->GetUnownedUserDataHost());
-  ASSERT_TRUE(coordinator);
-  auto* permission_controller = coordinator->permission_controller();
+  auto* permission_controller = panel_controller->permission_controller();
   ASSERT_TRUE(permission_controller);
 
   mojo::Remote<contextual_tasks_toolbar::mojom::ContextualTasksToolbarUIService>
@@ -1023,11 +1020,7 @@ IN_PROC_BROWSER_TEST_F(ContextualTasksNoMockBrowserTest,
   EXPECT_TRUE(base::test::RunUntil(
       [&]() { return panel_controller->IsPanelOpenForContextualTask(); }));
 
-  auto* coordinator =
-      contextual_tasks::ContextualTasksSidePanelCoordinator::Get(
-          browser()->GetUnownedUserDataHost());
-  ASSERT_TRUE(coordinator);
-  auto* permission_controller = coordinator->permission_controller();
+  auto* permission_controller = panel_controller->permission_controller();
   ASSERT_TRUE(permission_controller);
   auto* location_bar = permission_controller->GetLocationBarForTesting();
   ASSERT_TRUE(location_bar);
@@ -1082,17 +1075,14 @@ IN_PROC_BROWSER_TEST_F(ContextualTasksNoMockBrowserTest,
   EXPECT_TRUE(base::test::RunUntil(
       [&]() { return panel_controller->IsPanelOpenForContextualTask(); }));
 
-  auto* coordinator =
-      contextual_tasks::ContextualTasksSidePanelCoordinator::Get(
-          browser()->GetUnownedUserDataHost());
-  ASSERT_TRUE(coordinator);
-  content::WebContents* panel_contents = coordinator->GetActiveWebContents();
+  content::WebContents* panel_contents =
+      panel_controller->GetActiveWebContents();
   ASSERT_TRUE(panel_contents);
   EXPECT_TRUE(content::WaitForLoadStop(panel_contents));
   EXPECT_TRUE(content_settings::PageSpecificContentSettings::GetForFrame(
       panel_contents->GetPrimaryMainFrame()));
 
-  auto* permission_controller = coordinator->permission_controller();
+  auto* permission_controller = panel_controller->permission_controller();
   ASSERT_TRUE(permission_controller);
   auto* location_bar = permission_controller->GetLocationBarForTesting();
   ASSERT_TRUE(location_bar);
@@ -1547,4 +1537,126 @@ IN_PROC_BROWSER_TEST_F(ContextualTasksUIBrowserTest,
   ASSERT_TRUE(side_panel_inner_zoom_controller);
   EXPECT_EQ(zoom::ZoomController::ZoomMode::ZOOM_MODE_DISABLED,
             side_panel_inner_zoom_controller->zoom_mode());
+}
+
+class ContextualTasksInternalsLegacyBrowserTest : public InProcessBrowserTest {
+ public:
+  ContextualTasksInternalsLegacyBrowserTest() {
+    feature_list_.InitWithFeatures(
+        {contextual_tasks::kContextualTasks},
+        {contextual_tasks::kContextualTasksSidePanelRearchitecture});
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(ContextualTasksInternalsLegacyBrowserTest,
+                       LoadsWithoutCrash) {
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), GURL("chrome://contextual-tasks/internals")));
+  content::WebContents* web_contents =
+      TabListInterface::From(browser())->GetActiveTab()->GetContents();
+  ASSERT_FALSE(web_contents->IsCrashed());
+
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return content::EvalJs(
+               web_contents,
+               "(() => {"
+               "  const app = document.querySelector("
+               "      'contextual-tasks-internals-app');"
+               "  const status = app?.shadowRoot?.querySelector("
+               "      '.eligibility-status');"
+               "  const reasons = app?.shadowRoot?.querySelector("
+               "      '.eligibility-reasons')?.textContent ?? '';"
+               "  return Boolean(status && !reasons.includes("
+               "      'Feature flag (kContextualTasks) is not enabled.'));"
+               "})()")
+        .ExtractBool();
+  }));
+}
+
+class ContextualTasksInternalsPostRearchitectureBrowserTest
+    : public InProcessBrowserTest {
+ public:
+  ContextualTasksInternalsPostRearchitectureBrowserTest() {
+    feature_list_.InitWithFeatures(
+        {contextual_tasks::kContextualTasksSidePanelRearchitecture},
+        {contextual_tasks::kContextualTasks,
+         contextual_tasks::kContextualTasksSidePanel,
+         contextual_tasks::kContextualTasksRearchitecture});
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(ContextualTasksInternalsPostRearchitectureBrowserTest,
+                       LoadsWithoutCrash) {
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), GURL("chrome://contextual-tasks/internals")));
+  content::WebContents* web_contents =
+      TabListInterface::From(browser())->GetActiveTab()->GetContents();
+  ASSERT_FALSE(web_contents->IsCrashed());
+
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return content::EvalJs(
+               web_contents,
+               "(() => {"
+               "  const app = document.querySelector("
+               "      'contextual-tasks-internals-app');"
+               "  const status = app?.shadowRoot?.querySelector("
+               "      '.eligibility-status');"
+               "  const reasons = app?.shadowRoot?.querySelector("
+               "      '.eligibility-reasons')?.textContent ?? '';"
+               "  return Boolean(status && !reasons.includes("
+               "      'Feature flag (kContextualTasks) is not enabled.'));"
+               "})()")
+        .ExtractBool();
+  }));
+
+  // Navigating to the root legacy WebUI path after registering the data source
+  // must fail with an error document rather than instantiating
+  // `ContextualTasksUIPostRearchitecture` with `<contextual-tasks-app>`.
+  (void)ui_test_utils::NavigateToURL(browser(),
+                                     GURL("chrome://contextual-tasks/"));
+  EXPECT_FALSE(web_contents->IsCrashed());
+  EXPECT_TRUE(web_contents->GetPrimaryMainFrame()->IsErrorDocument());
+  EXPECT_EQ(web_contents->GetWebUI(), nullptr);
+}
+
+IN_PROC_BROWSER_TEST_F(ContextualTasksInternalsPostRearchitectureBrowserTest,
+                       OnVoiceTranscribedSafelyNoOps) {
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), GURL("chrome://contextual-tasks/internals")));
+  content::WebContents* web_contents =
+      TabListInterface::From(browser())->GetActiveTab()->GetContents();
+  ASSERT_NE(web_contents->GetWebUI(), nullptr);
+
+  // Invoking `OnVoiceTranscribed()` when the active WebUI controller is
+  // `ContextualTasksUIPostRearchitecture` must safely no-op without downcasting
+  // to `ContextualTasksUI`.
+  auto* ui_service =
+      contextual_tasks::ContextualTasksUiServiceFactory::GetForBrowserContext(
+          browser()->GetProfile());
+  ASSERT_NE(ui_service, nullptr);
+  ui_service->StartPlatformVoiceRecognition(browser(), web_contents);
+  ui_service->OnVoiceTranscribed("test voice query");
+  EXPECT_EQ(contextual_tasks::GetWebUiInterface(web_contents), nullptr);
+}
+
+IN_PROC_BROWSER_TEST_F(ContextualTasksInternalsPostRearchitectureBrowserTest,
+                       FiltersLegacyWebUIResources) {
+  // Attempting to fetch or import legacy pre-rearchitecture modules (such as
+  // `app.js`) from a post-rearchitecture WebUI document must fail rather than
+  // executing `BrowserProxyImpl` or terminating the renderer with
+  // `RFH_INVALID_WEB_UI_CONTROLLER`.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), GURL("chrome://contextual-tasks/internals")));
+  content::WebContents* web_contents =
+      TabListInterface::From(browser())->GetActiveTab()->GetContents();
+  EXPECT_EQ(false, content::EvalJs(web_contents,
+                                   "import('chrome://contextual-tasks/app.js')"
+                                   "  .then(() => true, () => false)"));
+  EXPECT_FALSE(web_contents->IsCrashed());
 }

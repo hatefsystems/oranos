@@ -1793,6 +1793,57 @@ TEST_F(WebuiOmniboxHandlerTest,
   }
 }
 
+TEST_F(WebuiOmniboxHandlerTest, CreateAutocompleteMatch_SecondaryTextIsUrl) {
+  bookmarks::BookmarkModel* bookmark_model =
+      BookmarkModelFactory::GetForBrowserContext(profile());
+  bookmark_model->LoadEmptyForTest();
+  auto create_mojom_match = [&](const AutocompleteMatch& match) {
+    return handler_->CreateAutocompleteMatch(
+        match, bookmark_model, omnibox::GroupConfigMap(),
+        omnibox_controller_->client()->GetTemplateURLService());
+  };
+
+  // A page title followed by its URL. The contents and description are
+  // swapped, so the URL in the contents is the secondary text.
+  {
+    AutocompleteMatch match;
+    match.destination_url = GURL("https://example.com");
+    match.contents = u"example.com";
+    match.contents_class = {{0, ACMatchClassification::URL}};
+    match.description = u"Example Title";
+    match.description_class = {{0, ACMatchClassification::NONE}};
+    match.swap_contents_and_description = true;
+    auto mojom_match = create_mojom_match(match);
+    ASSERT_TRUE(mojom_match.has_value());
+    EXPECT_TRUE(mojom_match.value()->secondary_text_is_url);
+  }
+
+  // A URL without a title is the primary text.
+  {
+    AutocompleteMatch match;
+    match.destination_url = GURL("https://example.com");
+    match.contents = u"example.com";
+    match.contents_class = {{0, ACMatchClassification::URL}};
+    auto mojom_match = create_mojom_match(match);
+    ASSERT_TRUE(mojom_match.has_value());
+    EXPECT_FALSE(mojom_match.value()->secondary_text_is_url);
+  }
+
+  // A search suggestion with a dimmed description.
+  {
+    AutocompleteMatch match(nullptr, 1000, false,
+                            omnibox::AutocompleteMatchType::kSearchSuggest);
+    match.destination_url = GURL("https://example.com");
+    match.contents = u"example";
+    match.contents_class = {{0, ACMatchClassification::NONE}};
+    match.description = u"Example description";
+    match.description_class = {{0, ACMatchClassification::DIM}};
+    auto mojom_match = create_mojom_match(match);
+    ASSERT_TRUE(mojom_match.has_value());
+    EXPECT_FALSE(mojom_match.value()->secondary_text_is_url);
+  }
+}
+
 // The WebUI a11y labels must match those announced by the classic omnibox
 // (see `OmniboxEditModel::GetPopupAccessibilityLabelForCurrentSelection()`):
 // narrate `fill_into_edit`, include "n of m", and don't duplicate the
@@ -3300,13 +3351,7 @@ TEST_F(OmniboxComposeboxHandlerTest, LensSearchEligibility) {
 TEST_F(OmniboxComposeboxHandlerTest,
        ProcessContextAndOpenUrl_SingleActiveTabHandoffToSidePanel) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatures(
-      /*enabled_features=*/
-      {omnibox::kContextManagementInComposebox,
-       contextual_tasks::kContextualTasks,
-       contextual_tasks::kContextualTasksSidePanel,
-       contextual_tasks::kContextualTasksForceEntryPointEligibility},
-      /*disabled_features=*/{});
+  feature_list.InitAndEnableFeature(omnibox::kContextManagementInComposebox);
 
   auto* mock_ui_service = static_cast<MockContextualTasksUiService*>(
       contextual_tasks::ContextualTasksUiServiceFactory::GetInstance()
@@ -3366,13 +3411,7 @@ TEST_F(OmniboxComposeboxHandlerTest,
 TEST_F(OmniboxComposeboxHandlerTest,
        ProcessContextAndOpenUrl_OmniboxPageActionSetsEntryPoint206) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatures(
-      /*enabled_features=*/
-      {omnibox::kContextManagementInComposebox,
-       contextual_tasks::kContextualTasks,
-       contextual_tasks::kContextualTasksSidePanel,
-       contextual_tasks::kContextualTasksForceEntryPointEligibility},
-      /*disabled_features=*/{});
+  feature_list.InitAndEnableFeature(omnibox::kContextManagementInComposebox);
 
   auto* mock_ui_service = static_cast<MockContextualTasksUiService*>(
       contextual_tasks::ContextualTasksUiServiceFactory::GetInstance()
@@ -3430,13 +3469,7 @@ TEST_F(OmniboxComposeboxHandlerTest,
 TEST_F(OmniboxComposeboxHandlerTest,
        ProcessContextAndOpenUrl_MultiTabWithActiveTabOpensSidePanel) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatures(
-      /*enabled_features=*/
-      {omnibox::kContextManagementInComposebox,
-       contextual_tasks::kContextualTasks,
-       contextual_tasks::kContextualTasksSidePanel,
-       contextual_tasks::kContextualTasksForceEntryPointEligibility},
-      /*disabled_features=*/{});
+  feature_list.InitAndEnableFeature(omnibox::kContextManagementInComposebox);
 
   auto* mock_ui_service = static_cast<MockContextualTasksUiService*>(
       contextual_tasks::ContextualTasksUiServiceFactory::GetInstance()
@@ -3508,13 +3541,7 @@ TEST_F(
     OmniboxComposeboxHandlerTest,
     ProcessContextAndOpenUrl_MultiTabWithoutActiveTabDoesNotBypassToSidePanel) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatures(
-      /*enabled_features=*/
-      {omnibox::kContextManagementInComposebox,
-       contextual_tasks::kContextualTasks,
-       contextual_tasks::kContextualTasksSidePanel,
-       contextual_tasks::kContextualTasksForceEntryPointEligibility},
-      /*disabled_features=*/{});
+  feature_list.InitAndEnableFeature(omnibox::kContextManagementInComposebox);
 
   auto* mock_ui_service = static_cast<MockContextualTasksUiService*>(
       contextual_tasks::ContextualTasksUiServiceFactory::GetInstance()
@@ -3569,14 +3596,7 @@ TEST_F(
 TEST_F(OmniboxComposeboxHandlerTest,
        StartContextualAimQueryInSidePanel_SignedOutUnificationOpensSidePanel) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeaturesAndParameters(
-      /*enabled_features=*/
-      {{omnibox::kContextManagementInComposebox, {}},
-       {contextual_tasks::kContextualTasksSidePanel, {}},
-       {lens::features::kLensSidePanelUnification,
-        {{"allow-signed-out", "true"}}}},
-      /*disabled_features=*/{
-          contextual_tasks::kContextualTasksForceEntryPointEligibility});
+  feature_list.InitAndEnableFeature(omnibox::kContextManagementInComposebox);
 
   testing::NiceMock<MockAimEligibilityService> mock_aim_eligibility_service(
       *profile()->GetPrefs(), nullptr, nullptr, nullptr);
@@ -3647,13 +3667,7 @@ TEST_F(
     OmniboxComposeboxHandlerTest,
     StartContextualAimQueryInSidePanel_ReturnsFalseForInvalidOrIneligibleInputs) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatures(
-      /*enabled_features=*/
-      {omnibox::kContextManagementInComposebox,
-       contextual_tasks::kContextualTasks,
-       contextual_tasks::kContextualTasksSidePanel,
-       contextual_tasks::kContextualTasksForceEntryPointEligibility},
-      /*disabled_features=*/{});
+  feature_list.InitAndEnableFeature(omnibox::kContextManagementInComposebox);
 
   sessions::SessionTabHelper::CreateForWebContents(
       web_contents_.get(), base::BindRepeating([](content::WebContents*) {

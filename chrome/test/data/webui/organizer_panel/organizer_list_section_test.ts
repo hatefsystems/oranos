@@ -728,6 +728,37 @@ suite('OrganizerListSectionTest', () => {
     assertEquals('none', getComputedStyle(listSection).display);
   });
 
+  test('hides section when delegate is null', async () => {
+    assertTrue(listSection.hidden);
+
+    listSection.delegate = new TestSectionDelegate('Open Tabs', []);
+    await microtasksFinished();
+    assertFalse(listSection.hidden);
+
+    listSection.delegate = null;
+    await microtasksFinished();
+    assertTrue(listSection.hidden);
+  });
+
+  test('hides section based on delegate shouldHide', async () => {
+    const delegate = new TestSectionDelegate('Open Tabs', []);
+    listSection.delegate = delegate;
+    await microtasksFinished();
+    assertFalse(listSection.hidden);
+
+    const hidingDelegate = new TestSectionDelegate('Open Tabs', []);
+    hidingDelegate.shouldHide = () => true;
+    listSection.delegate = hidingDelegate;
+    await microtasksFinished();
+    assertTrue(listSection.hidden);
+
+    const showingDelegate = new TestSectionDelegate('Open Tabs', []);
+    showingDelegate.shouldHide = () => false;
+    listSection.delegate = showingDelegate;
+    await microtasksFinished();
+    assertFalse(listSection.hidden);
+  });
+
   test(
       'force-expands section and disables header toggle when searching',
       async () => {
@@ -809,7 +840,7 @@ suite('OrganizerListSectionTest', () => {
 
   test('renders zero state from delegate when there are no items', async () => {
     const zeroState = html`<div id="zeroState">Create tab group</div>`;
-    listSection.delegate = new TestSectionDelegate('Tab Groups', [], zeroState);
+    listSection.delegate = new TestSectionDelegate('Tab groups', [], zeroState);
     await microtasksFinished();
 
     const itemsContainer =
@@ -833,7 +864,7 @@ suite('OrganizerListSectionTest', () => {
           {title: ['Tab Group 1']},
         ];
         listSection.delegate =
-            new TestSectionDelegate('Tab Groups', items, zeroState);
+            new TestSectionDelegate('Tab groups', items, zeroState);
         await microtasksFinished();
 
         assertEquals(null, listSection.shadowRoot.querySelector('#zeroState'));
@@ -860,7 +891,7 @@ suite('OrganizerListSectionTest', () => {
           {title: ['Tab Group 1']},
         ];
         listSection.delegate =
-            new TestSectionDelegate('Tab Groups', items, zeroState);
+            new TestSectionDelegate('Tab groups', items, zeroState);
         await microtasksFinished();
 
         assertEquals(null, listSection.shadowRoot.querySelector('#zeroState'));
@@ -885,7 +916,7 @@ suite('OrganizerListSectionTest', () => {
           {title: ['Tab Group 4']},
         ];
         listSection.delegate = new TestSectionDelegate(
-            'Tab Groups', items, zeroState, 'tab-groups', true);
+            'Tab groups', items, zeroState, 'tab-groups', true);
         await microtasksFinished();
 
         const itemsContainer =

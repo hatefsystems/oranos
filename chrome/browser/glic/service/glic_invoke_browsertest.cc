@@ -11,6 +11,8 @@
 #include "base/test/values_test_util.h"
 #include "base/timer/elapsed_timer.h"
 #include "build/build_config.h"
+#include "chrome/browser/actor/ui/actor_ui_tab_controller_interface.h"
+#include "chrome/browser/actor/ui/states/tab_indicator_state.h"
 #include "chrome/browser/glic/glic_enums.h"
 #include "chrome/browser/glic/glic_pref_names.h"
 #include "chrome/browser/glic/host/glic.mojom-shared.h"
@@ -39,6 +41,7 @@
 #include "chrome/common/webui_url_constants.h"
 #include "components/enterprise/data_controls/core/browser/prefs.h"
 #include "components/prefs/scoped_user_pref_update.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/result_codes.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -100,7 +103,15 @@ class GlicInvokeBrowserTest : public GlicBrowserTestMixin<PlatformBrowserTest> {
   // puts it into live mode. The active tab stays bound to the instance.
   [[nodiscard]] TestResult<GlicInstanceImpl*> OpenLiveModeFloatyForActiveTab() {
     ASSIGN_OR_RETURN(GlicInstanceImpl * instance,
-                     OpenGlicForActiveTabAndDetach());
+                     OpenGlicForActiveTabAndWaitIdle());
+    if (!instance->IsDetached()) {
+      instance->Detach(*GetTabListInterface()->GetActiveTab());
+      bool success = RunUntil([instance]() { return instance->IsDetached(); },
+                              "Failed to wait for Glic to detach");
+      if (!success) {
+        return base::unexpected("Failed to wait for Glic to detach");
+      }
+    }
     RETURN_IF_ERROR(EnterLiveMode(instance));
     return instance;
   }
@@ -156,13 +167,29 @@ class GlicInvokeBrowserTest : public GlicBrowserTestMixin<PlatformBrowserTest> {
       content::RenderProcessHostWatcher process_gone(
           client_process,
           content::RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
-      client_process->Shutdown(content::RESULT_CODE_KILLED);
+      if (!client_process->Shutdown(content::RESULT_CODE_KILLED)) {
+        return base::unexpected(
+            "Failed to shut down web client render process");
+      }
       process_gone.Wait();
     }
     // Losing the client makes the host page report a load failure. Waiting for
     // it means the reported state has settled, so the tests below can drive it
     // without racing against that report.
-    return WaitForClientLoadState(instance, ClientLoadState::kError);
+    auto result = WaitForClientLoadState(instance, ClientLoadState::kError);
+    if (!result.has_value()) {
+      return result;
+    }
+    if (!IsNoWebviewEnabled()) {
+      if (content::WebContents* webui = instance->host().webui_contents()) {
+        // Ensure any in-flight PreloadPage IPCs (such as OnGuestProcessGone)
+        // have been processed by the WebUI renderer before the next step.
+        if (content::EvalJs(webui, "true") != true) {
+          return base::unexpected("Failed to flush WebUI IPCs");
+        }
+      }
+    }
+    return base::ok();
   }
 
   // Waits for `instance`'s host to reach `expected_state` via `Host::Observer`.
@@ -559,6 +586,19 @@ IN_PROC_BROWSER_TEST_F(GlicInvokeBrowserTest, InvokeWithAutoSubmitHidden) {
 }
 
 #if BUILDFLAG(IS_ANDROID)
+namespace {
+
+// Returns the WebContents that offscreen rendering targets: the guest contents
+// in NoWebview mode, or the WebUI contents otherwise.
+content::WebContents* GetOffscreenRenderingContents(
+    GlicKeyedService& service,
+    GlicInstanceImpl& instance) {
+  return service.IsNoWebviewEnabled() ? instance.host().web_client_contents()
+                                      : instance.host().webui_contents();
+}
+
+}  // namespace
+
 class GlicInvokeOffscreenRenderingBrowserTest : public GlicInvokeBrowserTest {
  public:
   GlicInvokeOffscreenRenderingBrowserTest() {
@@ -592,10 +632,104 @@ IN_PROC_BROWSER_TEST_F(GlicInvokeOffscreenRenderingBrowserTest,
   ASSERT_TRUE(instance);
 
   // While hidden invocation is warming up, offscreen rendering should be
-  // active.
+  // active, with its target WebContents attached to the offscreen window.
   EXPECT_TRUE(instance->is_offscreen_rendering_active_for_testing());
+  content::WebContents* contents =
+      GetOffscreenRenderingContents(*service(), *instance);
+  ASSERT_TRUE(contents);
+  EXPECT_TRUE(contents->GetTopLevelNativeWindow());
 
   // Showing the instance onscreen must immediately stop offscreen rendering.
+  instance->Show(ShowOptions::ForSidePanel(*tab));
+  EXPECT_FALSE(instance->is_offscreen_rendering_active_for_testing());
+  EXPECT_TRUE(instance->IsShowing());
+}
+
+class GlicInvokeOffscreenRenderingDisabledBrowserTest
+    : public GlicInvokeBrowserTest {
+ public:
+  GlicInvokeOffscreenRenderingDisabledBrowserTest() {
+    scoped_feature_list_.InitAndDisableFeature(
+        features::kGlicAndroidOffscreenRendering);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(GlicInvokeOffscreenRenderingDisabledBrowserTest,
+                       InvokeWithAutoSubmitHiddenDoesNotAttach) {
+  tabs::TabInterface* tab = GetTabListInterface()->GetActiveTab();
+  base::test::TestFuture<void> success_future;
+  base::test::TestFuture<std::string> conversation_id_future;
+
+  GlicInvokeOptions options(glic::Target(*tab),
+                            mojom::InvocationSource::kOsButton);
+  options.on_success = success_future.GetCallback();
+
+  GlicInvokeWithAutoSubmitOptions auto_submit_options;
+  auto_submit_options.on_conversation_id_ready =
+      conversation_id_future.GetCallback();
+  auto_submit_options.show_panel = false;
+
+  coordinator().InvokeWithAutoSubmit(GetPassKey(), std::move(options),
+                                     std::move(auto_submit_options));
+
+  GlicInstanceImpl* instance = coordinator().GetInstanceImplForTab(tab);
+  ASSERT_TRUE(instance);
+  EXPECT_FALSE(instance->is_offscreen_rendering_active_for_testing());
+  content::WebContents* contents =
+      GetOffscreenRenderingContents(*service(), *instance);
+  ASSERT_TRUE(contents);
+  EXPECT_FALSE(contents->GetTopLevelNativeWindow());
+}
+
+class GlicInvokeNoWebviewOffscreenRenderingBrowserTest
+    : public GlicInvokeBrowserTest {
+ public:
+  GlicInvokeNoWebviewOffscreenRenderingBrowserTest() {
+    scoped_feature_list_.InitWithFeatures(
+        /*enabled_features=*/{features::kGlicAndroidOffscreenRendering,
+                              features::kGlicNoWebview},
+        /*disabled_features=*/{});
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+// In NoWebview mode, the hidden invoke forces the contents visible while the
+// client initializes, so the displayed contents may be the loading overlay.
+// Offscreen rendering must target the guest WebContents that hosts the web
+// client instead.
+IN_PROC_BROWSER_TEST_F(GlicInvokeNoWebviewOffscreenRenderingBrowserTest,
+                       InvokeWithAutoSubmitHiddenAttachesToGuestContents) {
+  tabs::TabInterface* tab = GetTabListInterface()->GetActiveTab();
+  base::test::TestFuture<void> success_future;
+  base::test::TestFuture<std::string> conversation_id_future;
+
+  GlicInvokeOptions options(glic::Target(*tab),
+                            mojom::InvocationSource::kOsButton);
+  options.on_success = success_future.GetCallback();
+
+  GlicInvokeWithAutoSubmitOptions auto_submit_options;
+  auto_submit_options.on_conversation_id_ready =
+      conversation_id_future.GetCallback();
+  auto_submit_options.show_panel = false;
+
+  coordinator().InvokeWithAutoSubmit(GetPassKey(), std::move(options),
+                                     std::move(auto_submit_options));
+
+  GlicInstanceImpl* instance = coordinator().GetInstanceImplForTab(tab);
+  ASSERT_TRUE(instance);
+  EXPECT_TRUE(instance->is_offscreen_rendering_active_for_testing());
+
+  // The guest WebContents hosting the web client, rather than the displayed
+  // loading overlay, must be attached to the offscreen window.
+  content::WebContents* guest = instance->host().web_client_contents();
+  ASSERT_TRUE(guest);
+  EXPECT_TRUE(guest->GetTopLevelNativeWindow());
+
   instance->Show(ShowOptions::ForSidePanel(*tab));
   EXPECT_FALSE(instance->is_offscreen_rendering_active_for_testing());
   EXPECT_TRUE(instance->IsShowing());
@@ -878,47 +1012,6 @@ IN_PROC_BROWSER_TEST_F(GlicInvokeBrowserTest,
   EXPECT_FALSE(error_future1.IsReady());
 }
 
-// TODO(b/564473727): Test is flaky on Mac.
-// TODO(crbug.com/568827075): Re-enable the test on Linux.
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-#define MAYBE_InvokeTimeoutBehaviors DISABLED_InvokeTimeoutBehaviors
-#else
-#define MAYBE_InvokeTimeoutBehaviors InvokeTimeoutBehaviors
-#endif
-IN_PROC_BROWSER_TEST_F(GlicInvokeBrowserTest, MAYBE_InvokeTimeoutBehaviors) {
-  // 1. Test custom short timeout
-  base::test::TestFuture<GlicInvokeError> short_error_future;
-  GlicInvokeOptions short_options(mojom::InvocationSource::kOsButton);
-  short_options.on_error = short_error_future.GetCallback();
-  short_options.timeout = base::Milliseconds(1);
-  short_options.target.surface = DefaultSurface{
-      GetTabListInterface()->GetActiveTab()->GetBrowserWindowInterface()};
-
-  coordinator().Invoke(std::move(short_options));
-
-  // The first invoke should time out quickly.
-  EXPECT_EQ(short_error_future.Get(), GlicInvokeError::kTimeout);
-
-  // 2. Test that a longer timeout actually takes longer, ensuring the
-  // specified duration isn't being ignored resulting in an instant timeout.
-  base::test::TestFuture<GlicInvokeError> long_error_future;
-  GlicInvokeOptions long_options(mojom::InvocationSource::kOsButton);
-  long_options.on_error = long_error_future.GetCallback();
-  long_options.timeout = base::Milliseconds(100);
-  long_options.target.surface = DefaultSurface{
-      GetTabListInterface()->GetActiveTab()->GetBrowserWindowInterface()};
-
-  base::ElapsedTimer elapsed_timer;
-  coordinator().Invoke(std::move(long_options));
-
-  // Wait for the timeout to occur.
-  EXPECT_EQ(long_error_future.Get(), GlicInvokeError::kTimeout);
-
-  // Verify it took at least some fraction of the longer timeout, proving
-  // it didn't instantly time out like the short one.
-  EXPECT_GE(elapsed_timer.Elapsed(), base::Milliseconds(50));
-}
-
 // TODO(crbug.com/564285975): Re-enable the test.
 #if BUILDFLAG(IS_CHROMEOS) && !defined(NDEBUG)
 #define MAYBE_InvokeFailsOnTabClosed DISABLED_InvokeFailsOnTabClosed
@@ -1044,6 +1137,41 @@ class GlicInvokeNeverReadyClientBrowserTest : public GlicInvokeBrowserTest {
  private:
   base::test::ScopedFeatureList feature_list_;
 };
+
+IN_PROC_BROWSER_TEST_F(GlicInvokeNeverReadyClientBrowserTest,
+                       InvokeTimeoutBehaviors) {
+  // 1. Test custom short timeout
+  base::test::TestFuture<GlicInvokeError> short_error_future;
+  GlicInvokeOptions short_options(mojom::InvocationSource::kOsButton);
+  short_options.on_error = short_error_future.GetCallback();
+  short_options.timeout = base::Milliseconds(1);
+  short_options.target.surface = DefaultSurface{
+      GetTabListInterface()->GetActiveTab()->GetBrowserWindowInterface()};
+
+  coordinator().Invoke(std::move(short_options));
+
+  // The first invoke should time out quickly.
+  EXPECT_EQ(short_error_future.Get(), GlicInvokeError::kTimeout);
+
+  // 2. Test that a longer timeout actually takes longer, ensuring the
+  // specified duration isn't being ignored resulting in an instant timeout.
+  base::test::TestFuture<GlicInvokeError> long_error_future;
+  GlicInvokeOptions long_options(mojom::InvocationSource::kOsButton);
+  long_options.on_error = long_error_future.GetCallback();
+  long_options.timeout = base::Milliseconds(100);
+  long_options.target.surface = DefaultSurface{
+      GetTabListInterface()->GetActiveTab()->GetBrowserWindowInterface()};
+
+  base::ElapsedTimer elapsed_timer;
+  coordinator().Invoke(std::move(long_options));
+
+  // Wait for the timeout to occur.
+  EXPECT_EQ(long_error_future.Get(), GlicInvokeError::kTimeout);
+
+  // Verify it took at least some fraction of the longer timeout, proving
+  // it didn't instantly time out like the short one.
+  EXPECT_GE(elapsed_timer.Elapsed(), base::Milliseconds(50));
+}
 
 // Closing the panel while the client is still loading abandons the toolbar
 // button's invocation right away (kPanelClosed); blank instance removal then
@@ -2258,7 +2386,8 @@ IN_PROC_BROWSER_TEST_F(GlicInvokeBrowserTest,
 IN_PROC_BROWSER_TEST_F(GlicInvokeBrowserTest,
                        LiveModeForceFloatingTextModeRequestsTextMode) {
   tabs::TabInterface* tab = GetTabListInterface()->GetActiveTab();
-  ASSERT_OK_AND_ASSIGN(GlicInstanceImpl * instance, OpenGlicForActiveTab());
+  ASSERT_OK_AND_ASSIGN(GlicInstanceImpl * instance,
+                       OpenGlicForActiveTabAndWaitIdle());
   ASSERT_OK(WaitForActiveEmbedderToMatchTab(instance, tab));
   ASSERT_OK(EnterLiveMode(instance));
 
@@ -2680,6 +2809,35 @@ IN_PROC_BROWSER_TEST_F(
 }
 
 IN_PROC_BROWSER_TEST_F(GlicInvokeBrowserTest,
+                       InvokeWaitingForFreCompletionEndsWithPanelClosed) {
+  tabs::TabInterface* tab = GetTabListInterface()->GetActiveTab();
+  SetFRECompletion(GetProfile(), prefs::FreStatus::kNotStarted);
+
+  base::test::TestFuture<GlicInvokeError> error_future;
+  GlicInvokeOptions options(Target(*tab),
+                            mojom::InvocationSource::kCaptureRegionHotkey);
+  options.fre_override = mojom::FreOverride::kTrustFirstClick;
+  options.fre_completion_wait_mode = FreCompletionWaitMode::kDefault;
+  options.on_error = error_future.GetCallback();
+
+  coordinator().Invoke(std::move(options));
+  ASSERT_OK_AND_ASSIGN(GlicInstanceImpl * instance, WaitForGlicOpen(tab));
+  base::WeakPtr<GlicInstanceImpl> weak_instance = instance->GetWeakPtr();
+
+  // Wait for the client to finish loading so the invocation is blocked in
+  // WaitForFreCompletionTask.
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return instance->host().client_load_state() == ClientLoadState::kReady;
+  }));
+  EXPECT_FALSE(error_future.IsReady());
+
+  instance->CloseAllEmbedders();
+
+  EXPECT_EQ(error_future.Get(), GlicInvokeError::kPanelClosed);
+  ASSERT_OK(WaitForInstanceDeletion(weak_instance));
+}
+
+IN_PROC_BROWSER_TEST_F(GlicInvokeBrowserTest,
                        InvokeDoesNotWaitForFreCompletion_TrustFirstInline) {
   tabs::TabInterface* tab = GetTabListInterface()->GetActiveTab();
   SetFRECompletion(GetProfile(), prefs::FreStatus::kNotStarted);
@@ -2733,6 +2891,11 @@ class GlicInvokeActuationBrowserTest : public GlicInvokeBrowserTest {
 IN_PROC_BROWSER_TEST_F(GlicInvokeActuationBrowserTest,
                        InvokeWithActuationFeatureMode) {
   tabs::TabInterface* tab = GetTabListInterface()->GetActiveTab();
+  auto* tab_controller = actor::ui::ActorUiTabControllerInterface::From(tab);
+  if (tab_controller) {
+    EXPECT_EQ(tab_controller->GetCurrentUiTabState().tab_indicator,
+              actor::ui::TabIndicatorStatus::kNone);
+  }
 
   base::test::TestFuture<void> success_future;
   GlicInvokeOptions options(mojom::InvocationSource::kOsButton);
@@ -2742,6 +2905,10 @@ IN_PROC_BROWSER_TEST_F(GlicInvokeActuationBrowserTest,
 
   // 1. Trigger invocation in actuation mode.
   coordinator().Invoke(std::move(options));
+  if (tab_controller) {
+    EXPECT_EQ(tab_controller->GetCurrentUiTabState().tab_indicator,
+              actor::ui::TabIndicatorStatus::kDynamic);
+  }
 
   auto* instance = GetInstanceForTab(tab);
   ASSERT_TRUE(instance);
@@ -2779,6 +2946,10 @@ IN_PROC_BROWSER_TEST_F(GlicInvokeActuationBrowserTest,
 
   // Now the invocation should finally complete.
   EXPECT_TRUE(success_future.Wait());
+  if (tab_controller) {
+    EXPECT_EQ(tab_controller->GetCurrentUiTabState().tab_indicator,
+              actor::ui::TabIndicatorStatus::kNone);
+  }
 }
 
 // TODO(b/477918640): Tests habe been failing consistently on ChromeOS, Linux
@@ -3003,15 +3174,216 @@ IN_PROC_BROWSER_TEST_F(GlicInvokeBrowserTest,
                                       GlicInvokeResult::kSuccess, 1);
 }
 
+class GlicInvokeWebUiBrowserTest : public GlicInvokeBrowserTest {
+ public:
+  GlicInvokeWebUiBrowserTest() {
+    feature_list_.InitAndDisableFeature(features::kGlicNoWebview);
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(GlicInvokeWebUiBrowserTest,
+                       InvokeSucceedsWhenClientReloadsAfterHiddenLoadError) {
+  GlicWebContentsWarmingPool& pool =
+      coordinator().GetWebContentsWarmingPoolForTesting();
+  ASSERT_TRUE(pool.MaybeStartWarming(GlicWarmingTrigger::kStartup));
+  GlicWebContentsManager* warmed = pool.GetWarmedContainerForTesting();
+  ASSERT_TRUE(warmed);
+  ASSERT_TRUE(base::test::RunUntil([warmed]() {
+    return warmed->web_client_manager()
+        .has_pending_web_client_receiver_for_testing();
+  }));
+
+  content::WebContents* guest =
+      warmed->web_client_manager().web_client_contents();
+  ASSERT_TRUE(guest);
+  content::RenderProcessHost* client_process =
+      guest->GetPrimaryMainFrame()->GetProcess();
+  ASSERT_TRUE(client_process);
+  {
+    content::ScopedAllowRendererCrashes allow_crashes(client_process);
+    content::RenderProcessHostWatcher process_gone(
+        client_process,
+        content::RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
+    ASSERT_TRUE(client_process->Shutdown(content::RESULT_CODE_KILLED));
+    process_gone.Wait();
+  }
+  // Ensure the WebUI renderer has processed the guest crash and buffered
+  // OnClientLoadFailed(true) on the unbound PageHandler pipe.
+  ASSERT_TRUE(base::test::RunUntil([warmed]() {
+    return content::EvalJs(warmed->active_web_contents(),
+                           "!document.getElementById('errorPanel').hidden") ==
+           true;
+  }));
+  ASSERT_EQ(true, content::EvalJs(warmed->active_web_contents(), "true"));
+
+  tabs::TabInterface* tab = GetTabListInterface()->GetActiveTab();
+  GlicHistogramTester histogram_tester;
+  base::test::TestFuture<std::optional<GlicInvokeError>> outcome;
+
+  GlicInvokeOptions options(glic::Target(*tab),
+                            mojom::InvocationSource::kOsButton);
+  options.on_success = base::BindOnce(outcome.GetCallback(), std::nullopt);
+  options.on_error = outcome.GetCallback<GlicInvokeError>();
+
+  coordinator().Invoke(std::move(options));
+
+  EXPECT_EQ(outcome.Get(), std::nullopt);
+  GlicInstanceImpl* instance = GetInstanceForTab(tab);
+  ASSERT_TRUE(instance);
+  EXPECT_EQ(instance->host().client_load_state(), ClientLoadState::kReady);
+  histogram_tester.ExpectUniqueSample("Glic.InvokeResult2",
+                                      GlicInvokeResult::kSuccess, 1);
+  histogram_tester.ExpectUniqueSample("Glic.InvokeResult2.OsButton",
+                                      GlicInvokeResult::kSuccess, 1);
+}
+
+IN_PROC_BROWSER_TEST_F(
+    GlicInvokeWebUiBrowserTest,
+    BackgroundInvokeWithAutoSubmitReloadsWarmedClientAfterLoadError) {
+  GlicWebContentsWarmingPool& pool =
+      coordinator().GetWebContentsWarmingPoolForTesting();
+  ASSERT_TRUE(pool.MaybeStartWarming(GlicWarmingTrigger::kStartup));
+  GlicWebContentsManager* warmed = pool.GetWarmedContainerForTesting();
+  ASSERT_TRUE(warmed);
+  ASSERT_TRUE(base::test::RunUntil([warmed]() {
+    return warmed->web_client_manager()
+        .has_pending_web_client_receiver_for_testing();
+  }));
+
+  content::WebContents* guest =
+      warmed->web_client_manager().web_client_contents();
+  ASSERT_TRUE(guest);
+  content::RenderProcessHost* client_process =
+      guest->GetPrimaryMainFrame()->GetProcess();
+  ASSERT_TRUE(client_process);
+  {
+    content::ScopedAllowRendererCrashes allow_crashes(client_process);
+    content::RenderProcessHostWatcher process_gone(
+        client_process,
+        content::RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
+    ASSERT_TRUE(client_process->Shutdown(content::RESULT_CODE_KILLED));
+    process_gone.Wait();
+  }
+  // Ensure the WebUI renderer has processed the guest crash and buffered
+  // OnClientLoadFailed(true) on the unbound PageHandler pipe.
+  ASSERT_TRUE(base::test::RunUntil([warmed]() {
+    return content::EvalJs(warmed->active_web_contents(),
+                           "!document.getElementById('errorPanel').hidden") ==
+           true;
+  }));
+  ASSERT_EQ(true, content::EvalJs(warmed->active_web_contents(), "true"));
+
+  auto* tab_list = GetTabListInterface();
+  int initial_tab_count = tab_list->GetTabCount();
+  BrowserWindowInterface* browser =
+      tab_list->GetActiveTab()->GetBrowserWindowInterface();
+
+  GlicHistogramTester histogram_tester;
+  base::test::TestFuture<base::WeakPtr<GlicInstance>> connected_future;
+  base::test::TestFuture<std::optional<GlicInvokeError>> outcome;
+
+  GlicInvokeOptions options(mojom::InvocationSource::kExperimentalTriggering);
+  options.target.conversation = glic::NewConversation{};
+  options.target.surface =
+      glic::LastActiveOrNew{browser, /*open_in_foreground=*/false};
+  options.prompts = {"test prompt"};
+  options.on_client_connected = connected_future.GetCallback();
+  options.on_success = base::BindOnce(outcome.GetCallback(), std::nullopt);
+  options.on_error = outcome.GetCallback<GlicInvokeError>();
+
+  GlicInvokeWithAutoSubmitOptions auto_submit_options;
+  auto_submit_options.show_panel = false;
+
+  coordinator().InvokeWithAutoSubmit(GetPassKey(), std::move(options),
+                                     std::move(auto_submit_options));
+
+  EXPECT_TRUE(connected_future.Wait());
+  EXPECT_EQ(outcome.Get(), std::nullopt);
+  ASSERT_EQ(tab_list->GetTabCount(), initial_tab_count + 1);
+  tabs::TabInterface* background_tab = tab_list->GetTab(initial_tab_count);
+  ASSERT_TRUE(background_tab);
+  GlicInstanceImpl* instance = GetInstanceForTab(background_tab);
+  ASSERT_TRUE(instance);
+  EXPECT_FALSE(instance->HasActiveEmbedder());
+  EXPECT_EQ(instance->host().client_load_state(), ClientLoadState::kReady);
+  histogram_tester.ExpectUniqueSample("Glic.InvokeResult2",
+                                      GlicInvokeResult::kSuccess, 1);
+  histogram_tester.ExpectUniqueSample(
+      "Glic.InvokeResult2.ExperimentalTriggering", GlicInvokeResult::kSuccess,
+      1);
+}
+
+IN_PROC_BROWSER_TEST_F(GlicInvokeWebUiBrowserTest,
+                       ShutdownWhileWaitingForLoadCancelsCleanly) {
+  tabs::TabInterface* tab = GetTabListInterface()->GetActiveTab();
+  base::test::TestFuture<GlicInvokeError> error_future;
+
+  GlicInvokeOptions options(glic::Target(*tab),
+                            mojom::InvocationSource::kOsButton);
+  options.on_error = error_future.GetCallback();
+
+  coordinator().Invoke(std::move(options));
+  coordinator().Shutdown();
+
+  EXPECT_EQ(error_future.Get(), GlicInvokeError::kInstanceDestroyedShutdown);
+}
+
 IN_PROC_BROWSER_TEST_F(GlicInvokeBrowserTest,
-                       InvokeFailsWhenClientLoadErrorsWhileWaiting) {
+                       ShutdownWhileWaitingForLoadCancelsCleanly) {
+  tabs::TabInterface* tab = GetTabListInterface()->GetActiveTab();
+  base::test::TestFuture<GlicInvokeError> error_future;
+
+  GlicInvokeOptions options(glic::Target(*tab),
+                            mojom::InvocationSource::kOsButton);
+  options.on_error = error_future.GetCallback();
+
+  coordinator().Invoke(std::move(options));
+  coordinator().Shutdown();
+
+  EXPECT_EQ(error_future.Get(), GlicInvokeError::kInstanceDestroyedShutdown);
+}
+
+IN_PROC_BROWSER_TEST_F(
+    GlicInvokeBrowserTest,
+    InvokeSucceedsWhenHiddenClientReloadsAfterHiddenLoadError) {
   tabs::TabInterface* tab = GetTabListInterface()->GetActiveTab();
   ASSERT_OK_AND_ASSIGN(auto* instance, OpenGlicForActiveTabAndWaitIdle());
+
+  PreventDeletionOnClose(instance);
+  instance->CloseAllEmbedders();
+  ASSERT_OK(WaitForGlicClose(instance));
+
   ASSERT_OK(DisconnectWebClient(instance));
-  // The client is disconnected, so the reported failure is what decides
-  // between loading and failed. Clear it so the invocation below has to wait.
-  instance->host().SetClientLoadFailed(false);
-  ASSERT_EQ(instance->host().client_load_state(), ClientLoadState::kLoading);
+  ASSERT_EQ(instance->host().client_load_state(), ClientLoadState::kError);
+
+  GlicHistogramTester histogram_tester;
+  base::test::TestFuture<std::optional<GlicInvokeError>> outcome;
+
+  GlicInvokeOptions options(glic::Target(*tab),
+                            mojom::InvocationSource::kOsButton);
+  options.on_success = base::BindOnce(outcome.GetCallback(), std::nullopt);
+  options.on_error = outcome.GetCallback<GlicInvokeError>();
+
+  GlicInvokeWithAutoSubmitOptions auto_submit_options;
+  auto_submit_options.show_panel = false;
+
+  coordinator().InvokeWithAutoSubmit(GetPassKey(), std::move(options),
+                                     std::move(auto_submit_options));
+
+  EXPECT_EQ(outcome.Get(), std::nullopt);
+  EXPECT_EQ(instance->host().client_load_state(), ClientLoadState::kReady);
+  histogram_tester.ExpectUniqueSample("Glic.InvokeResult2",
+                                      GlicInvokeResult::kSuccess, 1);
+  histogram_tester.ExpectUniqueSample("Glic.InvokeResult2.OsButton",
+                                      GlicInvokeResult::kSuccess, 1);
+}
+
+IN_PROC_BROWSER_TEST_F(GlicInvokeNeverReadyClientBrowserTest,
+                       InvokeFailsWhenClientLoadErrorsWhileWaiting) {
+  tabs::TabInterface* tab = GetTabListInterface()->GetActiveTab();
 
   GlicHistogramTester histogram_tester;
   base::test::TestFuture<GlicInvokeError> error_future;
@@ -3021,8 +3393,14 @@ IN_PROC_BROWSER_TEST_F(GlicInvokeBrowserTest,
   options.on_error = error_future.GetCallback();
 
   coordinator().Invoke(std::move(options));
+  ASSERT_OK_AND_ASSIGN(GlicInstanceImpl * instance, WaitForGlicOpen(tab));
+  ASSERT_TRUE(base::test::RunUntil([instance]() {
+    content::RenderProcessHost* process =
+        instance->host().GetWebClientRenderProcessHost();
+    return process && process->IsReady();
+  }));
 
-  instance->host().SetClientLoadFailed(true);
+  ASSERT_OK(DisconnectWebClient(instance));
 
   EXPECT_EQ(error_future.Get(), GlicInvokeError::kClientLoadError);
   histogram_tester.ExpectUniqueSample("Glic.InvokeResult2",
@@ -3031,13 +3409,138 @@ IN_PROC_BROWSER_TEST_F(GlicInvokeBrowserTest,
                                       GlicInvokeError::kClientLoadError, 1);
 }
 
+// The sign-in tests below put the host on the sign-in panel by hand, on top of
+// the failure `DisconnectWebClient()` leaves behind: the cause first, then the
+// failure, as glic_app_controller.ts and GlicNoWebviewContentsManager report
+// them. Two things about the real hosts shape how they do it:
+//
+// - The state is set up before the invocation starts. Under GlicNoWebview the
+//   contents manager answers `Host::WaitForLoad()` synchronously from its own
+//   (failed) state, so `WaitForClientReadyTask` reads the host's reason in the
+//   same call stack as `Invoke()`; a reason set afterwards comes too late.
+// - The invocations use kReshowInactive. Showing an already-open panel from
+//   any other source asks the host to retry a failed load
+//   (GlicInstanceImpl::Show -> NotifyWindowIntentToShow), which withdraws the
+//   failure, forgets its cause, and reloads the perfectly healthy client, so
+//   the invocation would succeed for the wrong reason.
+
+// A client that stops on the sign-in panel has not failed; it is waiting for
+// the user. An invocation that only shows the panel is done at that point:
+// the panel is up and shows what it should.
 IN_PROC_BROWSER_TEST_F(GlicInvokeBrowserTest,
-                       InvokeFailsWhenWebClientInitializeFailed) {
+                       ShowOnlyInvokeSucceedsWhenClientNeedsSignIn) {
   tabs::TabInterface* tab = GetTabListInterface()->GetActiveTab();
   ASSERT_OK_AND_ASSIGN(auto* instance, OpenGlicForActiveTabAndWaitIdle());
   ASSERT_OK(DisconnectWebClient(instance));
+  instance->host().ClientLoadErrorOccurred(ClientLoadErrorReason::kSignIn);
+  instance->host().SetClientLoadFailed(true);
+  ASSERT_EQ(instance->host().client_load_state(), ClientLoadState::kError);
+  ASSERT_EQ(instance->host().client_load_error_reason(),
+            ClientLoadErrorReason::kSignIn);
+
+  GlicHistogramTester histogram_tester;
+  base::test::TestFuture<void> success_future;
+  base::test::TestFuture<GlicInvokeError> error_future;
+
+  GlicInvokeOptions options(glic::Target(*tab),
+                            mojom::InvocationSource::kReshowInactive);
+  options.on_success = success_future.GetCallback();
+  options.on_error = error_future.GetCallback();
+
+  coordinator().Invoke(std::move(options));
+
+  EXPECT_TRUE(success_future.Wait());
+  EXPECT_FALSE(error_future.IsReady());
+  // It succeeded on the sign-in panel, not because the client came back.
+  EXPECT_EQ(instance->host().client_load_state(), ClientLoadState::kError);
+  EXPECT_EQ(instance->host().client_load_error_reason(),
+            ClientLoadErrorReason::kSignIn);
+  histogram_tester.ExpectUniqueSample("Glic.InvokeResult2",
+                                      GlicInvokeResult::kSuccess, 1);
+  histogram_tester.ExpectUniqueSample("Glic.InvokeResult2.ReshowInactive",
+                                      GlicInvokeResult::kSuccess, 1);
+}
+
+// An invocation that needs the client cannot do anything until the user signs
+// in, so it waits through the sign-in panel instead of failing on it. If the
+// user has not signed in when it times out, that is kSignInRequired (which
+// CUI 1 maps to ABANDONED), not a kTimeout.
+IN_PROC_BROWSER_TEST_F(GlicInvokeBrowserTest,
+                       InvokeWithPromptWaitsForSignInUntilTimeout) {
+  tabs::TabInterface* tab = GetTabListInterface()->GetActiveTab();
+  ASSERT_OK_AND_ASSIGN(auto* instance, OpenGlicForActiveTabAndWaitIdle());
+  ASSERT_OK(DisconnectWebClient(instance));
+  instance->host().ClientLoadErrorOccurred(ClientLoadErrorReason::kSignIn);
+  instance->host().SetClientLoadFailed(true);
+  ASSERT_EQ(instance->host().client_load_state(), ClientLoadState::kError);
+  ASSERT_EQ(instance->host().client_load_error_reason(),
+            ClientLoadErrorReason::kSignIn);
+
+  GlicHistogramTester histogram_tester;
+  base::test::TestFuture<GlicInvokeError> error_future;
+
+  GlicInvokeOptions options(glic::Target(*tab),
+                            mojom::InvocationSource::kReshowInactive);
+  options.prompts = {"a prompt"};
+  options.timeout = base::Milliseconds(500);
+  options.on_error = error_future.GetCallback();
+
+  coordinator().Invoke(std::move(options));
+
+  // Still waiting: the sign-in panel does not end the invocation.
+  WaitForDuration(base::Milliseconds(100));
+  EXPECT_FALSE(error_future.IsReady());
+  ASSERT_EQ(instance->host().client_load_state(), ClientLoadState::kError);
+
+  EXPECT_EQ(error_future.Get(), GlicInvokeError::kSignInRequired);
+  histogram_tester.ExpectUniqueSample("Glic.InvokeResult2",
+                                      GlicInvokeError::kSignInRequired, 1);
+  histogram_tester.ExpectUniqueSample("Glic.InvokeResult2.ReshowInactive",
+                                      GlicInvokeError::kSignInRequired, 1);
+}
+
+// Withdrawing the failure (a reload, or the retry on show) also forgets its
+// cause: a later failure without a reported cause is a plain load error, not
+// a stale sign-in.
+IN_PROC_BROWSER_TEST_F(GlicInvokeBrowserTest,
+                       SignInReasonDoesNotOutliveItsFailure) {
+  tabs::TabInterface* tab = GetTabListInterface()->GetActiveTab();
+  ASSERT_OK_AND_ASSIGN(auto* instance, OpenGlicForActiveTabAndWaitIdle());
+  ASSERT_OK(DisconnectWebClient(instance));
+  instance->host().ClientLoadErrorOccurred(ClientLoadErrorReason::kSignIn);
+  instance->host().SetClientLoadFailed(true);
+  ASSERT_EQ(instance->host().client_load_error_reason(),
+            ClientLoadErrorReason::kSignIn);
+
   instance->host().SetClientLoadFailed(false);
   ASSERT_EQ(instance->host().client_load_state(), ClientLoadState::kLoading);
+  EXPECT_EQ(instance->host().client_load_error_reason(), std::nullopt);
+
+  // Fail again, this time without a reported cause.
+  instance->host().SetClientLoadFailed(true);
+  ASSERT_EQ(instance->host().client_load_state(), ClientLoadState::kError);
+  ASSERT_EQ(instance->host().client_load_error_reason(), std::nullopt);
+
+  base::test::TestFuture<GlicInvokeError> error_future;
+  GlicInvokeOptions options(glic::Target(*tab),
+                            mojom::InvocationSource::kReshowInactive);
+  options.on_error = error_future.GetCallback();
+  coordinator().Invoke(std::move(options));
+
+  EXPECT_EQ(error_future.Get(), GlicInvokeError::kClientLoadError);
+}
+
+class GlicInvokeInitFailureBrowserTest : public GlicInvokeBrowserTest {
+ public:
+  GlicInvokeInitFailureBrowserTest() {
+    SetGlicPagePath("/glic/browser_tests/test.html");
+    AddMockGlicQueryParam("testsrc", "./failing_init_client.js");
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(GlicInvokeInitFailureBrowserTest,
+                       InvokeFailsWhenWebClientInitializeFailed) {
+  tabs::TabInterface* tab = GetTabListInterface()->GetActiveTab();
 
   GlicHistogramTester histogram_tester;
   base::test::TestFuture<GlicInvokeError> error_future;
@@ -3047,8 +3550,6 @@ IN_PROC_BROWSER_TEST_F(GlicInvokeBrowserTest,
   options.on_error = error_future.GetCallback();
 
   coordinator().Invoke(std::move(options));
-
-  instance->host().WebClientInitializeFailed();
 
   EXPECT_EQ(error_future.Get(), GlicInvokeError::kClientLoadError);
   histogram_tester.ExpectUniqueSample("Glic.InvokeResult2",

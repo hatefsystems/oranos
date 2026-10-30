@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/location_bar/webui_location_bar.h"
 
+#include "base/auto_reset.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
@@ -19,6 +20,7 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/omnibox/omnibox_next_features.h"
+#include "chrome/browser/ui/omnibox/omnibox_popup_webui_creation.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
@@ -960,6 +962,21 @@ class WebUILocationBarInteractiveUiTest
   raw_ptr<views::View> popup_frame_ = nullptr;
 };
 
+// Creates the omnibox popups' WebContents before they are shown, as production
+// does, rather than only when shown, which is the default in browser tests (see
+// `InProcessBrowserTest`).
+// TODO(crbug.com/542347163): The tests using this fixture fail otherwise, which
+// indicates the WebUI location bar has a hidden dependency on a popup's
+// WebContents existing before it is shown. Either create the WebContents
+// explicitly where it is needed or remove the dependency, and move these tests
+// back to `WebUILocationBarInteractiveUiTest`.
+class WebUILocationBarEagerPopupInteractiveUiTest
+    : public WebUILocationBarInteractiveUiTest {
+ private:
+  base::AutoReset<bool> create_popup_webui_on_demand_ =
+      omnibox::SetCreatePopupWebUIOnDemandForTesting(false);
+};
+
 class WebUILocationBarIMEInteractiveUiTest
     : public WebUILocationBarInteractiveUiTest {
  public:
@@ -1014,7 +1031,7 @@ IN_PROC_BROWSER_TEST_P(WebUILocationBarInteractiveUiTest, ShowHidePopup) {
 #endif
 
 // Show and hide the omnibox AI mode popup.
-IN_PROC_BROWSER_TEST_P(WebUILocationBarInteractiveUiTest,
+IN_PROC_BROWSER_TEST_P(WebUILocationBarEagerPopupInteractiveUiTest,
                        MAYBE_ShowHideAIPopup) {
   RunTestSequence(
       InstrumentTab(kTabId), WaitForWebContentsReady(kTabId),
@@ -1042,7 +1059,7 @@ IN_PROC_BROWSER_TEST_P(WebUILocationBarInteractiveUiTest,
 }
 
 // Show and hide the omnibox AI mode popup, with no user text
-IN_PROC_BROWSER_TEST_P(WebUILocationBarInteractiveUiTest,
+IN_PROC_BROWSER_TEST_P(WebUILocationBarEagerPopupInteractiveUiTest,
                        MAYBE_ShowHideAIPopup2) {
   RunTestSequence(
       InstrumentTab(kTabId), WaitForWebContentsReady(kTabId),
@@ -1111,7 +1128,7 @@ IN_PROC_BROWSER_TEST_P(WebUILocationBarInteractiveUiTest, TabAIButton) {
 }
 
 // Test that the popup shrinks when the browser window does.
-IN_PROC_BROWSER_TEST_P(WebUILocationBarInteractiveUiTest, Resize) {
+IN_PROC_BROWSER_TEST_P(WebUILocationBarEagerPopupInteractiveUiTest, Resize) {
   auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
   RunTestSequence(InstrumentTab(kTabId), WaitForWebContentsReady(kTabId),
                   InstrumentNonTabWebView(kWebUIToolbarId, GetToolbarWebView()),
@@ -1136,7 +1153,8 @@ IN_PROC_BROWSER_TEST_P(WebUILocationBarInteractiveUiTest, Resize) {
 }
 
 // Use arrow keys to select between various suggestions.
-IN_PROC_BROWSER_TEST_P(WebUILocationBarInteractiveUiTest, NavigateSuggestions) {
+IN_PROC_BROWSER_TEST_P(WebUILocationBarEagerPopupInteractiveUiTest,
+                       NavigateSuggestions) {
   RunTestSequence(
       InstrumentTab(kTabId), WaitForWebContentsReady(kTabId),
       InstrumentNonTabWebView(kWebUIToolbarId, GetToolbarWebView()),
@@ -1206,7 +1224,7 @@ IN_PROC_BROWSER_TEST_P(WebUILocationBarInteractiveUiTest, NavigateSuggestions) {
 // Use tab key to navigate suggestions, including the delete buttons, and
 // pressing space on one to delete an entry, as well as deleting an entry
 // via Shift-Delete.
-IN_PROC_BROWSER_TEST_P(WebUILocationBarInteractiveUiTest,
+IN_PROC_BROWSER_TEST_P(WebUILocationBarEagerPopupInteractiveUiTest,
                        NavigateSuggestionsTab) {
   history::HistoryService* history_service =
       HistoryServiceFactory::GetForProfile(this->browser()->GetProfile(),
@@ -1486,7 +1504,14 @@ IN_PROC_BROWSER_TEST_P(WebUILocationBarInteractiveUiTest, ClickLocationIcon) {
   RunTestSequence(
       InstrumentTab(kTabId), WaitForWebContentsReady(kTabId),
       InstrumentNonTabWebView(kWebUIToolbarId, GetToolbarWebView()),
-      FocusWebContents(kWebUIToolbarId),
+      // In full mode, the location bar gets autofocused on startup, which
+      // opens the full popup and makes its widget active. Trying to focus the
+      // toolbar WebContents while that's going on can hang (e.g. on Mac), so
+      // move focus to the tab instead and wait for the popup to go away.
+      If([&]() { return mode() == Mode::kFull; },
+         Then(HandleAutofocus(), FocusTab(),
+              InAnyContext(WaitForHide(kClassicPopupWebViewId))),
+         Else(FocusWebContents(kWebUIToolbarId))),
       ExecuteJsAt(kWebUIToolbarId,
                   {"toolbar-app", "location-bar", "location-icon", "#button"},
                   "el => el.click()"),
@@ -1789,7 +1814,8 @@ IN_PROC_BROWSER_TEST_P(WebUILocationBarInteractiveUiTest, UnelideCaretMove) {
 }
 
 // Test of Ctrl-K focus omnibox + activates default search shortcut.
-IN_PROC_BROWSER_TEST_P(WebUILocationBarInteractiveUiTest, FocusSearch) {
+IN_PROC_BROWSER_TEST_P(WebUILocationBarEagerPopupInteractiveUiTest,
+                       FocusSearch) {
   FAILS_IN_MODE(Mode::kFull,
                 "SearchboxHandler::QueryAutocomplete overwrites "
                 "KEYBOARD_SHORTCUT KeywordModeEntryMethod, breaking clearing "
@@ -1825,7 +1851,8 @@ IN_PROC_BROWSER_TEST_P(WebUILocationBarInteractiveUiTest, FocusSearch) {
 }
 
 // Test of Ctrl-K focus omnibox when the user has edited the text.
-IN_PROC_BROWSER_TEST_P(WebUILocationBarInteractiveUiTest, FocusSearch2) {
+IN_PROC_BROWSER_TEST_P(WebUILocationBarEagerPopupInteractiveUiTest,
+                       FocusSearch2) {
   ui::Accelerator accelerator;
   EXPECT_TRUE(
       AcceleratorProviderForBrowser(browser())->GetAcceleratorForCommandId(
@@ -2266,6 +2293,14 @@ IN_PROC_BROWSER_TEST_P(WebUILocationBarInteractiveUiTest,
 INSTANTIATE_TEST_SUITE_P(
     /* no prefix */,
     WebUILocationBarInteractiveUiTest,
+    ::testing::Values(MODES_TO_TEST),
+    [](const testing::TestParamInfo<Mode>& info) {
+      return ModeToString(info.param);
+    });
+
+INSTANTIATE_TEST_SUITE_P(
+    /* no prefix */,
+    WebUILocationBarEagerPopupInteractiveUiTest,
     ::testing::Values(MODES_TO_TEST),
     [](const testing::TestParamInfo<Mode>& info) {
       return ModeToString(info.param);
