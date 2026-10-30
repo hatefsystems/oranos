@@ -9,6 +9,7 @@ The Oranos source repository has two deliberately separate workflows:
 | --- | --- | --- | --- |
 | [CI validation](../workflows/android-apk.yml) | PR, targeted push, manual | GitHub-hosted Ubuntu | Validate scripts safely without compiling Chromium |
 | [Self-hosted Chromium](../workflows/self-hosted-chromium.yml) | Manual, `main` only | `oranos-build-01` | Persistent checkout, bootstrap, Android or Linux build |
+| [Bootstrap validation](../workflows/validate-bootstrap.yml) | PR / targeted push | GitHub-hosted Ubuntu | Bash syntax and live Git progress formatter tests |
 
 No `pull_request` or `push` event can schedule a job on the home runner from
 these workflows. The home runner still executes arbitrary code from the trusted
@@ -87,12 +88,14 @@ Chromium → Run workflow** once merged into the default branch.
 
 1. Dispatch **`smoke`**. It checks the runner user, mount points,
    writable directories and disk capacity. It does not download anything.
-2. Dispatch **`bootstrap`**. It installs persistent `depot_tools` under
-   `/var/lib/oranos-runner/depot_tools`, runs
-   `fetch --nohooks --git-cache android` on a *new* checkout, configures
-   the shared Android/Linux checkout, fetches the exact Oranos commit and runs
-   a DEPS-pinned `gclient sync --nohooks`. It preserves caches across runs.
-   The first fetch can take many hours and consume substantial space.
+2. Dispatch **`bootstrap`**. It reuses persistent `depot_tools` under
+   `/var/lib/oranos-runner/depot_tools`, initializes the source Git repository
+   directly from `https://github.com/hatefsystems/oranos.git`, fetches the
+   exact workflow commit with `--filter=blob:none`, checks out the source
+   and runs a DEPS-pinned `gclient sync --nohooks`. A prior `.gclient`-only
+   checkout is recovered automatically. Git progress is streamed to Actions,
+   with a 30-second heartbeat reporting source and cache disk usage.
+   The initial checkout and dependency sync may still take many hours.
 3. On the build host, **once after bootstrap**, install Chromium OS
    dependencies as an administrator:
 
@@ -129,22 +132,26 @@ shell while a job is running.
 - The source/build SSD has about 234 GiB usable capacity. The checkout and two
   full GN output directories may not fit simultaneously. Prefer **one build
   target at a time**, archive older outputs to HDD, and monitor disk usage.
-- The OS SSD starts with about 92 GiB free. Full-history Git cache can reach
-  around 30 GiB; CIPD and runner work compete for the remaining space.
-  The script refuses an initial seed with less than 35 GiB free on the OS SSD
-  or 100 GiB free on the build SSD.
+- The OS SSD contains the shared Git cache for Chromium dependencies, CIPD,
+  and runner work. The Oranos source's partial Git object store resides on
+  the build SSD. The script refuses an initial checkout with less than
+  15 GiB free on the OS SSD or 100 GiB free on the build SSD.
 - Do not rely on Nexus as a universal Chromium cache. `GIT_CACHE_PATH`,
   `CIPD_CACHE_DIR` and a persistent `src` directory are still necessary.
-- The script never wipes partial checkouts automatically. If a fetch fails
-  midway, inspect the state and repair it manually before retrying.
+- The script never deletes partial checkouts or caches automatically. A previous
+  `.gclient` file with no `src`, or an existing valid Git repository, can be
+  reused. Git/gclient network operations retry up to three times. A directory
+  `src` without a valid `.git` still requires manual inspection to avoid
+  overwriting valuable data. Git object progress is NOT a precise measure of
+  total bootstrap bytes, and incomplete Git packfiles may need retransmission.
 - Chromium metadata must include valid `Change-Id:` and
   `Cr-Commit-Position:` ancestry to avoid the historical negative
   `--build-timestamp` failure.
 - GitHub-hosted CI validates the scripts but **does not prove** the host
   installation, network reachability, full compile or resulting APK works.
-- The host needs outbound access to GitHub, Chromium Git, Google storage and
-  CIPD. Initial bootstrap is online; fully offline builds require warmed
-  caches and additional testing.
+- The main Oranos source now comes from GitHub, but Chromium DEPS, depot_tools,
+  Google storage and CIPD still require network access. Initial bootstrap is
+  online; fully offline builds require warmed caches and additional testing.
 
 ## Source references
 
