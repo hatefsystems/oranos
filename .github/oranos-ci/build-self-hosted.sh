@@ -58,19 +58,22 @@ for cmd in git python3 curl df findmnt; do
   command -v "$cmd" >/dev/null || fail "Missing required command: $cmd"
 done
 
+# A prior fetch may create .gclient before it ever creates src.
+# Reuse it on the next attempt without deleting any source or cache.
 if [[ ! -d "$SRC/.git" ]]; then
-  [[ ! -e "$SRC" && ! -e "$CHECKOUT/.gclient" ]] ||
-    fail "Incomplete Chromium checkout. Inspect it manually; CI will not delete data."
+  [[ ! -e "$SRC" ]] ||
+    fail "src exists without .git; inspect manually. CI will not delete data."
   (( $(free_gib /srv/oranos/build) >= 100 )) ||
     fail "Initial Chromium checkout requires >=100 GiB free on build SSD."
-  (( $(free_gib /) >= 35 )) ||
-    fail "Initial full-history Git/CIPD cache requires >=35 GiB free on OS SSD."
+  (( $(free_gib /) >= 15 )) ||
+    fail "Initial Git/CIPD cache requires >=15 GiB free on OS SSD."
 else
   git -C "$SRC" rev-parse --is-inside-work-tree >/dev/null ||
     fail "Existing checkout is invalid; refusing to reset it."
-  [[ -f "$CHECKOUT/.gclient" ]] || fail "Missing .gclient for existing checkout."
+  [[ "$(git -C "$SRC" rev-parse --show-toplevel)" == "$SRC" ]] ||
+    fail "Unexpected Git checkout root; inspect it manually."
   (( $(free_gib /srv/oranos/build) >= 15 )) ||
-    fail "Less than 15 GiB free on the build SSD. Archive old outputs first."
+    fail "Less than 15 GiB free on build SSD."
   (( $(free_gib /) >= 5 )) ||
     fail "Less than 5 GiB free on OS/cache SSD."
 fi
